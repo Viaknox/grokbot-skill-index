@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New `engine/` (v0.1, Phase 0): evaluates an agent against a test suite and writes a six-part report card (rule checks first, Jev as judge, repeat runs, evidence levels), and drafts verified tune-ups that are re-tested with the fix lift reported. Adapters: any HTTP chatbot, and instruction replay on an OpenRouter model. First run on the BookBot demo found a calendar leak in 3 of 3 runs; the verified tune-up stopped it (+11 points). See `engine/README.md` and `engine/examples/bookbot-first-run.md`.
 - Skill `license` field now reads "MIT for code and text. Brand assets are not MIT; see LICENSE-BRAND.md" (Agent Skills spec allows a license name or a pointer to a bundled file). Takes effect in the next release; 0.3.4 is unchanged.
 
 ## 0.3.4 — 2026-10-10
