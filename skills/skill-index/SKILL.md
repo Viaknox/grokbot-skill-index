@@ -4,7 +4,7 @@ description: >-
   Use when starting a multi-step job, when the user names a procedure, or when a
   keyword might match a stored skill. Retrieve one skill body. Do not load the
   index into the standing prompt.
-license: MIT
+license: "MIT for code and text. Brand assets are not MIT; see LICENSE-BRAND.md"
 metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC

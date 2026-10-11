@@ -3,7 +3,7 @@ name: find-skill
 description: >-
   Use when a needed skill is not in the local library, or when the user names a
   site to search. Show matches. Ask before adding a skill or a search location.
-license: MIT
+license: "MIT for code and text. Brand assets are not MIT; see LICENSE-BRAND.md"
 metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC

@@ -1,7 +1,7 @@
 ---
 name: import-agent-skill
 description: Use when the user gives a Claude skill, Codex skill, SKILL.md, or a marketplace listing and wants it in the skill index. Map it onto one listing. Do not paste it into a bot profile.
-license: MIT
+license: "MIT for code and text. Brand assets are not MIT; see LICENSE-BRAND.md"
 metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
