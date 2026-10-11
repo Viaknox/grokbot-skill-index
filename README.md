@@ -1,14 +1,15 @@
 <p align="center">
-  <img src="brand/github/readme-banner-1600x480.png" alt="Agent Tune Up by Viaknox. Tunes up your Grok bots. Loads the right skill only when it's needed." width="100%" />
+  <a href="https://agenttuneup.ai"><img src="brand/site/hero-before-after.webp" alt="Before: an AI agent's office with messy paperwork and a garage where the car is still smoking. After Tune-Up: the same street at night, the work done right, and Tune-Up's workshop where agents get tuned." width="100%" /></a>
 </p>
 
 <h1 align="center">Agent Tune Up™</h1>
 
-<p align="center"><b>Tune-Up for Grok Bot</b> · <a href="https://github.com/Viaknox/tune-up/releases/latest"><b>Download Agent Tune Up™</b></a> · <a href="https://x.ai/bot/EwsD6P3NuMDgp1_sT1MWp"><b>Add the Tune-Up bot</b></a></p>
+<p align="center"><b>Tune-Up for Grok Bot</b> · <a href="https://agenttuneup.ai"><b>agenttuneup.ai</b></a> · <a href="https://github.com/Viaknox/tune-up/releases/latest"><b>Download Agent Tune Up™</b></a> · <a href="https://x.ai/bot/EwsD6P3NuMDgp1_sT1MWp"><b>Add the Tune-Up bot</b></a></p>
 
 <p align="center"><b>Ask for the job. It finds the right skill. Even one you don't have yet.</b><br/>by Viaknox™</p>
 
 <p align="center">
+  <a href="https://agenttuneup.ai"><img src="https://img.shields.io/badge/Website-agenttuneup.ai-C9A227?style=flat-square" alt="Website: agenttuneup.ai" /></a>
   <img src="https://img.shields.io/badge/For-Grok%20Bot-08333A?style=flat-square" alt="For Grok Bot" />
   <img src="https://img.shields.io/badge/Tune--Up-tunes%20up%20your%20bots%20%2B%20skill%20index-08333A?style=flat-square" alt="Tune-Up: tunes up your bots, plus a skill index" />
   <img src="https://img.shields.io/badge/License-MIT-C9A227?style=flat-square" alt="License: MIT" />
@@ -57,7 +58,7 @@ It comes as one plugin with two parts:
 
 ### The Tune-Up bot
 
-<p align="center"><img src="brand/explainer/tune-up-explainer-960.gif" alt="Tune-Up reviews a drifting bot, turns a miss into a test, applies a small fix you approve, and moves a long repeated job into the skill index" width="100%" /></p>
+<p align="center"><img src="brand/site/shops-after.webp" alt="Four shops after a tune-up: clean work in the office, a car fixed for real in the garage, the right parcel handed over at the counter, and Tune-Up's workshop. Below: miss found, test written, small fix, your yes." width="100%" /></p>
 
 Tune-Up is a ready-made Grok bot, titled "Bot that tunes up other bots".
 
