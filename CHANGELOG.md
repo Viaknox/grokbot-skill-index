@@ -1,12 +1,5 @@
 # Changelog
 
-## 0.3.1 — 2026-10-10
-
-- Tune-Up's title is now "Bot that tunes up other bots".
-- Tune-Up's bot picture is the new sticker raven, and the new Tune-Up artwork is in `brand/`.
-- README: TL;DR, plain description, and the problems Tune-Up solves.
-- Agensi-ready zip attached to this release.
-
 ## 0.3.2 — 2026-10-10
 
 - New line everywhere: "Tunes up your Grok bots. Loads the right skill only when it's needed." README banner, GitHub social preview and social posts updated.
@@ -15,6 +8,13 @@
 - New Tune-Up brand art from the Viaknox brand kit (v1.7.0): Tune-Up wordmark, lockups, marks, PNGs and tokens renamed `tune-up-*`; README banner, GitHub social preview, explainer (MP4, GIF, still), before/after and social posts all read Tune-Up and github.com/viaknox/tune-up.
 - `brand/BRAND.md` rewritten for Tune-Up; the old grokbot-skill-index repo address is gone. Added `brand/avatar/` (sticker version with a Paper outline for Grok's dark UI).
 - `tune-up/brand/tune-up-explainer-960.gif` replaced with the Tune-Up version.
+
+## 0.3.1 — 2026-10-10
+
+- Tune-Up's title is now "Bot that tunes up other bots".
+- Tune-Up's bot picture is the new sticker raven, and the new Tune-Up artwork is in `brand/`.
+- README: TL;DR, plain description, and the problems Tune-Up solves.
+- Agensi-ready zip attached to this release.
 
 ## 0.3.0 — 2026-10-10
 
