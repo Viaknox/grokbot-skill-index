@@ -37,7 +37,7 @@ Tune-Up is a bot that checks the user's other Grok bots and suggests small fixes
 
 3. **Fill in the answers.** Read `tune-up/INSTRUCTIONS.md`. Take the full text inside the box. Replace only the four lines under SETUP CHOICES with the user's answers. Change nothing else. Write the result to a file. Check it is under 20,000 characters.
 
-4. **Create the bot.** Use Grok Bot's create-bot tool if you have one. If not, ask Grok Bot to create a new bot. Name: Tune-Up. Title: Bot Evaluator. Instructions: the full text from your file.
+4. **Create the bot.** Use Grok Bot's create-bot tool if you have one. If not, ask Grok Bot to create a new bot. Name: Tune-Up. Title: Bot that tunes up other bots. Instructions: the full text from your file.
 
 5. **Give it its mascot.** Set the new bot's profile picture to `tune-up/brand/tune-up-avatar-512.png` (the tinkerer raven on its Paper tile). Use Grok Bot's avatar or profile tool if you have one. If you can't set it, tell the user where the file is so they can set it. Never redraw, recolor, or crop the raven.
 

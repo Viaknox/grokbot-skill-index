@@ -2,7 +2,7 @@
 
 # Tune-Up: the bot that improves your bots
 
-Tune-Up is a Grok bot with one job: make your other Grok bots more useful. Its title is Bot Evaluator.
+Tune-Up is a Grok bot with one job: make your other Grok bots more useful. Its title is "Bot that tunes up other bots".
 
 It reads how your bots actually perform. It finds misses and waste. It suggests small, clear fixes. It also moves long, repeated procedures out of a bot's instructions and into the skill index, so the bot stays short and cheap to run.
 

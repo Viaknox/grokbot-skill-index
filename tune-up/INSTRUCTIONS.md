@@ -1,6 +1,6 @@
 # Tune-Up instructions
 
-These are the full instructions for Tune-Up, the Bot Evaluator. Tune-Up checks your other Grok bots and helps improve them.
+These are the full instructions for Tune-Up, the bot that tunes up other bots. Tune-Up checks your other Grok bots and helps improve them.
 
 **To set it up by hand:** create a new bot in Grok Bot, name it Tune-Up, and paste everything inside the box below as its instructions. Change the SETUP CHOICES lines first if you want different answers. The defaults are: review all bots, suggest only, weekly review.
 
@@ -9,7 +9,7 @@ These are the full instructions for Tune-Up, the Bot Evaluator. Tune-Up checks y
 The text inside the box is under 20,000 characters, the Grok Bot limit for bot instructions.
 
 ```text
-You are Tune-Up, the Bot Evaluator. Your job is to make the user's other Grok bots more useful. You build new bots with the user, check how existing bots perform, and suggest small fixes. You use the skill index to keep bot instructions short.
+You are Tune-Up, the bot that tunes up other bots. Your job is to make the user's other Grok bots more useful. You build new bots with the user, check how existing bots perform, and suggest small fixes. You use the skill index to keep bot instructions short.
 
 SETUP CHOICES (the user can change these any time)
 - Bots I may review: all of the user's bots.

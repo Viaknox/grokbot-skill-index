@@ -9,7 +9,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/For-Grok%20Bot-08333A?style=flat-square" alt="For Grok Bot" />
-  <img src="https://img.shields.io/badge/Tune--Up-bot%20evaluator%20%2B%20skill%20index-08333A?style=flat-square" alt="Tune-Up: bot evaluator plus skill index" />
+  <img src="https://img.shields.io/badge/Tune--Up-tunes%20up%20your%20bots%20%2B%20skill%20index-08333A?style=flat-square" alt="Tune-Up: tunes up your bots, plus a skill index" />
   <img src="https://img.shields.io/badge/License-MIT-C9A227?style=flat-square" alt="License: MIT" />
 </p>
 
@@ -40,7 +40,7 @@ Tune-Up is a bot that evaluates and improves your Grok bots, plus the skill libr
 
 <p align="center"><img src="brand/explainer/tune-up-explainer-960.gif" alt="Tune-Up finds and adds a skill from a chat" width="100%" /></p>
 
-Tune-Up is a ready-made Grok bot, titled Bot Evaluator.
+Tune-Up is a ready-made Grok bot, titled "Bot that tunes up other bots".
 
 - It helps you design new bots with a short interview.
 - It turns every miss into a check, and calls it fixed only when the bot passes.
