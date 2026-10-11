@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Skill `license` field now reads "MIT for code and text. Brand assets are not MIT; see LICENSE-BRAND.md" (Agent Skills spec allows a license name or a pointer to a bundled file). Takes effect in the next release; 0.3.4 is unchanged.
+
 ## 0.3.4 — 2026-10-10
 
 - README heading is now "Agent Tune Up™" (the product's trademark name), with a download link to the latest release. Tune-Up stays the short name and the repo name.

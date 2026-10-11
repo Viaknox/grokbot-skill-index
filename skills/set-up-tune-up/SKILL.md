@@ -4,7 +4,7 @@ description: >-
   Use when the user says "set up Tune-Up", or wants a bot that evaluates and
   improves their other Grok bots. Confirm first, ask four short questions,
   create the bot, verify its instructions, then run one supervised review.
-license: MIT
+license: "MIT for code and text. Brand assets are not MIT; see LICENSE-BRAND.md"
 metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
