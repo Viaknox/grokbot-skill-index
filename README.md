@@ -55,7 +55,7 @@ It comes as one plugin with two parts:
 
 ### The Tune-Up bot
 
-<p align="center"><img src="brand/explainer/tune-up-explainer-960.gif" alt="Tune-Up finds and adds a skill from a chat" width="100%" /></p>
+<p align="center"><img src="brand/explainer/tune-up-explainer-960.gif" alt="Tune-Up reviews a drifting bot, turns a miss into a test, applies a small fix you approve, and moves a long repeated job into the skill index" width="100%" /></p>
 
 Tune-Up is a ready-made Grok bot, titled "Bot that tunes up other bots".
 

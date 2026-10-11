@@ -57,6 +57,6 @@ Tune-Up's mascot is a tinkerer raven on a toolbox, with a spanner, an index card
 - `brand/tune-up-avatar-512.png` for the bot picture
 - `brand/tune-up-avatar-1024.png` for large uses
 - `brand/tune-up-avatar.svg` for any size
-- `brand/tune-up-explainer-960.gif` shows Tune-Up adding a skill from a chat
+- `brand/tune-up-explainer-960.gif` shows what Tune-Up does: reviews a bot, turns misses into tests, suggests small fixes, and moves repeated jobs into the skill index
 
 Don't redraw, recolor, rotate, or crop the raven. Full brand rules are in [../brand/BRAND.md](../brand/BRAND.md).
