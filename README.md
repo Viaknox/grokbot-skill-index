@@ -176,6 +176,6 @@ MIT. See [LICENSE](LICENSE).
 
 ## Trademarks
 
-Viaknox is a trademark of Viaknox Holding LLC. Tune-Up is a product name of Viaknox Holding LLC. The MIT license covers the code and text, not the Viaknox or Tune-Up names or marks. See [TRADEMARK.md](TRADEMARK.md). Brand files and usage rules are in [brand/BRAND.md](brand/BRAND.md).
+Viaknox™ and Agent Tune-Up™ (also written Agent Tune Up) are trademarks of Viaknox Holding LLC. Tune-Up is the short name used here. The MIT license covers the code and text, not the names, logos or raven mascot. See [TRADEMARK.md](TRADEMARK.md). Brand files and usage rules are in [brand/BRAND.md](brand/BRAND.md).
 
 Grok and Grok Bot are SpaceXAI (xAI) products, named here only to say what this plugin is built for. Not affiliated with or endorsed by SpaceXAI, xAI, or X.
