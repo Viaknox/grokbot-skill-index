@@ -2,7 +2,7 @@
 // Agent Tune-Up engine (v0.1).
 //   node engine/cli.js run  <suite.json> [--keyfile path] [--out dir] [--repeats N]
 //       Evaluate the agent: writes <out>/report.json and report.md.
-//   node engine/cli.js check <chats.txt|chats.json> [--instructions file] [--agent name] [--consent] [--keyfile path] [--out dir]
+//   node engine/cli.js check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir]
 //       Report card from real chats you paste or export (Level 1). Personal data is scrubbed locally first.
 //       Without --consent only the local rule checks run and nothing leaves this machine.
 //   node engine/cli.js tune <suite.json> [--keyfile path] [--out dir] [--repeats N]
@@ -28,9 +28,11 @@ if (!['run', 'tune', 'check'].includes(cmd) || !file) { console.error('usage: no
 const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
 const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
 const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
+// --private <file>: one never-send word or name per line (# starts a comment). Scrubbed before anything leaves.
+const terms = opt('private') ? readFileSync(opt('private'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
 
 if (cmd === 'check') {
-  const scrub = scrubber();
+  const scrub = scrubber({ terms });
   const instructions = opt('instructions') ? readFileSync(opt('instructions'), 'utf8').trim() : '';
   const convos = parseTranscripts(readFileSync(file, 'utf8'), { agentName: opt('agent') });
   if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(1); }
@@ -59,11 +61,12 @@ const suiteId = createHash('sha256').update(JSON.stringify(suite)).digest('hex')
 const or = client(loadKey(opt('keyfile')));
 const adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config) : modelAdapter(suite.agent_config, or);
 const log = (s) => console.error('  ' + s);
+const scrub = scrubber({ terms });
 const read = (f) => JSON.parse(readFileSync(join(out, f), 'utf8'));
 
 if (cmd === 'run') {
   console.error(`Evaluating ${suite.agent}: ${suite.cases.length} cases × ${suite.repeats} runs`);
-  const rep = await evaluate({ suite, instructions: suite.instructions, adapter, or, log });
+  const rep = await evaluate({ suite, instructions: suite.instructions, adapter, or, log, scrub });
   rep.suite_id = suiteId;
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
   const md = toMarkdown(rep, { title: 'Report card' }) + `\nModel cost for this run: $${or.spent().toFixed(5)}\n`;
@@ -79,9 +82,9 @@ if (cmd === 'run') {
   const n = files.length ? Number(files[files.length - 1][1]) + 1 : 1;
   console.error(`Tune-up attempt ${n}: drafting a fix with ${WRITER_MODEL}…`);
   const fix = await proposeFix(or, { instructions: suite.instructions, failures: before.failures, sacred: suite.sacred || [], cases: suite.cases,
-    tried: attempts.filter(a => a.lift <= 0).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })) });
+    tried: attempts.filter(a => a.lift <= 0).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })), scrub });
   console.error('Re-running the same tests on the fixed instructions…');
-  const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log });
+  const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log, scrub });
   const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: after.pass_rate - before.pass_rate, after, cost: or.spent() };
   writeFileSync(join(out, `attempt-${n}.json`), JSON.stringify(attempt, null, 2));
   const all = [...attempts, attempt];

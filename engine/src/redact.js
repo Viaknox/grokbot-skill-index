@@ -24,7 +24,12 @@ function luhn(digits) {
 }
 
 // Returns a scrubber that keeps one placeholder per distinct value across every text it sees.
-export function scrubber() {
+// `terms` are the owner's own never-send words (an employer, a client, a person): matched whole-word,
+// any case, before the built-in patterns, and replaced with [PRIVATE_n].
+export function scrubber({ terms = [] } = {}) {
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const own = terms.map(t => String(t).trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+  const patterns = own.length ? [['PRIVATE', new RegExp(`(?<![\\p{L}\\p{N}])(?:${own.map(esc).join('|')})(?![\\p{L}\\p{N}])`, 'giu')], ...PATTERNS] : PATTERNS;
   const seen = new Map(); const counts = {};
   const label = (kind, value) => {
     const k = kind + '\u0000' + value;
@@ -34,7 +39,7 @@ export function scrubber() {
   return {
     scrub(text) {
       let s = String(text ?? '');
-      for (const [kind, re] of PATTERNS) {
+      for (const [kind, re] of patterns) {
         s = s.replace(re, (m) => {
           if (kind === 'CARD') { const d = m.replace(/\D/g, ''); if (d.length < 13 || !luhn(d)) return m; }
           return label(kind, m.trim());

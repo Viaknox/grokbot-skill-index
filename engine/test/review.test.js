@@ -25,3 +25,11 @@ test('review: case ids are scrubbed before they reach the fix writer', async () 
   await proposeFix(or, { instructions: 'Book rooms.', failures: [{ case: 'leak-jo@acme.com', code: 'false_done', detail: 'd' }], cases: [{ id: 'leak-jo@acme.com', intent: 'i' }] });
   assert.ok(!sent.includes('jo@acme.com'));
 });
+
+import { scrubber } from '../src/redact.js';
+test('never-send list: whole words, any case, restored locally; not inside other words', () => {
+  const s = scrubber({ terms: ['Acme Corp', 'Ivo'] });
+  const out = s.scrub('Acme corp terms apply. Ivo said yes. Ivory and ACMEcorp stay.');
+  assert.equal(out, '[PRIVATE_1] terms apply. [PRIVATE_2] said yes. Ivory and ACMEcorp stay.');
+  assert.equal(s.unscrub(out), 'Acme corp terms apply. Ivo said yes. Ivory and ACMEcorp stay.');
+});
