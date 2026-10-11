@@ -13,12 +13,13 @@
 </p>
 
 <p align="center">
-  A bot that evaluates and improves your <b>Grok bots</b>, with a built-in skill index. Ask for the job in plain English. The bot picks up one skill. Your bot instructions stay short.
+  A bot that tunes up your other <b>Grok bots</b>, with a built-in skill index. Ask for the job in plain English. The bot picks up one skill. Your bot instructions stay short.
 </p>
 
 ## Contents
 
 - [What is Tune-Up?](#what-is-tune-up)
+  - [The problems it solves](#the-problems-it-solves)
   - [The Tune-Up bot](#the-tune-up-bot)
   - [The skill index](#the-skill-index)
 - [What's the outcome of using it?](#whats-the-outcome-of-using-it)
@@ -30,10 +31,20 @@
 
 ## What is Tune-Up?
 
-Tune-Up is a bot that evaluates and improves your Grok bots, plus the skill library it uses. It comes as one plugin with two parts:
+Tune-Up is a bot that tunes up your other Grok bots. It comes with a skill index, so your bots load the right skill only when they need it, instead of carrying huge instructions.
+
+It comes as one plugin with two parts:
 
 - **The Tune-Up bot** checks how your other bots perform and suggests small, clear fixes.
 - **The skill index** keeps saved skills out of your bots' instructions and loads one only when the job needs it.
+
+### The problems it solves
+
+**Bots drift, and nobody checks them.** They give vague or wrong answers, say work is done when it isn't, ask questions they could have answered themselves, and run routines that waste money. Most people never go back to fix them. The Tune-Up bot reviews your bots against clear standards, turns every miss into a test, and suggests small fixes. You see each fix before it's applied.
+
+**Bot instructions bloat.** Every job gets pasted into a bot's standing instructions, so every message carries all of it. That costs more tokens, makes the bot slower and muddier, and leaves you editing one long file forever. The skill index keeps each job in its own skill, and the bot loads only the one it needs. If no skill fits, it finds one in the skill marketplaces and adds it once you say yes.
+
+**They work together.** Tune-Up spots long, repeated jobs in a bot's instructions and moves them into the skill index, so each fix makes the other one better.
 
 ### The Tune-Up bot
 
