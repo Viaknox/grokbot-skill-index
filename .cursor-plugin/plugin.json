@@ -2,8 +2,8 @@
   "name": "tune-up",
   "displayName": "Tune-Up",
   "version": "0.3.0",
-  "description": "Tune-Up for Grok Bot. A bot that evaluates and improves your Grok bots, with a built-in skill index: ask in plain English and the bot picks up one skill. Shorter instructions, fewer tokens. A Viaknox™ skill by SathiaAI, a Viaknox Holding LLC project.",
-  "author": "SathiaAI",
+  "description": "Tune-Up for Grok Bot. A bot that evaluates and improves your Grok bots, with a built-in skill index: ask in plain English and the bot picks up one skill. Shorter instructions, fewer tokens. By Viaknox™.",
+  "author": "Viaknox Holding LLC",
   "license": "MIT",
   "keywords": [
     "Grok Bot",

@@ -67,8 +67,8 @@ Known overlap: Tomato is close to Viaknox Tangelo (ΔE 8.3). Keeping it to small
 
 ## Name
 
-- Product name in copy: **Skill Index**. Descriptor: **for Grok Bot** (descriptive use only, never in the logo).
-- Repo and package slug stay `grokbot-skill-index`.
+- Product name in copy: **Tune-Up**. Descriptor: **for Grok Bot** (descriptive use only, never in the logo).
+- Repo and package slug: `tune-up`.
 - Not affiliated with xAI/SpaceXAI — keep the notice in README and TRADEMARK.md.
 
 ## Endorsement
