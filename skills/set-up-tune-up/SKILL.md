@@ -9,13 +9,13 @@ metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
-  version: "0.2.0"
-  repository: https://github.com/viaknox/grokbot-skill-index
+  version: "0.3.0"
+  repository: https://github.com/viaknox/tune-up
 ---
 
 # Set up Tune-Up
 
-Tune-Up is a bot that checks the user's other Grok bots and suggests small fixes. It uses the Skill Index to keep their instructions short. Its full instructions are in `tune-up/INSTRUCTIONS.md` in this plugin (the text inside the box).
+Tune-Up is a bot that checks the user's other Grok bots and suggests small fixes. It uses the skill index to keep their instructions short. Its full instructions are in `tune-up/INSTRUCTIONS.md` in this plugin (the text inside the box).
 
 ## Do not
 
@@ -55,4 +55,4 @@ Fail if: a bot was created without a yes, the instructions were cut or summarize
 
 ---
 
-Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).

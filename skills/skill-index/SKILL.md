@@ -9,10 +9,12 @@ metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
-  version: "0.2.0"
-  repository: https://github.com/viaknox/grokbot-skill-index
+  version: "0.3.0"
+  repository: https://github.com/viaknox/tune-up
 ---
 # Skill index
+
+Part of Tune-Up. Tune-Up keeps a skill index so each bot loads one skill only when the job needs it.
 
 The standing prompt keeps identity, lanes, and locks. Procedures live in an index and load only after a real match.
 
@@ -76,4 +78,4 @@ Same repo, or a fork of that repo, is another link on the one listing. Do not gu
 
 ---
 
-Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).

@@ -4,11 +4,11 @@
 
 Tune-Up is a Grok bot with one job: make your other Grok bots more useful. Its title is Bot Evaluator.
 
-It reads how your bots actually perform. It finds misses and waste. It suggests small, clear fixes. It also moves long, repeated procedures out of a bot's instructions and into the Skill Index, so the bot stays short and cheap to run.
+It reads how your bots actually perform. It finds misses and waste. It suggests small, clear fixes. It also moves long, repeated procedures out of a bot's instructions and into the skill index, so the bot stays short and cheap to run.
 
 ## Two ways to set it up
 
-**A. Let a bot do it (Skill Index installed).**
+**A. Let a bot do it (Tune-Up plugin installed).**
 Tell any Grok bot: "Set up Tune-Up." It will explain what it is about to do and ask you to confirm. Then it asks four short questions:
 
 - Which bots may Tune-Up review? (Default: all.)
@@ -48,11 +48,11 @@ Small changes, often, each one shown to you first. That is the whole idea.
 
 ---
 
-Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).
 
 ## Mascot
 
-Tune-Up's mascot is the Skill Index raven: a tinkerer on a toolbox, with a spanner, an index card and goggles. The toolbox is the skill library. The card is the one skill picked for the job. The spanner means it does the work, then checks it. Use these files as the bot's picture:
+Tune-Up's mascot is a tinkerer raven on a toolbox, with a spanner, an index card and goggles. The toolbox is the skill library. The card is the one skill picked for the job. The spanner means it does the work, then checks it. Use these files as the bot's picture:
 
 - `brand/tune-up-avatar-512.png` for the bot picture
 - `brand/tune-up-avatar-1024.png` for large uses

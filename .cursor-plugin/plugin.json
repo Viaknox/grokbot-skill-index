@@ -1,17 +1,20 @@
 {
-  "name": "grokbot-skill-index",
-  "version": "0.2.0",
-  "description": "Skill Index for Grok Bot. A skill library for Grok Bot. Ask in plain English. The bot picks up one skill. Shorter instructions, fewer tokens. A Viaknox™ skill by SathiaAI, a Viaknox Holding LLC project.",
+  "name": "tune-up",
+  "displayName": "Tune-Up",
+  "version": "0.3.0",
+  "description": "Tune-Up for Grok Bot. A bot that evaluates and improves your Grok bots, with a built-in skill index: ask in plain English and the bot picks up one skill. Shorter instructions, fewer tokens. A Viaknox™ skill by SathiaAI, a Viaknox Holding LLC project.",
   "author": "SathiaAI",
   "license": "MIT",
   "keywords": [
     "Grok Bot",
+    "Tune-Up",
+    "bot evaluator",
+    "skill index",
     "skill library",
     "plain English",
     "one skill at a time",
-    "fewer tokens",
-    "Tune-Up bot evaluator"
+    "fewer tokens"
   ],
   "publisher": "Viaknox Holding LLC",
-  "repository": "https://github.com/viaknox/grokbot-skill-index"
+  "repository": "https://github.com/viaknox/tune-up"
 }

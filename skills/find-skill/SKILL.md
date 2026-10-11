@@ -8,8 +8,8 @@ metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
-  version: "0.2.0"
-  repository: https://github.com/viaknox/grokbot-skill-index
+  version: "0.3.0"
+  repository: https://github.com/viaknox/tune-up
 ---
 
 # Find a skill
@@ -43,4 +43,4 @@ Write that one skill to the local SQLite library. Only saved skills live there. 
 
 ---
 
-Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).

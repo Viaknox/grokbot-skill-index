@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 — 2026-10-10
+
+- Renamed the product from Skill Index (`grokbot-skill-index`) to Tune-Up (`tune-up`). First mention is "Tune-Up for Grok Bot". The skill library is now "the skill index", a feature of Tune-Up.
+- Repo moved to https://github.com/viaknox/tune-up. Old links redirect. Install folder is now `~/.cursor/plugins/local/tune-up`.
+- Plugin name is `tune-up` (display name Tune-Up). Skill ids `skill-index`, `find-skill`, `import-agent-skill`, and `set-up-tune-up` are unchanged.
+- Tune-Up bot instructions now point at the new install folder.
+- README rewritten to lead with Tune-Up. Footers, repository links, and `TRADEMARK.md` updated.
+- The logo wordmark, lockup files, and README banner art still read Skill Index, pending new art. The raven mark is unchanged and is Tune-Up's mascot.
+- Retired the old 0.1.0 Agensi packaging script. It rebuilt from a stale snapshot and would overwrite current files. The Agensi package is now built from the current tree.
+
 ## 0.2.0 — 2026-10-10
 
 - New Skill Index brand (tinkerer raven, Deep Petrol and Brass). Brand files and rules in `brand/`.

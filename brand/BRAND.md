@@ -1,5 +1,7 @@
 # Skill Index — product mark
 
+> Product renamed to Tune-Up on 10 Oct 2026. Wordmark and lockup files still read Skill Index until new art arrives; the raven mark is unchanged and is Tune-Up's mascot.
+
 **Skill Index for Grok Bot**, by Viaknox. Repo: github.com/viaknox/grokbot-skill-index (MIT).
 Status: approved, 10 Oct 2026.
 
