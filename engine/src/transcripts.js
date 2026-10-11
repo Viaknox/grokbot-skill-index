@@ -13,6 +13,7 @@ const norm = (m) => ({ role: roleOf(String(m.role || m.author || m.sender || '')
 
 const twoSided = (c) => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant');
 
+/** @param {string} raw @param {{ agentName?: string }} [opts] */
 export function parseTranscripts(raw, { agentName } = {}) {
   const txt = String(raw).trim();
   if (txt.startsWith('[') || txt.startsWith('{')) {

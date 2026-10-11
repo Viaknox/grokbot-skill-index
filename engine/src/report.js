@@ -27,7 +27,7 @@ export function buildReport({ suite, instructions, adapter, runs, judgeModel, ev
       reason: worst ? `${worst.case}: ${worst.detail}` : `All ${fs.length} checks passed`, quote: worst && worst.quote };
   });
   const waste = runs.reduce((a, r) => ({ ms: a.ms + r.ms, tokens: a.tokens + (r.tokens || 0), toolCalls: a.toolCalls + r.toolCalls }), { ms: 0, tokens: 0, toolCalls: 0 });
-  const wb = buckets.find(b => b.id === 'waste');
+  const wb = /** @type {any} */ (buckets.find(b => b.id === 'waste'));
   wb.usage = { avg_seconds: +(waste.ms / runs.length / 1000).toFixed(1), avg_tokens: Math.round(waste.tokens / runs.length), avg_tool_calls: +(waste.toolCalls / runs.length).toFixed(1) };
   const byCase = {};
   for (const r of runs) (byCase[r.case] ||= []).push(r.passed);
@@ -50,6 +50,7 @@ const cell = (s) => String(s).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
 
 const ICON = { pass: '✅ pass', warn: '⚠️ warn', fail: '❌ fail', not_available: '— not available', not_tested: '— not tested' };
 
+/** @param {any} rep @param {{ title?: string, lift?: number }} [opts] */
 export function toMarkdown(rep, { title, lift } = {}) {
   const L = [];
   L.push(`# ${title || 'Report card'}: ${rep.agent}`, '');
