@@ -1,6 +1,6 @@
 # Tune-Up — brand
 
-**Tune-Up by Viaknox** — for Grok Bot. Repo: github.com/viaknox/tune-up (MIT). Renamed from Skill Index / grokbot-skill-index on 10 Oct 2026; the plugin name in code stays `grokbot-skill-index`.
+**Tune-Up by Viaknox** — for Grok Bot. Repo: github.com/viaknox/tune-up (MIT). Renamed from Skill Index (`grokbot-skill-index`) on 10 Oct 2026; the plugin name is now `tune-up`.
 Status: approved, 10 Oct 2026. Source of truth: the private Viaknox brand repo, `12-Product-marks/tune-up/` (v1.7.0). This folder is a copy for the plugin.
 
 ## Idea
@@ -67,7 +67,7 @@ Known overlap: Tomato is close to Viaknox Tangelo (ΔE 8.3). Keeping it to small
 ## Name
 
 - Product name: **Tune-Up** (hyphen, capital U). Full form: **Tune-Up by Viaknox**. Descriptor: **for Grok Bot** (descriptive use only, never in the logo). "Skill index" may describe the feature in lowercase ("Tune-Up's skill library"); it is not a product name.
-- Repo: `github.com/viaknox/tune-up`. Plugin name stays `grokbot-skill-index`.
+- Repo: `github.com/viaknox/tune-up`. Plugin name `tune-up`, install folder `~/.cursor/plugins/local/tune-up`.
 - Not affiliated with xAI/SpaceXAI — keep the notice in README and TRADEMARK.md.
 
 ## Endorsement
