@@ -13,7 +13,8 @@ const READ = /^(get|list|search|find|read|check|lookup|look_up|fetch|view|query|
 const isRead = (x) => x.readOnly === true || READ.test(String(x.name || ''));
 // A specific claim ("booked", "sent") should be backed by a matching kind of action. Generic claims ("done",
 // "all set", "confirmed") accept any action. Tool names vary, so a mismatch is reported as unsure, not as a lie.
-const KINDS = [[/\b(booked|reserved)\b/i, /book|reserv/i], [/\bscheduled\b/i, /schedul|calendar|event|meeting|book|invite/i], [/\bsent\b/i, /send|mail|message|sms|text|post|notify|reply/i]];
+// Any claim that names what was done ("booking confirmed", "completed your reservation") is classified by that word.
+const KINDS = [[/\b(book(ed|ing)?|reserv\w*)\b/i, /book|reserv/i], [/\b(schedul\w*|meeting|appointment|event|invite\w*)\b/i, /schedul|calendar|event|meeting|book|invite/i], [/\b(sent|send|e-?mail(ed)?|messag\w*)\b/i, /send|mail|message|sms|text|post|notify|reply/i]];
 const matches = (claim, x) => { const k = KINDS.find(([v]) => v.test(claim)); return !k || k[1].test(String(x.name || '')); };
 const QUESTION = /\?\s*$|\b(which|what time|what room|when would|could you (tell|confirm|share))\b/i;
 

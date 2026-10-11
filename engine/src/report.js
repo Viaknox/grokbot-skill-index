@@ -55,8 +55,8 @@ export function regressions(before, after) {
   const key = (f) => JSON.stringify([f.case, f.code, f.detail]);
   const left = new Map(); for (const f of before.failures.filter(f => f.bucket === 'rules')) left.set(key(f), (left.get(key(f)) || 0) + 1);
   const newRules = after.failures.filter(f => f.bucket === 'rules').filter(f => { const n = left.get(key(f)) || 0; if (n) { left.set(key(f), n - 1); return false; } return true; })
-    .map(f => `${f.case} (${f.code}: ${f.detail})`);
-  return [...new Set([...broke, ...newRules])];
+    .map(f => cell(`${f.case} (${f.code}: ${f.detail})`));   // goes into a Markdown table row
+  return [...new Set([...broke.map(cell), ...newRules])];
 }
 
 function hash(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h.toString(16); }

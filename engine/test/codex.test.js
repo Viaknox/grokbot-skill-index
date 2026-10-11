@@ -154,3 +154,10 @@ test('round 2: a suite with no cases is refused before anything runs', () => {
   const r = spawnSync(process.execPath, [new URL('../cli.js', import.meta.url).pathname, 'run', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
   assert.equal(r.status, 2); assert.match(r.stderr, /no test cases/);
 });
+
+test('round 3: "booking confirmed" after an unrelated action is unsure; table-breaking characters are neutralised', () => {
+  const f = checkCase({ expect: {} }, [{ reply: 'Your booking is confirmed.', tools: [{ name: 'send_email', ok: true }] }], { observesTools: true }).find(x => x.code === 'false_done');
+  assert.ok(f && f.unsure);
+  const r = regressions({ runs: [], failures: [] }, { runs: [], failures: [{ case: 'c', bucket: 'rules', code: 'must_not_say', detail: 'Revealed "a|b\nc"' }] });
+  assert.ok(!r[0].includes('|') && !r[0].includes('\n'));
+});
