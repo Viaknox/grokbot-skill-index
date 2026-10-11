@@ -10,7 +10,7 @@ export function loadKey(keyfile) {
   return m[1].trim();
 }
 
-export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fetch, timeoutMs = 90_000 } = {}) {
+export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fetch, timeoutMs = 90_000, retries = 4 } = {}) {
   let spent = 0;
   // Retries rate limits and provider hiccups (429/5xx) with back-off; other errors fail at once.
   async function post(path, body, attempt = 0) {
@@ -21,7 +21,7 @@ export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fe
       signal: AbortSignal.timeout(timeoutMs),
     });
     const j = await r.json().catch(() => ({}));
-    if ((r.status === 429 || r.status >= 500) && attempt < 4) {
+    if ((r.status === 429 || r.status >= 500) && attempt < retries) {
       await new Promise(res => setTimeout(res, (2 ** attempt) * 1500 + Math.random() * 500));
       return post(path, body, attempt + 1);
     }
