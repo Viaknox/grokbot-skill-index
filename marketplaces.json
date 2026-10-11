@@ -1,0 +1,37 @@
+{
+  "note": "Default places the plugin may search. A user can add more. Search results are not written to the local SQLite library. Only a skill the user adds is saved.",
+  "marketplaces": [
+    {
+      "name": "SkillsMP",
+      "url": "https://skillsmp.com/",
+      "kind": "api",
+      "note": "Public search API. Use the API. Do not scrape the site."
+    },
+    {
+      "name": "Skill Marketplace",
+      "url": "https://www.skill-marketplace.com/",
+      "kind": "site"
+    },
+    {
+      "name": "pm-skills",
+      "url": "https://github.com/phuryn/pm-skills",
+      "kind": "github"
+    },
+    {
+      "name": "MCP Market skills",
+      "url": "https://mcpmarket.com/tools/skills",
+      "kind": "site"
+    },
+    {
+      "name": "Awesome Skills",
+      "url": "https://awesomeskill.ai/",
+      "kind": "api",
+      "note": "Public search API."
+    },
+    {
+      "name": "SkillsLLM",
+      "url": "https://skillsllm.com/",
+      "kind": "site"
+    }
+  ]
+}

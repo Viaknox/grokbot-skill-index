@@ -1,0 +1,12 @@
+---
+description: Before a multi-step job, use a library skill if one matches. If none matches, search the default marketplaces and ask before adding.
+alwaysApply: true
+---
+
+Before a multi-step job, check the local SQLite skill library. If one listing matches, use it. The user does not need to ask. Match purpose and keywords. Drop do-not-use-when vetoes. Load at most one body. If two listings still match, load neither and name both. A closer keyword does not cancel a second match. Score the skill's success line before calling the job done. If it cannot be scored from this turn, the score is not a hit. Locks in the standing prompt always win over a retrieved skill.
+
+If the library has no match, search the default marketplaces in marketplaces.json, plus any the user added. Use each source's API. Do not scrape. Show the relevant skills and ask if one can be added. Do not write a search result until the user says add.
+
+If the user names a site to search, search that site, then ask if that location should be added to the default search list. Add it only if they say yes.
+
+If the SQLite store is unreachable, use the thin file cache (name, purpose, keywords, negatives only). Do not guess a body.

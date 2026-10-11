@@ -1,0 +1,8 @@
+.DS_Store
+Thumbs.db
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.venv/
+dist/
+*.zip
