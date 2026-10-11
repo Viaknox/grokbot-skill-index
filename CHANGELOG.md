@@ -6,6 +6,7 @@
 - Removed the old brain logo.
 - Credit lines and skill author now read Viaknox.
 - LICENSE copyright holder is now Viaknox Holding LLC.
+- Added Tune-Up, a bot that evaluates and improves your other Grok bots: `skills/set-up-tune-up/SKILL.md` (set it up by asking any bot) and `tune-up/` (paste-ready instructions and a guide).
 
 ## 0.1.0 — 2026-10-10
 

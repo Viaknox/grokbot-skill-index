@@ -21,6 +21,7 @@
 - [What is Skill Index?](#what-is-skill-index)
 - [What's the outcome of using it?](#whats-the-outcome-of-using-it)
 - [How can you use it with Grok Bot?](#how-can-you-use-it-with-grok-bot)
+- [Meet Tune-Up, the bot that improves your bots](#meet-tune-up-the-bot-that-improves-your-bots)
 - [How can you install it?](#how-can-you-install-it)
 - [FAQs](#faqs)
 - [License](#license)
@@ -37,6 +38,7 @@ The bot only sees a short label for each skill: its name and when to use it. The
 | [Skill index](skills/skill-index/SKILL.md) | How a bot picks one skill, or none. |
 | [Find a skill](skills/find-skill/SKILL.md) | Searches marketplaces when your library has no match, and asks before adding. |
 | [Import a skill](skills/import-agent-skill/SKILL.md) | Adds a skill you approved into your local library. |
+| [Set up Tune-Up](skills/set-up-tune-up/SKILL.md) | Creates Tune-Up, a bot that checks and improves your other bots, after you confirm. |
 | [Always-on line](rules/skill-index.mdc) | The one short rule the bot keeps in mind. |
 | [Starter skills](starters/file-index/index.md) | Three examples: release note, class deck check, pull request check. |
 | [Marketplaces](marketplaces.json) | Six default places the plugin can search. You can add your own. |
@@ -68,6 +70,17 @@ To set up a bot:
 4. If nothing matches, the bot searches the default marketplaces and asks if it should add one. Say add, and the skill is ready from then on.
 
 A skill never overrides who the bot is. The bot's own rules still win.
+
+## Meet Tune-Up, the bot that improves your bots
+
+Tune-Up is a ready-made Grok bot, titled Bot Evaluator. It checks how your other bots perform and suggests small, clear fixes.
+
+- It helps you design new bots with a short interview.
+- It turns every miss into a check, and calls it fixed only when the bot passes.
+- It moves long, repeated procedures out of bot instructions and into the Skill Index.
+- It shows you every change first. It never changes a bot's purpose or deletes a bot without your yes.
+
+To get it, tell any Grok bot "set up Tune-Up", or paste the instructions yourself. See the [Tune-Up guide](tune-up/README.md).
 
 ## How can you install it?
 
@@ -107,6 +120,12 @@ No. A skill only covers how to do one job. The bot's own instructions always win
 
 **Can I write my own skills?**
 Yes. A skill is a folder with a `SKILL.md` file. Look at the [starter skills](starters/file-index/index.md) for examples, then ask your bot to import yours.
+
+**Can I get Tune-Up automatically?**
+Yes. Install the plugin, tell any Grok bot "set up Tune-Up", and confirm. A skill can't create a bot without your OK.
+
+**Will Tune-Up change my bots without asking?**
+No. It shows every change first, unless you choose apply-after-yes, and even then it applies a change only after you say yes to it. It never changes a bot's purpose or deletes a bot.
 
 **Does it cost anything?**
 No. It's free and open source under the MIT license.
