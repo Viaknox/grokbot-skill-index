@@ -9,7 +9,7 @@ metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
-  version: "0.1.0"
+  version: "0.2.0"
   repository: https://github.com/viaknox/grokbot-skill-index
 ---
 # Skill index

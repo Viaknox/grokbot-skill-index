@@ -1,3 +1,5 @@
+<p align="center"><img src="brand/tune-up-avatar-512.png" alt="Tune-Up, the tinkerer raven on a toolbox" width="160" /></p>
+
 # Tune-Up: the bot that improves your bots
 
 Tune-Up is a Grok bot with one job: make your other Grok bots more useful. Its title is Bot Evaluator.
@@ -47,3 +49,14 @@ Small changes, often, each one shown to you first. That is the whole idea.
 ---
 
 Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).
+
+## Mascot
+
+Tune-Up's mascot is the Skill Index raven: a tinkerer on a toolbox, with a spanner, an index card and goggles. The toolbox is the skill library. The card is the one skill picked for the job. The spanner means it does the work, then checks it. Use these files as the bot's picture:
+
+- `brand/tune-up-avatar-512.png` for the bot picture
+- `brand/tune-up-avatar-1024.png` for large uses
+- `brand/tune-up-avatar.svg` for any size
+- `brand/tune-up-explainer-960.gif` shows Tune-Up adding a skill from a chat
+
+Don't redraw, recolor, rotate, or crop the raven. Full brand rules are in [../brand/BRAND.md](../brand/BRAND.md).

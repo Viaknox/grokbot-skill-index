@@ -1,6 +1,6 @@
 {
   "name": "grokbot-skill-index",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Skill Index for Grok Bot. A skill library for Grok Bot. Ask in plain English. The bot picks up one skill. Shorter instructions, fewer tokens. A Viaknox™ skill by SathiaAI, a Viaknox Holding LLC project.",
   "author": "SathiaAI",
   "license": "MIT",

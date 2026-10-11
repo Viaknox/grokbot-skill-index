@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-10
 
 - New Skill Index brand (tinkerer raven, Deep Petrol and Brass). Brand files and rules in `brand/`.
 - Removed the old brain logo.
+- Tune-Up now ships with its raven mascot in `tune-up/brand/`, and setup sets it as the bot's picture.
 - Added the new headline, a before-and-after explainer, the Tune-Up animated explainer (GIF and MP4), and social images (link card, square post, story) in `brand/`.
 - Credit lines and skill author now read Viaknox.
 - LICENSE copyright holder is now Viaknox Holding LLC.

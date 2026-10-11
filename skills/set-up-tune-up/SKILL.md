@@ -9,7 +9,7 @@ metadata:
   author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
-  version: "0.1.0"
+  version: "0.2.0"
   repository: https://github.com/viaknox/grokbot-skill-index
 ---
 
@@ -39,15 +39,17 @@ Tune-Up is a bot that checks the user's other Grok bots and suggests small fixes
 
 4. **Create the bot.** Use Grok Bot's create-bot tool if you have one. If not, ask Grok Bot to create a new bot. Name: Tune-Up. Title: Bot Evaluator. Instructions: the full text from your file.
 
-5. **Verify.** Re-read the new bot's live instructions. Pass means an exact match with your file. If it does not match, say so and fix it before going on. Do not call setup done until this passes.
+5. **Give it its mascot.** Set the new bot's profile picture to `tune-up/brand/tune-up-avatar-512.png` (the tinkerer raven on its Paper tile). Use Grok Bot's avatar or profile tool if you have one. If you can't set it, tell the user where the file is so they can set it. Never redraw, recolor, or crop the raven.
 
-6. **Offer a routine.** Ask if Tune-Up should run a review on the schedule the user chose. Create the routine only after a yes. Before scheduling, run one review by hand and show the output.
+6. **Verify.** Re-read the new bot's live instructions. Pass means an exact match with your file. If it does not match, say so and fix it before going on. Do not call setup done until this passes.
 
-7. **Supervised first review.** Ask Tune-Up to review one bot the user picks. Show every proposed change in full. Apply nothing until the user says yes to that change.
+7. **Offer a routine.** Ask if Tune-Up should run a review on the schedule the user chose. Create the routine only after a yes. Before scheduling, run one review by hand and show the output.
+
+8. **Supervised first review.** Ask Tune-Up to review one bot the user picks. Show every proposed change in full. Apply nothing until the user says yes to that change.
 
 ## Success check
 
-Worked if: a bot named Tune-Up exists, its live instructions exactly match the filled-in text, no other bot changed, and the user saw the first review's proposed changes before anything was applied.
+Worked if: a bot named Tune-Up exists with the raven mascot as its picture (or the user was told where the file is), its live instructions exactly match the filled-in text, no other bot changed, and the user saw the first review's proposed changes before anything was applied.
 
 Fail if: a bot was created without a yes, the instructions were cut or summarized, or any existing bot was changed, renamed, or deleted.
 
