@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — 2026-10-10
+
+- New Tune-Up brand art from the Viaknox brand kit (v1.7.0): Tune-Up wordmark, lockups, marks, PNGs and tokens renamed `tune-up-*`; README banner, GitHub social preview, explainer (MP4, GIF, still), before/after and social posts all read Tune-Up and github.com/viaknox/tune-up.
+- `brand/BRAND.md` rewritten for Tune-Up; the old grokbot-skill-index repo address is gone. Added `brand/avatar/` (sticker version with a Paper outline for Grok's dark UI).
+- `tune-up/brand/tune-up-explainer-960.gif` replaced with the Tune-Up version.
+
 ## 0.3.0 — 2026-10-10
 
 - Renamed the product from Skill Index (`grokbot-skill-index`) to Tune-Up (`tune-up`). First mention is "Tune-Up for Grok Bot". The skill library is now "the skill index", a feature of Tune-Up.

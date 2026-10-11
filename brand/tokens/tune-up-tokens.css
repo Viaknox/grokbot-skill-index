@@ -1,6 +1,6 @@
-/* Skill Index — product tokens (endorsed product in the Viaknox family).
-   Pairs with 07-Web/brand-tokens.css. Set data-vx-product="skill-index" on the page root. */
-[data-vx-product="skill-index"]{
+/* Tune-Up — product tokens (endorsed product in the Viaknox family).
+   Pairs with 07-Web/brand-tokens.css. Set data-vx-product="tune-up" on the page root. */
+[data-vx-product="tune-up"]{
   --vx-product-base:#08333A;            /* Deep Petrol — text on light, dark surfaces */
   --vx-product-accent:#05ADAA;          /* Lagoon — fills, the pulled card, focus */
   --vx-product-on-accent:#08333A;       /* text on Lagoon (4.9:1) */
