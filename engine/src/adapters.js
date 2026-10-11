@@ -17,6 +17,13 @@ export function headerVars(cfg) {
 export function httpAdapter(cfg, { fetchImpl = fetch, privateTerms = [] } = {}) {
   const bad = headerVars(cfg).filter(n => !AGENT_ENV.test(n));
   if (bad.length) throw new Error(`agent_config.headers may only use \${TUNEUP_AGENT_*} variables; refusing ${bad.map(n => '${' + n + '}').join(', ')}`);
+  // Even an allowed credential only goes to the agent address the user set in their own environment (TUNEUP_AGENT_URL),
+  // never to whatever host a suite file names.
+  if (headerVars(cfg).length) {
+    const origin = (u) => { try { return new URL(u).origin; } catch { return ''; } };
+    const mine = origin(process.env.TUNEUP_AGENT_URL || '');
+    if (!mine || origin(cfg.url) !== mine) throw new Error(`agent_config.headers use your environment variables, so the suite's url must be on the address in TUNEUP_AGENT_URL (now ${mine || 'not set'}); refusing to send them to ${origin(cfg.url) || cfg.url}`);
+  }
   const fill = (v, vars) => typeof v === 'string'
     ? (v === '{{history}}' ? vars.history : v.replaceAll('{{message}}', vars.message).replaceAll('{{instructions}}', vars.instructions ?? ''))
     : Array.isArray(v) ? v.map(x => fill(x, vars))
