@@ -1,4 +1,3 @@
-<!-- TODO: replace banner when Tune-Up wordmark art arrives -->
 <p align="center">
   <img src="brand/github/readme-banner-1600x480.png" alt="Tune-Up by Viaknox. Ask for the job. It finds the right skill. Even one you don't have yet." width="100%" />
 </p>
