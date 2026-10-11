@@ -50,8 +50,12 @@ export function regressions(before, after) {
   const passedAll = (rep) => { const m = {}; for (const r of rep.runs) m[r.case] = (m[r.case] ?? true) && r.passed; return m; };
   const b = passedAll(before), a = passedAll(after);
   const broke = Object.keys(b).filter(c => b[c] && a[c] === false);
-  const oldRules = new Set(before.failures.filter(f => f.bucket === 'rules').map(f => f.case + ':' + f.code));
-  const newRules = after.failures.filter(f => f.bucket === 'rules' && !oldRules.has(f.case + ':' + f.code)).map(f => `${f.case} (${f.code})`);
+  // Rules failures are compared one by one (case, rule and what was violated, counted), so a second leak in a case
+  // that already leaked something else still counts as new.
+  const key = (f) => JSON.stringify([f.case, f.code, f.detail]);
+  const left = new Map(); for (const f of before.failures.filter(f => f.bucket === 'rules')) left.set(key(f), (left.get(key(f)) || 0) + 1);
+  const newRules = after.failures.filter(f => f.bucket === 'rules').filter(f => { const n = left.get(key(f)) || 0; if (n) { left.set(key(f), n - 1); return false; } return true; })
+    .map(f => `${f.case} (${f.code}: ${f.detail})`);
   return [...new Set([...broke, ...newRules])];
 }
 

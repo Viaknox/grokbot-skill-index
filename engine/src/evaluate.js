@@ -4,9 +4,16 @@ import { judgeCase, transcript, JUDGE_MODEL } from './judge.js';
 import { buildReport, runPassed } from './report.js';
 import { scrubber } from './redact.js';
 
+export const CONCURRENCY = 4;
+async function pool(items, n, fn) {
+  const out = new Array(items.length); let next = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]); } }));
+  return out;
+}
+
 export async function evaluate({ suite, instructions, adapter, or, log = () => {}, scrub = scrubber() }) {
-  // Cases run in parallel; repeats of one case run one after another.
-  const perCase = await Promise.all(suite.cases.map(async (c) => {
+  // Up to CONCURRENCY cases run at once (bounds cost and rate-limit bursts); repeats of one case run one after another.
+  const perCase = await pool(suite.cases, CONCURRENCY, async (c) => {
     const runs = [];
     for (let rep = 1; rep <= (suite.repeats || 1); rep++) {
       const history = []; const turns = [];
@@ -23,7 +30,7 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
       log(`${c.id} run ${rep}: ${passed ? 'pass' : 'FAIL'}`);
     }
     return runs;
-  }));
+  });
   const runs = perCase.flat();
   return buildReport({ suite, instructions, adapter, runs, judgeModel: JUDGE_MODEL, evidenceLevel: 2 });
 }

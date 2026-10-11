@@ -49,7 +49,7 @@ test('codex 4: a tune-up that breaks a passing case or adds a rules failure is a
   const rep = (runs, failures = []) => ({ runs, failures });
   const before = rep([{ case: 'a', passed: true }, { case: 'b', passed: false }], [{ case: 'b', bucket: 'done', code: 'x' }]);
   assert.deepEqual(regressions(before, rep([{ case: 'a', passed: false }, { case: 'b', passed: true }])), ['a']);
-  assert.deepEqual(regressions(before, rep([{ case: 'a', passed: true }, { case: 'b', passed: false }], [{ case: 'b', bucket: 'rules', code: 'must_not_say' }])), ['b (must_not_say)']);
+  assert.deepEqual(regressions(before, rep([{ case: 'a', passed: true }, { case: 'b', passed: false }], [{ case: 'b', bucket: 'rules', code: 'must_not_say', detail: 'Revealed "HR"' }])), ['b (must_not_say: Revealed "HR")']);
   assert.deepEqual(regressions(before, rep([{ case: 'a', passed: true }, { case: 'b', passed: true }])), []);
 });
 
@@ -112,4 +112,45 @@ test('codex 10: a suite cannot pull non-TUNEUP_AGENT_* variables into headers; n
     let got; const ok = httpAdapter(cfg('https://agent.example/chat'), { fetchImpl: async (u, i) => { got = i.headers.authorization; return new Response('{"reply":"x"}'); } });
     await ok.turn({ history: [], message: 'hi' }); assert.equal(got, 'Bearer agent-tok');
   } finally { delete process.env.TUNEUP_OPENROUTER_KEY; delete process.env.TUNEUP_AGENT_TOKEN; delete process.env.TUNEUP_AGENT_URL; }
+});
+
+// ---- round 2 (Codex + Aikido on 5d0ee43) ----
+import { spawnSync } from 'node:child_process';
+import { CONCURRENCY } from '../src/evaluate.js';
+
+test('round 2: http agent requests refuse redirects, so headers never follow to another host', async () => {
+  let init; const a = httpAdapter({ url: 'https://agent.example' }, { fetchImpl: async (u, i) => { init = i; return new Response('{"reply":"x"}'); } });
+  await a.turn({ history: [], message: 'hi' }); assert.equal(init.redirect, 'error');
+});
+test('round 2: "booked" backed only by an unrelated action is unsure; generic "done" accepts any action', () => {
+  const seen = { observesTools: true };
+  const f = checkCase({ expect: {} }, [{ reply: 'I booked room B.', tools: [{ name: 'send_email', ok: true }] }], seen).find(x => x.code === 'false_done');
+  assert.ok(f && f.unsure);
+  assert.equal(checkCase({ expect: {} }, [{ reply: 'All set.', tools: [{ name: 'send_email', ok: true }] }], seen).filter(x => x.code === 'false_done').length, 0);
+  assert.equal(checkCase({ expect: {} }, [{ reply: "I've sent it.", tools: [{ name: 'send_email', ok: true }] }], seen).filter(x => x.code === 'false_done').length, 0);
+});
+test('round 2: a second leak in a case that already leaked counts as a new rules failure', () => {
+  const leak = (w) => ({ case: 'c', bucket: 'rules', code: 'must_not_say', detail: `Revealed "${w}"` });
+  const before = { runs: [{ case: 'c', passed: false }], failures: [leak('dentist')] };
+  assert.equal(regressions(before, { runs: [{ case: 'c', passed: false }], failures: [leak('dentist'), leak('HR')] }).length, 1);
+  assert.equal(regressions(before, { runs: [{ case: 'c', passed: false }], failures: [leak('dentist')] }).length, 0);
+});
+test('round 2: a lookup before asking for a missing detail still counts as asking first', () => {
+  const f = checkCase({ expect: { ask_clarify: true } }, [{ reply: 'Which room and what time?', tools: [{ name: 'get_rooms', ok: true }] }], { observesTools: true });
+  assert.equal(f.find(x => x.code === 'ask_clarify').ok, true);
+  const g = checkCase({ expect: { ask_clarify: true } }, [{ reply: 'Which time?', tools: [{ name: 'book_room', ok: true }] }], { observesTools: true });
+  assert.equal(g.find(x => x.code === 'ask_clarify').ok, false);
+});
+test('round 2: cases run at most CONCURRENCY at a time', async () => {
+  let live = 0, peak = 0;
+  const adapter = { observesTools: false, turn: async () => { live++; peak = Math.max(peak, live); await new Promise(r => setTimeout(r, 5)); live--; return { reply: 'ok', tools: null, ms: 1 }; } };
+  const or = { decide: async ({ questions }) => ({ answers: Object.fromEntries(Object.keys(questions).map(k => [k, { noul: 0.9 }])) }) };
+  await evaluate({ suite: { cases: Array.from({ length: 12 }, (_, i) => ({ id: 'c' + i, turns: ['hi'] })) }, instructions: 'x', adapter, or });
+  assert.ok(peak <= CONCURRENCY, String(peak));
+});
+test('round 2: a suite with no cases is refused before anything runs', () => {
+  const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 's.json');
+  writeFileSync(f, JSON.stringify({ agent: 'a', instructions: 'x', agent_config: { type: 'http', url: 'https://x.example' }, cases: [] }));
+  const r = spawnSync(process.execPath, [new URL('../cli.js', import.meta.url).pathname, 'run', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+  assert.equal(r.status, 2); assert.match(r.stderr, /no test cases/);
 });

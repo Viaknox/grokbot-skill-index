@@ -40,7 +40,8 @@ export function httpAdapter(cfg, { fetchImpl = fetch, privateTerms = [] } = {}) 
       const t = Date.now();
       const body = JSON.stringify(fill(cfg.body || { message: '{{message}}' }, { message, history, instructions }));
       if (privateTerms.length && hasPrivate(body)) throw new Error('A word from your --private list is in a test message or the instructions; it was not sent to the agent. Remove it from the suite.');
-      const r = await fetchImpl(cfg.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body, signal: AbortSignal.timeout(cfg.timeout_ms || 60_000) });
+      // redirect: 'error' so headers and the test message never follow a redirect to another host.
+      const r = await fetchImpl(cfg.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body, redirect: 'error', signal: AbortSignal.timeout(cfg.timeout_ms || 60_000) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(`agent endpoint ${r.status}`);
       return { reply: String(pick(j, cfg.reply_path || 'reply') ?? ''), tools: null, tokens: null, ms: Date.now() - t };

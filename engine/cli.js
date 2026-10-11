@@ -53,6 +53,7 @@ if (cmd === 'check') {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
 const suite = JSON.parse(readFileSync(file, 'utf8'));
+if (!Array.isArray(suite.cases) || !suite.cases.length) { console.error('The suite has no test cases. Add at least one case to "cases".'); process.exit(2); }
 const repeats = Number(opt('repeats', suite.repeats ?? 1));
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) { console.error('--repeats (or the suite\'s "repeats") must be a whole number from 1 to 20.'); process.exit(2); }
 suite.repeats = repeats;
@@ -65,6 +66,7 @@ try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_con
 catch (e) { console.error(e.message); process.exit(2); }
 if (suite.agent_config.type === 'http') {
   const vars = headerVars(suite.agent_config);
+  console.error('Use a test copy of your agent: every case is sent ' + repeats + ' time(s), and again after each tune-up, so real actions (bookings, emails) would repeat.');
   console.error(`Test messages go unchanged to your agent at ${suite.agent_config.url}` + (vars.length ? ` with ${vars.join(', ')} from your environment.` : '.') + ' Words in --private are never sent.');
 }
 if (cmd === 'tune' && adapter.acceptsInstructions === false) {
@@ -84,14 +86,15 @@ if (cmd === 'run') {
   if (!existsSync(join(out, 'report.json'))) { console.error(`No report in ${out}. Run \`run\` with the same suite and --out first.`); process.exit(2); }
   const before = read('report.json');
   if (before.suite_id !== suiteId) { console.error(`${out}/report.json was made from a different suite or settings. Run \`run\` again with this suite first.`); process.exit(2); }
-  if (!before.failures.length) { console.log('No failures to tune.'); process.exit(0); }
+  if (!before.failures.length) { const u = before.buckets.filter(b => b.status === 'warn').map(b => b.name); console.log(u.length ? `No confident failures to tune, but these were unsure: ${u.join(', ')}. Review them in report.md, or run again with more --repeats.` : 'No failures to tune.'); process.exit(0); }
   const files = readdirSync(out).map(f => f.match(/^attempt-(\d+)\.json$/)).filter(Boolean).sort((a, b) => a[1] - b[1]);
   // Only attempts made against this exact suite and baseline count; older ones are kept on disk but ignored.
   const attempts = files.map(m => read(m[0])).filter(a => a.suite_id === suiteId && a.baseline_at === before.evaluated_at);
   const n = files.length ? Number(files[files.length - 1][1]) + 1 : 1;
   console.error(`Tune-up attempt ${n}: drafting a fix with ${WRITER_MODEL}…`);
   const fix = await proposeFix(or, { instructions: suite.instructions, failures: before.failures, sacred: suite.sacred || [], cases: suite.cases,
-    tried: attempts.filter(a => a.lift <= 0).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })), scrub });
+    // Every attempt that was not proposed goes back to the writer, including positive-lift ones that broke something.
+    tried: attempts.filter(a => a.lift <= 0 || regressions(before, a.after).length).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })), scrub });
   console.error('Re-running the same tests on the fixed instructions…');
   const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log, scrub });
   const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: after.pass_rate - before.pass_rate, after, cost: or.spent() };
