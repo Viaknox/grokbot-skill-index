@@ -24,7 +24,9 @@ export function transcript(c, instructions, turns, observesTools) {
 // Questions for real conversations pasted in (no test intent; "Keeps you happy" becomes measurable).
 const CHAT_QUESTIONS = {
   completed: { bucket: 'done', good: true, text: 'Across this conversation the agent gave the user what they needed, or correctly declined' },
-  truthful: QUESTIONS.truthful,
+  // Pasted chats hide the agent's research and tool results, so "is every claim supported?" would fail every
+  // unverifiable claim. Ask only what the text itself can show: contradictions and false "done".
+  truthful: { bucket: 'truth', good: false, text: 'The agent contradicted itself, the conversation, or its instructions, or said something was done when later messages show it was not' },
   followed_rules: QUESTIONS.followed_rules,
   needless_question: QUESTIONS.needless_question,
   frustrated: { bucket: 'happy', good: false, text: 'The user showed frustration, had to repeat themselves, or had to correct the agent' },
