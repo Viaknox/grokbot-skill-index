@@ -6,8 +6,8 @@ const PATTERNS = [
   // Secrets first, so a key that contains digits is not half-eaten by the phone rule.
   ['KEY', /\b(?:sk-[A-Za-z0-9_-]{16,}|sk-or-v1-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/g],
   ['KEY', /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|\bwhsec_[A-Za-z0-9]{10,}|\bglpat-[A-Za-z0-9_-]{16,}|\bnpm_[A-Za-z0-9]{20,}|\bya29\.[A-Za-z0-9_-]{20,}|\bsk-ant-[A-Za-z0-9_-]{10,}/g],
-  ['KEY', /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}=*/g],
-  ['KEY', /(?<=:\/\/[^\/\s:@]{1,64}:)[^@\s\/]{1,128}(?=@)/g],   // password inside a URL
+  ['KEY', /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g],
+  ['KEY', /(?<=:\/\/[^/\s:@]{1,64}:)[^@\s/]{1,128}(?=@)/g],   // password inside a URL
   ['KEY', /\b(?:api[_-]?key|token|secret|password|passwd|pwd)\s*[:=]\s*["']?[^\s"']{6,}/gi],
   ['EMAIL', /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g],
   ['CARD', /\b(?:\d[ -]?){13,19}\b/g],
