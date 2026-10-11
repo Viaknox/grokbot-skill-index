@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.3 — 2026-10-10
 
 - Brand assets are now explicitly outside the MIT License: `LICENSE-BRAND.md` (all rights reserved, with allowed uses), `LICENSE.md` in `brand/` and `tune-up/brand/`, and notes in README, TRADEMARK.md, BRAND.md and the skill footers. `LICENSE` itself is unchanged MIT and still covers the code and text.
 
