@@ -2,6 +2,9 @@
 // Agent Tune-Up engine (v0.1).
 //   node engine/cli.js run  <suite.json> [--keyfile path] [--out dir] [--repeats N]
 //       Evaluate the agent: writes <out>/report.json and report.md.
+//   node engine/cli.js check <chats.txt|chats.json> [--instructions file] [--agent name] [--consent] [--keyfile path] [--out dir]
+//       Report card from real chats you paste or export (Level 1). Personal data is scrubbed locally first.
+//       Without --consent only the local rule checks run and nothing leaves this machine.
 //   node engine/cli.js tune <suite.json> [--keyfile path] [--out dir] [--repeats N]
 //       One verified tune-up attempt: draft the smallest fix for the failures in <out>/report.json,
 //       re-run the same tests on it, save <out>/attempt-N.json, and rewrite tune-up.md with the best attempt.
@@ -13,17 +16,43 @@ import { loadKey, client } from './src/openrouter.js';
 import { httpAdapter, modelAdapter } from './src/adapters.js';
 import { evaluate } from './src/evaluate.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
-import { toMarkdown } from './src/report.js';
+import { toMarkdown, buildReport, runPassed } from './src/report.js';
+import { scrubber } from './src/redact.js';
+import { parseTranscripts, checkConversation } from './src/transcripts.js';
+import { judgeConversation, chatState, JUDGE_MODEL } from './src/judge.js';
 
 const [cmd, file, ...rest] = process.argv.slice(2);
 const opt = (name, dflt) => { const i = rest.indexOf('--' + name); return i < 0 ? dflt : (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[i + 1] : true); };
-if (!['run', 'tune'].includes(cmd) || !file) { console.error('usage: node engine/cli.js run|tune <suite.json> [--keyfile path] [--out dir] [--repeats N]'); process.exit(2); }
+if (!['run', 'tune', 'check'].includes(cmd) || !file) { console.error('usage: node engine/cli.js run|tune <suite.json> | check <chats> [--consent] [--keyfile path] [--out dir]'); process.exit(2); }
+const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
+const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed of emails, phone numbers, keys, card and ID numbers on this machine first. Turn on "no training" in your OpenRouter privacy settings.';
+const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
+
+if (cmd === 'check') {
+  const scrub = scrubber();
+  const instructions = opt('instructions') ? readFileSync(opt('instructions'), 'utf8').trim() : '';
+  const convos = parseTranscripts(readFileSync(file, 'utf8'), { agentName: opt('agent') });
+  if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(1); }
+  const or = consent ? client(loadKey(opt('keyfile'))) : null;
+  console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
+  const runs = await Promise.all(convos.map(async (msgs, i) => {
+    const findings = [...checkConversation(msgs), ...(or ? await judgeConversation(or, scrub.scrub(chatState(instructions, msgs)), { hasInstructions: !!instructions }) : [])];
+    return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && scrub.scrub(f.quote) })),
+      turns: msgs.map(m => ({ role: m.role, reply: scrub.scrub(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
+  }));
+  const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
+  rep.scrubbed = scrub.counts();
+  writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
+  const md = toMarkdown(rep, { title: 'Report card' }) + `\nScrubbed before checking: ${Object.entries(rep.scrubbed).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'nothing found'}.` + (or ? ` Model cost: $${or.spent().toFixed(5)}` : '') + '\n';
+  writeFileSync(join(out, 'report.md'), md); console.log(md);
+  process.exit(0);
+}
+if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
 const suite = JSON.parse(readFileSync(file, 'utf8'));
 if (opt('repeats')) suite.repeats = Number(opt('repeats'));
 const or = client(loadKey(opt('keyfile')));
 const adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config) : modelAdapter(suite.agent_config, or);
-const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
 const log = (s) => console.error('  ' + s);
 const read = (f) => JSON.parse(readFileSync(join(out, f), 'utf8'));
 

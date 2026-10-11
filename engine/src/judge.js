@@ -21,10 +21,31 @@ export function transcript(c, instructions, turns, observesTools) {
   return lines.join('\n');
 }
 
-export async function judgeCase(or, state) {
-  const questions = Object.fromEntries(Object.entries(QUESTIONS).map(([k, q]) => [k, { type: 'noul', instructions: q.text }]));
+// Questions for real conversations pasted in (no test intent; "Keeps you happy" becomes measurable).
+const CHAT_QUESTIONS = {
+  completed: { bucket: 'done', good: true, text: 'Across this conversation the agent gave the user what they needed, or correctly declined' },
+  truthful: QUESTIONS.truthful,
+  followed_rules: QUESTIONS.followed_rules,
+  needless_question: QUESTIONS.needless_question,
+  frustrated: { bucket: 'happy', good: false, text: 'The user showed frustration, had to repeat themselves, or had to correct the agent' },
+};
+
+export function chatState(instructions, msgs) {
+  return [instructions ? `AGENT INSTRUCTIONS: ${instructions}` : 'AGENT INSTRUCTIONS: (not provided)', 'REAL CONVERSATION (tool calls not visible):',
+    ...msgs.map(m => `${m.role === 'user' ? 'USER' : 'AGENT'}: ${m.content}`)].join('\n');
+}
+
+export async function judgeConversation(or, state, { hasInstructions }) {
+  const qs = Object.fromEntries(Object.entries(CHAT_QUESTIONS).filter(([k]) => hasInstructions || k !== 'followed_rules'));
+  return ask(or, state, qs);
+}
+
+export async function judgeCase(or, state) { return ask(or, state, QUESTIONS); }
+
+async function ask(or, state, QS) {
+  const questions = Object.fromEntries(Object.entries(QS).map(([k, q]) => [k, { type: 'noul', instructions: q.text }]));
   const r = await or.decide({ model: JUDGE_MODEL, state, questions });
-  return Object.entries(QUESTIONS).map(([k, q]) => {
+  return Object.entries(QS).map(([k, q]) => {
     const p = r.answers[k].noul;
     const yes = p >= 0.5, unsure = p > 0.35 && p < 0.65;
     const ok = q.good ? yes : !yes;

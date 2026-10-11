@@ -9,9 +9,22 @@ Needs Node 20+ and an OpenRouter key in `TUNEUP_OPENROUTER_KEY` or in a file pas
 ```bash
 cd engine
 npm test                                                     # offline unit tests
-node cli.js run  examples/bookbot.suite.json --out my-run    # evaluate: my-run/report.md + report.json
-node cli.js tune examples/bookbot.suite.json --out my-run    # one verified tune-up attempt; run again to retry
+# Check real chats you pasted or exported (Level 1). Without --consent nothing leaves your machine.
+node cli.js check examples/sample-chats.txt --instructions examples/sample-instructions.txt --agent SupportBot
+node cli.js check examples/sample-chats.txt --instructions examples/sample-instructions.txt --agent SupportBot --consent
+
+# Test an agent by re-running cases against it (Level 2), then try a verified tune-up
+node cli.js run  examples/bookbot.suite.json --out my-run --consent    # my-run/report.md + report.json
+node cli.js tune examples/bookbot.suite.json --out my-run --consent    # one verified attempt; run again to retry
 ```
+
+## Your data
+
+- **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), ID numbers and IP addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.
+- **Nothing is sent without `--consent`.** Without it, `check` runs only the local rule checks, and `run`/`tune` stop and explain what would be sent where.
+- **Turn on "no training" in your OpenRouter privacy settings.** That keeps your requests away from providers that train on them.
+
+Pasted chats can be plain text with speaker labels (`User:` / `Bot:`, or your bot's name with `--agent`), with `---` between chats, or JSON exports (`[{role, content}]`, `{messages}`, `{conversations}`).
 
 ## What it checks
 
@@ -42,7 +55,7 @@ A suite (see `examples/bookbot.suite.json`) holds the agent's instructions, the 
 | `http` | Any chatbot with an HTTP endpoint. You set the URL, headers, a body template with `{{message}}` / `{{history}}`, and where the reply is in the response | No |
 | `model` | An agent defined by instructions plus simulated tools, run on an OpenRouter model. Used for demos and for replaying an agent's instructions | Yes |
 
-Grok Bot (an owner-created webhook routine) and transcript paste-in adapters come next.
+Pasted or exported chats go through `check` (see above). A Grok Bot adapter (an owner-created webhook routine) comes next.
 
 ## Status
 

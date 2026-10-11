@@ -15,7 +15,7 @@ export function buildReport({ suite, instructions, adapter, runs, judgeModel, ev
   const all = runs.flatMap(r => r.findings.map(f => ({ ...f, case: r.case, rep: r.rep })));
   const buckets = BUCKETS.map(([id, name]) => {
     const fs = all.filter(f => f.bucket === id);
-    if (id === 'happy') return { id, name, status: 'not_available', reason: 'Needs real conversations; scripted tests cannot show how users feel.' };
+    if (id === 'happy' && !fs.length) return { id, name, status: 'not_available', reason: 'Needs real conversations; scripted tests cannot show how users feel.' };
     if (id === 'tools' && !adapter.observesTools) return { id, name, status: 'not_available', reason: 'This agent does not expose its tool calls.' };
     if (!fs.length) return { id, name, status: 'not_tested', reason: 'No check covered this part.' };
     const failed = fs.filter(f => !f.ok && !f.unsure), unsure = fs.filter(f => f.unsure);
@@ -51,11 +51,12 @@ export function toMarkdown(rep, { title, lift } = {}) {
   const L = [];
   L.push(`# ${title || 'Report card'}: ${rep.agent}`, '');
   L.push(`Evidence: Level ${rep.evidence_level} (${['', 'chats only', 're-run tested', 'live telemetry'][rep.evidence_level]}) · ${rep.cases} test cases × ${rep.repeats} runs · judge ${rep.judge} · rubric ${rep.rubric} · ${rep.evaluated_at.slice(0, 10)}`, '');
-  L.push(`**Pass rate: ${rep.pass_rate}%**${lift != null ? ` · **Fix lift: ${lift > 0 ? '+' : ''}${lift} points**` : ''}${rep.inconsistent_cases.length ? ` · Inconsistent across runs: ${rep.inconsistent_cases.join(', ')}` : ''}`, '');
+  if (/^none/.test(rep.judge)) L.push('**Rule checks only.** Most of the report card needs the judge; run again with --consent for the full report.', '');
+  else L.push(`**Pass rate: ${rep.pass_rate}%**${lift != null ? ` · **Fix lift: ${lift > 0 ? '+' : ''}${lift} points**` : ''}${rep.inconsistent_cases.length ? ` · Inconsistent across runs: ${rep.inconsistent_cases.join(', ')}` : ''}`, '');
   L.push('| Part | Result | Why |', '| --- | --- | --- |');
   for (const b of rep.buckets) {
     let why = b.reason + (b.quote ? ` — "${b.quote.replace(/\|/g, '/').replace(/\n/g, ' ')}"` : '');
-    if (b.usage) why += ` (avg ${b.usage.avg_seconds}s, ${b.usage.avg_tokens} tokens, ${b.usage.avg_tool_calls} tool calls per case)`;
+    if (b.usage && rep.evidence_level > 1) why += ` (avg ${b.usage.avg_seconds}s, ${b.usage.avg_tokens} tokens, ${b.usage.avg_tool_calls} tool calls per case)`;
     L.push(`| ${b.name} | ${ICON[b.status]} | ${why} |`);
   }
   return L.join('\n') + '\n';
