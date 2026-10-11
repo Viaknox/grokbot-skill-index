@@ -29,6 +29,8 @@ const CHAT_QUESTIONS = {
   truthful: { bucket: 'truth', good: false, text: 'The agent contradicted itself, the conversation, or its instructions, or said something was done when later messages show it was not' },
   followed_rules: QUESTIONS.followed_rules,
   needless_question: QUESTIONS.needless_question,
+  // From calibration v1: the owner's most common reason for a fail was "I had to push it", not a broken rule.
+  initiative: { bucket: 'done', good: false, text: 'The user had to push, prompt or ask again for something the agent should already have done, known or offered without being asked' },
   frustrated: { bucket: 'happy', good: false, text: 'The user showed frustration, had to repeat themselves, or had to correct the agent' },
 };
 
@@ -44,11 +46,14 @@ export async function judgeConversation(or, state, { hasInstructions }) {
 
 export async function judgeCase(or, state) { return ask(or, state, QUESTIONS); }
 
+// The judge varies between calls (calibration v1: 3 of 50 verdicts flipped on a re-run), so each question
+// is asked VOTES times and the probabilities are averaged. Jev costs ~$0.0001 per conversation, so 3x is cheap.
+export const VOTES = 3;
 async function ask(or, state, QS) {
   const questions = Object.fromEntries(Object.entries(QS).map(([k, q]) => [k, { type: 'noul', instructions: q.text }]));
-  const r = await or.decide({ model: JUDGE_MODEL, state, questions });
+  const rs = await Promise.all(Array.from({ length: VOTES }, () => or.decide({ model: JUDGE_MODEL, state, questions })));
   return Object.entries(QS).map(([k, q]) => {
-    const p = r.answers[k].noul;
+    const p = rs.reduce((a, r) => a + r.answers[k].noul, 0) / rs.length;
     const yes = p >= 0.5, unsure = p > 0.35 && p < 0.65;
     const ok = q.good ? yes : !yes;
     return { bucket: q.bucket, code: 'judge:' + k, ok, unsure, p: Math.round(p * 100) / 100, detail: `${q.text} — ${yes ? 'yes' : 'no'} (${Math.round(p * 100)}%)${unsure ? ', unsure' : ''}` };
