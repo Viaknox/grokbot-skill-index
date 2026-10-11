@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="brand/github/readme-banner-1600x480.png" alt="Skill Index by Viaknox. One skill at a time. Or none." width="100%" />
+  <img src="brand/github/readme-banner-1600x480.png" alt="Skill Index by Viaknox. Ask for the job. It finds the right skill. Even one you don't have yet." width="100%" />
 </p>
 
 <h1 align="center">Skill Index for Grok Bot</h1>
 
-<p align="center"><b>One skill at a time. Or none.</b> · by Viaknox™</p>
+<p align="center"><b>Ask for the job. It finds the right skill. Even one you don't have yet.</b><br/>by Viaknox™</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/For-Grok%20Bot-08333A?style=flat-square" alt="For Grok Bot" />
@@ -45,6 +45,8 @@ The bot only sees a short label for each skill: its name and when to use it. The
 
 ## What's the outcome of using it?
 
+<p align="center"><img src="brand/explainer/explainer-before-after-1600x900.png" alt="Without Skill Index every job lives in the bot's instructions. With it, the bot keeps one short line and skills wait in a library." width="100%" /></p>
+
 - **Shorter bot instructions.** Your bots keep one line about the skill index instead of a long file covering every job.
 - **Fewer tokens.** Skills you aren't using stay out of the conversation, so each chat is lighter and cheaper.
 - **More consistent work.** The same job is done the same way every time, because the bot follows the saved skill.
@@ -72,6 +74,8 @@ To set up a bot:
 A skill never overrides who the bot is. The bot's own rules still win.
 
 ## Meet Tune-Up, the bot that improves your bots
+
+<p align="center"><img src="brand/explainer/tune-up-explainer-960.gif" alt="Tune-Up finds and adds a skill from a chat" width="100%" /></p>
 
 Tune-Up is a ready-made Grok bot, titled Bot Evaluator. It checks how your other bots perform and suggests small, clear fixes.
 

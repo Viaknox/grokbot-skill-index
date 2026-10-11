@@ -4,6 +4,7 @@
 
 - New Skill Index brand (tinkerer raven, Deep Petrol and Brass). Brand files and rules in `brand/`.
 - Removed the old brain logo.
+- Added the new headline, a before-and-after explainer, the Tune-Up animated explainer (GIF and MP4), and social images (link card, square post, story) in `brand/`.
 - Credit lines and skill author now read Viaknox.
 - LICENSE copyright holder is now Viaknox Holding LLC.
 - Added Tune-Up, a bot that evaluates and improves your other Grok bots: `skills/set-up-tune-up/SKILL.md` (set it up by asking any bot) and `tune-up/` (paste-ready instructions and a guide).
