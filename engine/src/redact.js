@@ -10,7 +10,7 @@ const PATTERNS = [
   ['KEY', /(?<=:\/\/[^/\s:@]{1,64}:)[^@\s/]{1,128}(?=@)/g],   // password inside a URL
   ['KEY', /\b(?:api[_-]?key|token|secret|password|passwd|pwd)\s*[:=]\s*["']?[^\s"']{6,}/gi],
   ['EMAIL', /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g],
-  ['CARD', /\b(?:\d[ -]?){13,19}\b/g],
+  ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],   // separators only between digits, never after the last one
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
   ['IP', /\b(?:\d{1,3}\.){3}\d{1,3}\b/g],

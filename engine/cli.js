@@ -14,10 +14,10 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { loadKey, client } from './src/openrouter.js';
-import { httpAdapter, modelAdapter } from './src/adapters.js';
+import { httpAdapter, modelAdapter, headerVars } from './src/adapters.js';
 import { evaluate } from './src/evaluate.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
-import { toMarkdown, buildReport, runPassed } from './src/report.js';
+import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
 import { scrubber } from './src/redact.js';
 import { parseTranscripts, checkConversation } from './src/transcripts.js';
 import { judgeConversation, chatState, JUDGE_MODEL } from './src/judge.js';
@@ -60,7 +60,13 @@ suite.repeats = repeats;
 const suiteId = createHash('sha256').update(JSON.stringify(suite)).digest('hex').slice(0, 16);
 const or = client(loadKey(opt('keyfile')));
 const scrub = scrubber({ terms });
-const adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config) : modelAdapter(suite.agent_config, or, { scrub });
+let adapter;
+try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub }); }
+catch (e) { console.error(e.message); process.exit(2); }
+if (suite.agent_config.type === 'http') {
+  const vars = headerVars(suite.agent_config);
+  console.error(`Test messages go unchanged to your agent at ${suite.agent_config.url}` + (vars.length ? ` with ${vars.join(', ')} from your environment.` : '.') + ' Words in --private are never sent.');
+}
 if (cmd === 'tune' && adapter.acceptsInstructions === false) {
   console.error('This http agent has no way to receive new instructions, so a tune-up cannot be verified by re-running it. Add "{{instructions}}" to agent_config.body, or use the model adapter.'); process.exit(2);
 }
@@ -90,14 +96,16 @@ if (cmd === 'run') {
   const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log, scrub });
   const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: after.pass_rate - before.pass_rate, after, cost: or.spent() };
   writeFileSync(join(out, `attempt-${n}.json`), JSON.stringify(attempt, null, 2));
-  const all = [...attempts, attempt];
-  const best = all.reduce((a, b) => (b.lift > a.lift ? b : a));
+  const all = [...attempts, attempt].map(a => ({ ...a, regressions: regressions(before, a.after) }));
+  // A tune-up that breaks something that worked, or adds any rules failure, is never proposed, whatever its lift.
+  const eligible = all.filter(a => a.lift > 0 && !a.regressions.length);
+  const best = eligible.length ? eligible.reduce((a, b) => (b.lift > a.lift ? b : a)) : null;
   let md = toMarkdown(before, { title: 'Report card (before)' });
-  md += `\n## Tune-up attempts\n\n| Attempt | Fix lift | Pass rate after |\n| --- | --- | --- |\n${all.map(a => `| ${a.attempt} | ${a.lift > 0 ? '+' : ''}${a.lift} | ${a.after.pass_rate}% |`).join('\n')}\n`;
-  if (best.lift > 0) {
+  md += `\n## Tune-up attempts\n\n| Attempt | Fix lift | Pass rate after | New failures |\n| --- | --- | --- | --- |\n${all.map(a => `| ${a.attempt} | ${a.lift > 0 ? '+' : ''}${a.lift} | ${a.after.pass_rate}% | ${a.regressions.join(', ') || 'none'} |`).join('\n')}\n`;
+  if (best) {
     md += `\n## Best proposed tune-up: attempt ${best.attempt} (not applied)\n\n${best.fix.changes.map(c => '- ' + c).join('\n')}\n\n**Revised instructions:**\n\n> ${best.fix.revised_instructions.replace(/\n/g, '\n> ')}\n\n`;
     md += toMarkdown(best.after, { title: 'After the best tune-up', lift: best.lift }).replace(/^# /, '## ');
-  } else md += '\nNo attempt improved the agent yet, so there is nothing to propose. Run `tune` again, or review the failures by hand.\n';
+  } else md += `\nNo attempt improved the agent without breaking something else${all.some(a => a.lift > 0) ? ' (attempts with new failures are never proposed)' : ''}, so there is nothing to propose. Run \`tune\` again, or review the failures by hand.\n`;
   md += `\nModel cost for this attempt: $${attempt.cost.toFixed(5)}\n`;
   writeFileSync(join(out, 'tune-up.md'), md); console.log(md);
 }

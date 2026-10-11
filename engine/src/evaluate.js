@@ -13,7 +13,8 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
       for (const message of c.turns) {
         const t = await adapter.turn({ history, message, instructions });
         turns.push(t);
-        history.push({ role: 'user', content: message }, { role: 'assistant', content: t.reply });
+        // Keep tool calls and results in the history when the adapter exposes them (model adapter), not just the reply.
+        history.push({ role: 'user', content: message }, ...(t.messages || [{ role: 'assistant', content: t.reply }]));
       }
       const findings = [...checkCase(c, turns, adapter), ...await judgeCase(or, scrub.scrub(transcript(c, instructions, turns, adapter.observesTools)))];
       const passed = runPassed(findings);

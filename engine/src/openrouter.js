@@ -1,13 +1,16 @@
 // Minimal OpenRouter client. The key comes from the environment (TUNEUP_OPENROUTER_KEY) or a .env-style file
 // passed with --keyfile; it is never logged.
 import { readFileSync } from 'node:fs';
+import { parseEnv } from 'node:util';
 
 export function loadKey(keyfile) {
   if (process.env.TUNEUP_OPENROUTER_KEY) return process.env.TUNEUP_OPENROUTER_KEY.trim();
   if (!keyfile) throw new Error('No OpenRouter key: set TUNEUP_OPENROUTER_KEY or pass --keyfile');
-  const m = readFileSync(keyfile, 'utf8').match(/^\s*(?:export\s+)?[A-Z_]*OPENROUTER[A-Z_]*\s*=\s*"?([^"\r\n]+)"?/im);
-  if (!m) throw new Error('No OPENROUTER line found in ' + keyfile);
-  return m[1].trim();
+  // Node's own dotenv parser: handles quotes, `export`, trailing comments and CRLF, and never runs shell syntax.
+  const vars = parseEnv(readFileSync(keyfile, 'utf8'));
+  const name = Object.keys(vars).find(k => /OPENROUTER/i.test(k) && vars[k].trim());
+  if (!name) throw new Error('No OPENROUTER line found in ' + keyfile);
+  return vars[name].trim();
 }
 
 export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fetch, timeoutMs = 90_000, retries = 4 } = {}) {

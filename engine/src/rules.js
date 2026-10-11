@@ -7,6 +7,10 @@ const NOT_DONE = /\b(fully booked|already booked|not available|unavailable|could
 const word = (s) => new RegExp(`\\b${String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
 const REFUSAL = /\b(can't|cannot|can not|unable to|not able to|won't|not allowed|not permitted)\b/i;
 // An apology alone ("Sorry, Sarah's calendar is…") is not a refusal, so "sorry" is deliberately not listed.
+// A lookup (get_calendar, search_rooms…) succeeding is not evidence that a booking or send happened. Tools can say so
+// explicitly with "read_only": true in the suite; otherwise names that start with a read verb count as lookups.
+const READ = /^(get|list|search|find|read|check|lookup|look_up|fetch|view|query|show)(?:[_-]|$)/i;
+const isRead = (x) => x.readOnly === true || READ.test(String(x.name || ''));
 const QUESTION = /\?\s*$|\b(which|what time|what room|when would|could you (tell|confirm|share))\b/i;
 
 export function checkCase(c, turns, { observesTools }) {
@@ -22,9 +26,11 @@ export function checkCase(c, turns, { observesTools }) {
     turns.forEach((t, i) => {
       // Judge each sentence on its own: "Room C is unavailable, but I booked room B" still claims a booking.
       const claims = (t.reply || '').split(/(?<=[.!?])\s+|\n+|,\s*(?:but|and)\s+/i).some(s => DONE.test(s) && !NOT_DONE.test(s));
-      if (claims && !turns.slice(0, i + 1).some(p => (p.tools || []).some(x => x.ok))) {
-        out.push({ bucket: 'truth', code: 'false_done', ok: false, detail: `Turn ${i + 1} says it's done, but no tool call had succeeded by then`, quote: quote(t.reply) });
-      }
+      if (!claims) return;
+      const done = turns.slice(0, i + 1).flatMap(p => (p.tools || []).filter(x => x.ok));
+      if (!done.length) out.push({ bucket: 'truth', code: 'false_done', ok: false, detail: `Turn ${i + 1} says it's done, but no tool call had succeeded by then`, quote: quote(t.reply) });
+      // Only lookups succeeded: not proof of a false claim (the tool may be misnamed), so it is reported as unsure, never as a pass.
+      else if (done.every(isRead)) out.push({ bucket: 'truth', code: 'false_done', ok: false, unsure: true, detail: `Turn ${i + 1} says it's done, but only lookups (${[...new Set(done.map(x => x.name))].join(', ')}) had succeeded by then`, quote: quote(t.reply) });
     });
   }
   if (e.must_call && observesTools) {

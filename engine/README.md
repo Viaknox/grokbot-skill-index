@@ -21,7 +21,8 @@ node cli.js tune examples/bookbot.suite.json --out my-run --consent    # one ver
 ## Your data
 
 - **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), US Social Security numbers and IPv4 addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. This catches common patterns, not everything: names, street addresses, other IDs (passport or licence numbers) and IPv6 addresses are not detected, so list names in `--private` or remove them before checking. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.
-- **Your own never-send list.** Put names the patterns can't know (your employer, clients, people) in a file, one per line, and pass `--private words.txt`. They become `[PRIVATE_1]`… before anything is sent.
+- **Your own never-send list.** Put names the patterns can't know (your employer, clients, people) in a file, one per line, and pass `--private words.txt`. They become `[PRIVATE_1]`… before anything goes to a remote model, and they are never sent to your own agent either: if a test message for an `http` agent contains one, the run stops before sending it.
+- **What goes where.** Scrubbing covers everything Tune-Up sends to its remote models (the judge, the fix writer, and the `model` adapter, including tool descriptions). An `http` agent is your own bot, so its test messages reach it unchanged (apart from the `--private` rule above): that is what is being tested. `run` and `tune` print the agent URL before the first request.
 - **Nothing is sent without `--consent`.** Without it, `check` runs only the local rule checks, and `run`/`tune` stop and explain what would be sent where.
 - **Turn on "no training" in your OpenRouter privacy settings.** That keeps your requests away from providers that train on them.
 
@@ -53,8 +54,10 @@ A suite (see `examples/bookbot.suite.json`) holds the agent's instructions, the 
 
 | Adapter | Use | Tool calls visible? |
 | --- | --- | --- |
-| `http` | Any chatbot with an HTTP endpoint. You set the URL, headers, a body template with `{{message}}` / `{{history}}` (and `{{instructions}}` if the agent accepts them; `tune` needs it), and where the reply is in the response | No |
-| `model` | An agent defined by instructions plus simulated tools, run on an OpenRouter model. Used for demos and for replaying an agent's instructions. Everything it sends is scrubbed first | Yes |
+| `http` | Any chatbot with an HTTP endpoint. You set the URL, headers, a body template with `{{message}}` / `{{history}}` (and `{{instructions}}` if the agent accepts them; `tune` needs it), and where the reply is in the response. Header values can use environment variables named `TUNEUP_AGENT_*` only (for example `"authorization": "Bearer ${TUNEUP_AGENT_TOKEN}"`); any other `${...}` is refused, so a suite file someone sends you can't read your other secrets | No |
+| `model` | An agent defined by instructions plus simulated tools, run on an OpenRouter model. Used for demos and for replaying an agent's instructions. Everything it sends is scrubbed first. Mark lookup tools with `"read_only": true` (names starting with get/list/search/find/read/check/lookup/fetch/view/query/show count as lookups anyway): a lookup succeeding is not proof that a booking or send happened. A call with no matching simulated case and no `default` counts as a failed call | Yes |
+
+`tune` never proposes an attempt that breaks a case that used to pass or adds a new rules failure, even if its overall lift is positive; the attempts table lists what each one broke.
 
 Pasted or exported chats go through `check` (see above). A Grok Bot adapter (an owner-created webhook routine) comes next.
 
