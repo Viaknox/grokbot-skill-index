@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 — 2026-10-10
+
+- Tune-Up's title is now "Bot that tunes up other bots".
+- Tune-Up's bot picture is the new sticker raven, and the new Tune-Up artwork is in `brand/`.
+- README: TL;DR, plain description, and the problems Tune-Up solves.
+- Agensi-ready zip attached to this release.
+
 ## Unreleased — 2026-10-10
 
 - New Tune-Up brand art from the Viaknox brand kit (v1.7.0): Tune-Up wordmark, lockups, marks, PNGs and tokens renamed `tune-up-*`; README banner, GitHub social preview, explainer (MP4, GIF, still), before/after and social posts all read Tune-Up and github.com/viaknox/tune-up.
