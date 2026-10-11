@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brand/github/readme-banner-1600x480.png" alt="Tune-Up by Viaknox. Ask for the job. It finds the right skill. Even one you don't have yet." width="100%" />
+  <img src="brand/github/readme-banner-1600x480.png" alt="Tune-Up by Viaknox. Tunes up your Grok bots. Loads the right skill only when it's needed." width="100%" />
 </p>
 
 <h1 align="center">Tune-Up for Grok Bot</h1>

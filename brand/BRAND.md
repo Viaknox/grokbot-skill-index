@@ -12,7 +12,7 @@ The raven is **Tune-Up** — the product, and the Grok bot you talk to. A tinker
 - **Spanner** = it does the work, then checks it.
 - **Goggles** = ready to work, careful.
 
-Line: **Ask Tune-Up for the job. It finds the right skill. Even one you don't have yet.** (Library first; if no match, it searches the connected marketplaces and sets the skill up once you say add. It does not rewrite the skill's body, so don't claim it "customises" skills.)
+Line: **Tunes up your Grok bots. Loads the right skill only when it's needed.** (Library first; if no match, it searches the connected marketplaces and sets the skill up once you say add. It does not rewrite the skill's body, so don't claim it "customises" skills.)
 
 ## Raven exception (rule change)
 
@@ -40,6 +40,7 @@ Never on a Tangelo disc, never inside City art, never next to the C mark at the 
 | PNG sizes | `png/tune-up-mark-{16…1024}.png`, lockup PNGs |
 | GitHub | `github/social-preview-1280x640.png`, `github/readme-banner-1600x480.png` |
 | Tokens | `tokens/tune-up-tokens.css` |
+| App / repo icon | `icon/` — `icon.png` (512), SVG, 16–1024 PNGs, `favicon.ico` |
 | Bot avatar | `avatar/` — use `tune-up-sticker-*.png` on Grok (transparent with a Paper outline, works on dark). See `avatar/README.md`. |
 
 ## Colour
