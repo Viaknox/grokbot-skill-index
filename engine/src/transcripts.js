@@ -21,7 +21,10 @@ export function parseTranscripts(raw, { agentName } = {}) {
     return list.map(c => (Array.isArray(c) ? c : c.messages || []).map(norm).filter(m => m.role && m.content)).filter(twoSided);
   }
   const named = agentName ? new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i') : null;
-  return txt.split(/^\s*(?:-{3,}|={3,})\s*$/m).map(block => {
+  // Linear split on separator lines (a regex with \s* around ^/$ was quadratic on long runs of blank lines).
+  const blocks = [[]];
+  for (const line of txt.split(/\r?\n/)) { if (/^[ \t]*(?:-{3,}|={3,})[ \t]*$/.test(line)) blocks.push([]); else blocks[blocks.length - 1].push(line); }
+  return blocks.map(b => b.join('\n')).map(block => {
     const msgs = [];
     for (const line of block.split(/\r?\n/)) {
       let m;

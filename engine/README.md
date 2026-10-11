@@ -20,7 +20,7 @@ node cli.js tune examples/bookbot.suite.json --out my-run --consent    # one ver
 
 ## Your data
 
-- **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), US Social Security numbers and IPv4 addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. Other IDs (passport or licence numbers, IPv6 addresses, names) are not detected yet, so remove them before checking. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.
+- **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), US Social Security numbers and IPv4 addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. This catches common patterns, not everything: names, street addresses, other IDs (passport or licence numbers) and IPv6 addresses are not detected, so list names in `--private` or remove them before checking. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.
 - **Your own never-send list.** Put names the patterns can't know (your employer, clients, people) in a file, one per line, and pass `--private words.txt`. They become `[PRIVATE_1]`… before anything is sent.
 - **Nothing is sent without `--consent`.** Without it, `check` runs only the local rule checks, and `run`/`tune` stop and explain what would be sent where.
 - **Turn on "no training" in your OpenRouter privacy settings.** That keeps your requests away from providers that train on them.
