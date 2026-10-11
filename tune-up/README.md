@@ -6,7 +6,9 @@ Tune-Up is a Grok bot with one job: make your other Grok bots more useful. Its t
 
 It reads how your bots actually perform. It finds misses and waste. It suggests small, clear fixes. It also moves long, repeated procedures out of a bot's instructions and into the skill index, so the bot stays short and cheap to run.
 
-## Two ways to set it up
+## Three ways to set it up
+
+**One click.** Open the [Tune-Up bot template](https://x.ai/bot/EwsD6P3NuMDgp1_sT1MWp) and add it to Grok Bot. Its first chat walks you through installing the plugin and the four setup questions.
 
 **A. Let a bot do it (Tune-Up plugin installed).**
 Tell any Grok bot: "Set up Tune-Up." It will explain what it is about to do and ask you to confirm. Then it asks four short questions:

@@ -4,7 +4,7 @@
 
 <h1 align="center">Agent Tune Up™</h1>
 
-<p align="center"><b>Tune-Up for Grok Bot</b> · <a href="https://github.com/Viaknox/tune-up/releases/latest"><b>Download Agent Tune Up™</b></a></p>
+<p align="center"><b>Tune-Up for Grok Bot</b> · <a href="https://github.com/Viaknox/tune-up/releases/latest"><b>Download Agent Tune Up™</b></a> · <a href="https://x.ai/bot/EwsD6P3NuMDgp1_sT1MWp"><b>Add the Tune-Up bot</b></a></p>
 
 <p align="center"><b>Ask for the job. It finds the right skill. Even one you don't have yet.</b><br/>by Viaknox™</p>
 
@@ -23,7 +23,7 @@
 - **What it is:** a bot that tunes up your other Grok bots, plus a skill index they share.
 - **Problem 1:** bots drift and nobody checks them. Tune-Up reviews them and suggests small fixes you approve.
 - **Problem 2:** bot instructions bloat. The skill index loads the one skill a job needs, so instructions stay short and tokens stay low.
-- **Get it:** install the plugin, then tell any Grok bot "set up Tune-Up".
+- **Get it:** add the [Tune-Up bot in one click](https://x.ai/bot/EwsD6P3NuMDgp1_sT1MWp), or install the plugin and tell any Grok bot "set up Tune-Up".
 
 ## Contents
 
@@ -119,6 +119,8 @@ To set up any bot to use the skill index:
 A skill never overrides who the bot is. The bot's own rules still win.
 
 ## How can you install it?
+
+**Fastest: add the bot in one click.** Open the [Tune-Up bot template](https://x.ai/bot/EwsD6P3NuMDgp1_sT1MWp) and add it to Grok Bot. On its first chat, Tune-Up asks you to install the plugin below, since that holds the skill index, and then asks four quick setup questions.
 
 **Option 1: ask your Grok bot.** Tell it: "Install the Tune-Up plugin from https://github.com/viaknox/tune-up into `~/.cursor/plugins/local/tune-up`." Then reload.
 
