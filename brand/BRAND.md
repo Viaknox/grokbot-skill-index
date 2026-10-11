@@ -1,7 +1,7 @@
 # Skill Index — product mark
 
 **Skill Index for Grok Bot**, by Viaknox. Repo: github.com/viaknox/grokbot-skill-index (MIT).
-Status: `draft` — approved direction from Paul, 10 Oct 2026. Not yet in `brand.manifest.json`.
+Status: approved, 10 Oct 2026.
 
 ## Idea
 
@@ -16,7 +16,7 @@ Line: **One skill at a time. Or none.** (From the plugin's real rule: if two ski
 
 ## Raven exception (rule change)
 
-The guidelines allowed one raven outside the C mark: story-gate's librarian. Skill Index is a second, approved by Paul on 10 Oct 2026. Keep them apart:
+The guidelines allowed one raven outside the C mark: story-gate's librarian. Skill Index is a second, approved on 10 Oct 2026. Keep them apart:
 
 | | story-gate | Skill Index |
 |---|---|---|
