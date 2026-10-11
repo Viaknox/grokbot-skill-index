@@ -46,7 +46,7 @@ export function modelAdapter(cfg, or) {
         const r = await or.chat({ model: cfg.model, messages: msgs, tools: toolDefs.length ? toolDefs : undefined, max_tokens: cfg.max_tokens || 2000, temperature: cfg.temperature ?? 0.7 });
         tokens += (r.usage && r.usage.total_tokens) || 0;
         const m = r.choices[0].message;
-        if (!m.tool_calls || !m.tool_calls.length) return { reply: (m.content || '').trim(), tools, tokens, ms: Date.now() - t };
+        if (!m.tool_calls || !m.tool_calls.length) return { reply: (m.content || '').trim(), tools, tokens, ms: Date.now() - t, truncated: r.choices[0].finish_reason === 'length' };
         msgs.push({ role: 'assistant', content: m.content || '', tool_calls: m.tool_calls });
         for (const c of m.tool_calls) {
           let args = {}; try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* keep {} */ }

@@ -36,7 +36,7 @@ export function buildReport({ suite, instructions, adapter, runs, judgeModel, ev
   return {
     schema: 'tune-up/report@0.1', agent: suite.agent, evaluated_at: new Date().toISOString(),
     evidence_level: evidenceLevel, adapter: adapter.name, judge: judgeModel, rubric: 'six-part@0.1',
-    instructions_sha: hash(instructions), cases: Object.keys(byCase).length, repeats: suite.repeats,
+    instructions_sha: hash(instructions), cases: Object.keys(byCase).length, repeats: suite.repeats || 1,
     pass_rate: passRate, inconsistent_cases: inconsistent, buckets,
     failures: all.filter(f => !f.ok && !f.unsure).map(f => ({ case: f.case, rep: f.rep, bucket: f.bucket, code: f.code, detail: f.detail, quote: f.quote })),
     runs: runs.map(r => ({ case: r.case, rep: r.rep, passed: r.passed, turns: r.turns })),
@@ -44,6 +44,9 @@ export function buildReport({ suite, instructions, adapter, runs, judgeModel, ev
 }
 
 function hash(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h.toString(16); }
+
+// Table cells: a | or a line break inside a reason or quote would split the row.
+const cell = (s) => String(s).replace(/\|/g, '/').replace(/\r?\n/g, ' ');
 
 const ICON = { pass: '✅ pass', warn: '⚠️ warn', fail: '❌ fail', not_available: '— not available', not_tested: '— not tested' };
 
@@ -55,9 +58,9 @@ export function toMarkdown(rep, { title, lift } = {}) {
   else L.push(`**Pass rate: ${rep.pass_rate}%**${lift != null ? ` · **Fix lift: ${lift > 0 ? '+' : ''}${lift} points**` : ''}${rep.inconsistent_cases.length ? ` · Inconsistent across runs: ${rep.inconsistent_cases.join(', ')}` : ''}`, '');
   L.push('| Part | Result | Why |', '| --- | --- | --- |');
   for (const b of rep.buckets) {
-    let why = b.reason + (b.quote ? ` — "${b.quote.replace(/\|/g, '/').replace(/\n/g, ' ')}"` : '');
+    let why = b.reason + (b.quote ? ` — "${b.quote}"` : '');
     if (b.usage && rep.evidence_level > 1) why += ` (avg ${b.usage.avg_seconds}s, ${b.usage.avg_tokens} tokens, ${b.usage.avg_tool_calls} tool calls per case)`;
-    L.push(`| ${b.name} | ${ICON[b.status]} | ${why} |`);
+    L.push(`| ${b.name} | ${ICON[b.status]} | ${cell(why)} |`);
   }
   return L.join('\n') + '\n';
 }

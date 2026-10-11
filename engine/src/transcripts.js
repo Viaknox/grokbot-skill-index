@@ -9,12 +9,14 @@ const AGENT = /^(assistant|bot|ai|agent|grok|chatgpt|claude|gemini|copilot|suppo
 const norm = (m) => ({ role: /^(user|human|customer)$/i.test(m.role || m.author || m.sender || '') ? 'user' : 'assistant',
   content: String(m.content ?? m.text ?? m.message ?? '').trim() });
 
+const twoSided = (c) => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant');
+
 export function parseTranscripts(raw, { agentName } = {}) {
   const txt = String(raw).trim();
   if (txt.startsWith('[') || txt.startsWith('{')) {
     const j = JSON.parse(txt);
     const list = Array.isArray(j) ? (Array.isArray(j[0]) || (j[0] && j[0].messages) ? j : [j]) : (j.conversations || [j]);
-    return list.map(c => (Array.isArray(c) ? c : c.messages || []).map(norm).filter(m => m.content));
+    return list.map(c => (Array.isArray(c) ? c : c.messages || []).map(norm).filter(m => m.content)).filter(twoSided);
   }
   const named = agentName ? new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i') : null;
   return txt.split(/^\s*(?:-{3,}|={3,})\s*$/m).map(block => {
@@ -26,7 +28,7 @@ export function parseTranscripts(raw, { agentName } = {}) {
       else if (msgs.length && line.trim()) msgs[msgs.length - 1].content += '\n' + line;
     }
     return msgs.map(m => ({ ...m, content: m.content.trim() })).filter(m => m.content);
-  }).filter(c => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant'));
+  }).filter(twoSided);
 }
 
 // Rule checks that only make sense on real conversations: friction the user felt.

@@ -12,6 +12,7 @@
 // A fix is a proposal. This tool never applies it to a real agent.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { loadKey, client } from './src/openrouter.js';
 import { httpAdapter, modelAdapter } from './src/adapters.js';
 import { evaluate } from './src/evaluate.js';
@@ -25,7 +26,7 @@ const [cmd, file, ...rest] = process.argv.slice(2);
 const opt = (name, dflt) => { const i = rest.indexOf('--' + name); return i < 0 ? dflt : (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[i + 1] : true); };
 if (!['run', 'tune', 'check'].includes(cmd) || !file) { console.error('usage: node engine/cli.js run|tune <suite.json> | check <chats> [--consent] [--keyfile path] [--out dir]'); process.exit(2); }
 const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
-const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed of emails, phone numbers, keys, card and ID numbers on this machine first. Turn on "no training" in your OpenRouter privacy settings.';
+const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
 const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
 
 if (cmd === 'check') {
@@ -50,29 +51,38 @@ if (cmd === 'check') {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
 const suite = JSON.parse(readFileSync(file, 'utf8'));
-if (opt('repeats')) suite.repeats = Number(opt('repeats'));
+const repeats = Number(opt('repeats', suite.repeats ?? 1));
+if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) { console.error('--repeats (or the suite\'s "repeats") must be a whole number from 1 to 20.'); process.exit(2); }
+suite.repeats = repeats;
+// Ties reports and tune-up attempts to the exact suite they came from, so stale files are never mixed in.
+const suiteId = createHash('sha256').update(JSON.stringify(suite)).digest('hex').slice(0, 16);
 const or = client(loadKey(opt('keyfile')));
 const adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config) : modelAdapter(suite.agent_config, or);
 const log = (s) => console.error('  ' + s);
 const read = (f) => JSON.parse(readFileSync(join(out, f), 'utf8'));
 
 if (cmd === 'run') {
-  console.error(`Evaluating ${suite.agent}: ${suite.cases.length} cases × ${suite.repeats || 1} runs`);
+  console.error(`Evaluating ${suite.agent}: ${suite.cases.length} cases × ${suite.repeats} runs`);
   const rep = await evaluate({ suite, instructions: suite.instructions, adapter, or, log });
+  rep.suite_id = suiteId;
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
   const md = toMarkdown(rep, { title: 'Report card' }) + `\nModel cost for this run: $${or.spent().toFixed(5)}\n`;
   writeFileSync(join(out, 'report.md'), md); console.log(md);
 } else {
+  if (!existsSync(join(out, 'report.json'))) { console.error(`No report in ${out}. Run \`run\` with the same suite and --out first.`); process.exit(2); }
   const before = read('report.json');
+  if (before.suite_id !== suiteId) { console.error(`${out}/report.json was made from a different suite or settings. Run \`run\` again with this suite first.`); process.exit(2); }
   if (!before.failures.length) { console.log('No failures to tune.'); process.exit(0); }
-  const attempts = readdirSync(out).filter(f => /^attempt-\d+\.json$/.test(f)).sort().map(read);
-  const n = attempts.length + 1;
+  const files = readdirSync(out).map(f => f.match(/^attempt-(\d+)\.json$/)).filter(Boolean).sort((a, b) => a[1] - b[1]);
+  // Only attempts made against this exact suite and baseline count; older ones are kept on disk but ignored.
+  const attempts = files.map(m => read(m[0])).filter(a => a.suite_id === suiteId && a.baseline_at === before.evaluated_at);
+  const n = files.length ? Number(files[files.length - 1][1]) + 1 : 1;
   console.error(`Tune-up attempt ${n}: drafting a fix with ${WRITER_MODEL}…`);
   const fix = await proposeFix(or, { instructions: suite.instructions, failures: before.failures, sacred: suite.sacred || [], cases: suite.cases,
     tried: attempts.filter(a => a.lift <= 0).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })) });
   console.error('Re-running the same tests on the fixed instructions…');
   const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log });
-  const attempt = { attempt: n, fix, lift: after.pass_rate - before.pass_rate, after, cost: or.spent() };
+  const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: after.pass_rate - before.pass_rate, after, cost: or.spent() };
   writeFileSync(join(out, `attempt-${n}.json`), JSON.stringify(attempt, null, 2));
   const all = [...attempts, attempt];
   const best = all.reduce((a, b) => (b.lift > a.lift ? b : a));

@@ -20,7 +20,7 @@ node cli.js tune examples/bookbot.suite.json --out my-run --consent    # one ver
 
 ## Your data
 
-- **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), ID numbers and IP addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.
+- **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), US Social Security numbers and IPv4 addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. Other IDs (passport or licence numbers, IPv6 addresses, names) are not detected yet, so remove them before checking. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.
 - **Nothing is sent without `--consent`.** Without it, `check` runs only the local rule checks, and `run`/`tune` stop and explain what would be sent where.
 - **Turn on "no training" in your OpenRouter privacy settings.** That keeps your requests away from providers that train on them.
 

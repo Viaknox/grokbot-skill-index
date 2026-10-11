@@ -10,7 +10,7 @@ export async function proposeFix(or, { instructions, failures, sacred = [], case
   // Everything sent is scrubbed locally; placeholders in the answer are mapped back here, never remotely.
   const S = (t) => scrub.scrub(t);
   const top = [...new Map(failures.map(f => [f.code + f.case, f])).values()].slice(0, 8);
-  const intents = [...new Set(top.map(f => f.case))].map(id => `- [${id}] ${S((cases.find(c => c.id === id) || {}).intent || '')}`);
+  const intents = [...new Set(top.map(f => f.case))].map(id => `- [${S(id)}] ${S((cases.find(c => c.id === id) || {}).intent || '')}`);
   const prompt = [
     'You improve AI agent instructions with the smallest change that makes the failing tests pass.',
     'Rules: keep the agent\'s purpose; keep every SACRED sentence word for word; do not add new features;',
@@ -18,7 +18,7 @@ export async function proposeFix(or, { instructions, failures, sacred = [], case
     'Reply with JSON only: {"revised_instructions": "...full revised instructions...", "changes": ["<failure it fixes>: <what changed>"]}',
     '', `CURRENT INSTRUCTIONS:\n${S(instructions)}`, '', `SACRED:\n${sacred.map(S).join('\n') || '(none)'}`, '',
     'WHAT EACH FAILING TEST EXPECTS:', ...intents, '',
-    'FAILURES FOUND IN TESTING:', ...top.map(f => `- [${f.case}] ${S(f.detail)}${f.quote ? ` (agent said: "${S(f.quote)}")` : ''}`),
+    'FAILURES FOUND IN TESTING:', ...top.map(f => `- [${S(f.case)}] ${S(f.detail)}${f.quote ? ` (agent said: "${S(f.quote)}")` : ''}`),
     ...(tried.length ? ['', 'ALREADY TRIED, DID NOT HELP (do something different):', ...tried.map(t => `- lift ${t.lift} points with: ${S(t.revised_instructions)}`)] : []),
   ].join('\n');
   const r = await or.chat({ model: WRITER_MODEL, messages: [{ role: 'user', content: prompt }], max_tokens: 1200, temperature: 0.2, response_format: { type: 'json_object' } });

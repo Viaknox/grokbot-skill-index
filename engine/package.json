@@ -5,5 +5,5 @@
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=20" },
-  "scripts": { "test": "node --test test/engine.test.js test/paste.test.js" }
+  "scripts": { "test": "node --test test/engine.test.js test/paste.test.js test/review.test.js" }
 }
