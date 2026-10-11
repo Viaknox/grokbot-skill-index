@@ -16,6 +16,13 @@
   A bot that tunes up your other <b>Grok bots</b>, with a built-in skill index. Ask for the job in plain English. The bot picks up one skill. Your bot instructions stay short.
 </p>
 
+## TL;DR
+
+- **What it is:** a bot that tunes up your other Grok bots, plus a skill index they share.
+- **Problem 1:** bots drift and nobody checks them. Tune-Up reviews them and suggests small fixes you approve.
+- **Problem 2:** bot instructions bloat. The skill index loads the one skill a job needs, so instructions stay short and tokens stay low.
+- **Get it:** install the plugin, then tell any Grok bot "set up Tune-Up".
+
 ## Contents
 
 - [What is Tune-Up?](#what-is-tune-up)
