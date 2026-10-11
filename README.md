@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="brand/github/readme-banner-1600x480.png" alt="Tune-Up by Viaknox. Tunes up your Grok bots. Loads the right skill only when it's needed." width="100%" />
+  <img src="brand/github/readme-banner-1600x480.png" alt="Agent Tune Up by Viaknox. Tunes up your Grok bots. Loads the right skill only when it's needed." width="100%" />
 </p>
 
-<h1 align="center">Tune-Up for Grok Bot</h1>
+<h1 align="center">Agent Tune Up™</h1>
+
+<p align="center"><b>Tune-Up for Grok Bot</b> · <a href="https://github.com/Viaknox/tune-up/releases/latest"><b>Download Agent Tune Up™</b></a></p>
 
 <p align="center"><b>Ask for the job. It finds the right skill. Even one you don't have yet.</b><br/>by Viaknox™</p>
 

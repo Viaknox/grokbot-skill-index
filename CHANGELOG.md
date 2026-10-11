@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.4 — 2026-10-10
+
+- README heading is now "Agent Tune Up™" (the product's trademark name), with a download link to the latest release. Tune-Up stays the short name and the repo name.
+- Agensi-ready zip attached to the release as `agent-tune-up-0.3.4.zip`.
+
 ## 0.3.3 — 2026-10-10
 
 - Brand assets are now explicitly outside the MIT License: `LICENSE-BRAND.md` (all rights reserved, with allowed uses), `LICENSE.md` in `brand/` and `tune-up/brand/`, and notes in README, TRADEMARK.md, BRAND.md and the skill footers. `LICENSE` itself is unchanged MIT and still covers the code and text.
