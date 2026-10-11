@@ -7,7 +7,7 @@
 - README: TL;DR, plain description, and the problems Tune-Up solves.
 - Agensi-ready zip attached to this release.
 
-## Unreleased — 2026-10-10
+## 0.3.2 — 2026-10-10
 
 - New line everywhere: "Tunes up your Grok bots. Loads the right skill only when it's needed." README banner, GitHub social preview and social posts updated.
 - Added the Tune-Up icon: `icon.png` (repo root, 512 px) and `brand/icon/` (SVG, 16–1024 px PNGs, favicon.ico).
