@@ -1,6 +1,6 @@
 # Tune-Up — brand
 
-**Tune-Up by Viaknox** — for Grok Bot. Repo: github.com/viaknox/tune-up (MIT). Renamed from Skill Index (`grokbot-skill-index`) on 10 Oct 2026; the plugin name is now `tune-up`.
+**Tune-Up by Viaknox** — for Grok Bot. Repo: github.com/viaknox/tune-up. **These brand files are not MIT licensed** — © Viaknox Holding LLC, all rights reserved; see [../LICENSE-BRAND.md](../LICENSE-BRAND.md). The MIT License covers the code and text only. Renamed from Skill Index (`grokbot-skill-index`) on 10 Oct 2026; the plugin name is now `tune-up`.
 Status: approved, 10 Oct 2026. Source of truth: the private Viaknox brand repo, `12-Product-marks/tune-up/` (v1.7.0). This folder is a copy for the plugin.
 
 ## Idea

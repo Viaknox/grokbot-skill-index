@@ -43,4 +43,4 @@ Write that one skill to the local SQLite library. Only saved skills live there. 
 
 ---
 
-Tune-Up, by Viaknox™. MIT licensed. Viaknox and Agent Tune-Up are trademarks of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. Code and text MIT licensed; brand art is not. Viaknox and Agent Tune-Up are trademarks of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
