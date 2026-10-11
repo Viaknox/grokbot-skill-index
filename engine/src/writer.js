@@ -21,10 +21,14 @@ export async function proposeFix(or, { instructions, failures, sacred = [], case
     'FAILURES FOUND IN TESTING:', ...top.map(f => `- [${S(f.case)}] ${S(f.detail)}${f.quote ? ` (agent said: "${S(f.quote)}")` : ''}`),
     ...(tried.length ? ['', 'ALREADY TRIED, DID NOT HELP (do something different):', ...tried.map(t => `- lift ${t.lift} points with: ${S(t.revised_instructions)}`)] : []),
   ].join('\n');
-  const r = await or.chat({ model: WRITER_MODEL, messages: [{ role: 'user', content: prompt }], max_tokens: 1200, temperature: 0.2, response_format: { type: 'json_object' } });
+  const r = await or.chat({ model: WRITER_MODEL, messages: [{ role: 'user', content: prompt }], max_tokens: Math.max(1200, Math.ceil(instructions.length / 3) + 800), temperature: 0.2, response_format: { type: 'json_object' } });
   const txt = r.choices[0].message.content || '';
   const j = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1));
-  if (typeof j.revised_instructions === 'string') j.revised_instructions = scrub.unscrub(j.revised_instructions);
+  if (typeof j.revised_instructions === 'string') {
+    j.revised_instructions = scrub.unscrub(j.revised_instructions);
+    // The writer sometimes copies the prompt's SACRED list onto the end of the instructions; drop it unless it was there.
+    if (!/^\s*SACRED:/m.test(instructions)) j.revised_instructions = j.revised_instructions.replace(/\n+\s*SACRED:[\s\S]*$/, '').trim();
+  }
   if (typeof j.revised_instructions !== 'string' || j.revised_instructions.trim().length < 20) throw new Error('Fix writer returned no usable instructions');
   j.changes = Array.isArray(j.changes) && j.changes.length ? j.changes.map(c => scrub.unscrub(String(c))) : ['(the writer did not list its changes; compare the instructions)'];
   for (const s of sacred) if (!j.revised_instructions.includes(s)) throw new Error('Fix writer changed a sacred sentence; proposal rejected');

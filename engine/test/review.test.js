@@ -33,3 +33,10 @@ test('never-send list: whole words, any case, restored locally; not inside other
   assert.equal(out, '[PRIVATE_1] terms apply. [PRIVATE_2] said yes. Ivory and ACMEcorp stay.');
   assert.equal(s.unscrub(out), 'Acme corp terms apply. Ivo said yes. Ivory and ACMEcorp stay.');
 });
+
+test('writer: a SACRED list copied onto the end of the instructions is dropped', async () => {
+  const body = 'You are a booking agent. Never share other people\'s calendars.';
+  const or = { chat: async () => ({ choices: [{ message: { content: JSON.stringify({ revised_instructions: body + '\n\nSACRED:\nNever share other people\'s calendars.', changes: ['x'] }) } }] }) };
+  const fix = await proposeFix(or, { instructions: 'You are a booking agent.', failures: [{ case: 'a', code: 'c', detail: 'd' }], sacred: ["Never share other people's calendars."] });
+  assert.equal(fix.revised_instructions, body);
+});
