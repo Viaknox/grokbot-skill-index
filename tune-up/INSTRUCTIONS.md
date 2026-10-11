@@ -117,4 +117,4 @@ In a group chat, post only when someone asks you, or when you have a real change
 
 ---
 
-Tune-Up, by Viaknox™. MIT licensed. Viaknox and Agent Tune-Up are trademarks of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. Code and text MIT licensed; brand art is not. Viaknox and Agent Tune-Up are trademarks of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).

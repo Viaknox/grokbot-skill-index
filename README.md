@@ -172,7 +172,9 @@ No. It's built by Viaknox for Grok Bot users and isn't affiliated with or endors
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Code and text: MIT. See [LICENSE](LICENSE).
+
+Brand assets are **not** MIT licensed: everything in `brand/`, `tune-up/brand/` and `icon.png` (logos, wordmark, the raven mascot, icons, avatars, banners, social images, explainer video) is © Viaknox Holding LLC, all rights reserved. See [LICENSE-BRAND.md](LICENSE-BRAND.md).
 
 ## Trademarks
 

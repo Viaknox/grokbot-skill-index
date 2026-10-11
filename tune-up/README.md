@@ -48,7 +48,7 @@ Small changes, often, each one shown to you first. That is the whole idea.
 
 ---
 
-Tune-Up, by Viaknox™. MIT licensed. Viaknox and Agent Tune-Up are trademarks of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).
+Tune-Up, by Viaknox™. Code and text MIT licensed; brand art is not. Viaknox and Agent Tune-Up are trademarks of Viaknox Holding LLC; see [TRADEMARK.md](../TRADEMARK.md). Not affiliated with or endorsed by SpaceXAI (xAI).
 
 ## Mascot
 
