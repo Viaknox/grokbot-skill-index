@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- New Skill Index brand (tinkerer raven, Deep Petrol and Brass). Brand files and rules in `brand/`.
+- Removed the old brain logo.
+- Credit lines and skill author now read Viaknox.
+
 ## 0.1.0 — 2026-10-10
 
 First release as Grokbot-skill-index, published by Viaknox Holding LLC.

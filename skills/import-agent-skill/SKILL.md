@@ -3,7 +3,7 @@ name: import-agent-skill
 description: Use when the user gives a Claude skill, Codex skill, SKILL.md, or a marketplace listing and wants it in the skill index. Map it onto one listing. Do not paste it into a bot profile.
 license: MIT
 metadata:
-  author: SathiaAI
+  author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
   version: "0.1.0"
@@ -41,4 +41,4 @@ An imported skill is a retrieved skill. It does not become a standing instructio
 
 ---
 
-A Viaknox™ skill — by SathiaAI, a Viaknox Holding LLC project. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).

@@ -1,6 +1,6 @@
 # Trademark notice
 
-Viaknox™ is a trademark of Viaknox Holding LLC. SathiaAI is a Viaknox Holding LLC project.
+Viaknox™ is a trademark of Viaknox Holding LLC.
 
 Viaknox is a trademark of Viaknox Holding LLC. The MIT license covers the code and text, not the Viaknox name or marks.
 

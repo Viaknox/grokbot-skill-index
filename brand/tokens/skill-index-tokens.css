@@ -1,0 +1,15 @@
+/* Skill Index — product tokens (endorsed product in the Viaknox family).
+   Pairs with 07-Web/brand-tokens.css. Set data-vx-product="skill-index" on the page root. */
+[data-vx-product="skill-index"]{
+  --vx-product-base:#08333A;            /* Deep Petrol — text on light, dark surfaces */
+  --vx-product-accent:#05ADAA;          /* Lagoon — fills, the pulled card, focus */
+  --vx-product-on-accent:#08333A;       /* text on Lagoon (4.9:1) */
+  --vx-product-accent-on-dark:#05ADAA;  /* Lagoon text on Petrol (4.9:1) */
+  --vx-product-accent-text:#007376;     /* Lagoon ink — accent text on Paper (5.4:1) */
+  --vx-product-surface:#FFF8F2;         /* Paper */
+  --vx-product-muted:#4F6B6E;           /* secondary text on Paper (5.6:1) */
+  --vx-product-muted-on-dark:#9CB9BA;   /* secondary text on Petrol (6.5:1) */
+  --vx-product-tint:#E6EEEC;            /* Card tint — quiet panels on Paper */
+  --vx-product-deep:#114750;            /* Petrol raised — cards on dark */
+  --vx-product-wordmark:"Rubik"; /* wordmark artwork only — never typed */
+}

@@ -5,7 +5,7 @@ description: >-
   site to search. Show matches. Ask before adding a skill or a search location.
 license: MIT
 metadata:
-  author: SathiaAI
+  author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
   version: "0.1.0"
@@ -43,4 +43,4 @@ Write that one skill to the local SQLite library. Only saved skills live there. 
 
 ---
 
-A Viaknox™ skill — by SathiaAI, a Viaknox Holding LLC project. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).

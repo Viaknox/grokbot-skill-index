@@ -1,29 +1,24 @@
-<h1 align="center">Grokbot-skill-index</h1>
-
-<p align="center"><b>Skill Index for Grok Bot</b> · A Viaknox™ skill — by SathiaAI, a Viaknox Holding LLC project</p>
-
 <p align="center">
-  <img src="logo.png" alt="Grokbot-skill-index" width="280" />
+  <img src="brand/github/readme-banner-1600x480.png" alt="Skill Index by Viaknox. One skill at a time. Or none." width="100%" />
 </p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/For-Grok%20Bot-111111?style=flat-square" alt="For Grok Bot" />
-  <img src="https://img.shields.io/badge/Skill%20library-ask%20in%20plain%20English-111111?style=flat-square" alt="Skill library" />
-  <img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="License: MIT" />
-</p>
+<h1 align="center">Skill Index for Grok Bot</h1>
+
+<p align="center"><b>One skill at a time. Or none.</b> · by Viaknox™</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/One%20skill%20at%20a%20time-111111?style=for-the-badge" alt="One skill at a time" />
-  <img src="https://img.shields.io/badge/Shorter%20bot%20instructions-111111?style=for-the-badge" alt="Shorter bot instructions" />
-  <img src="https://img.shields.io/badge/Fewer%20tokens-111111?style=for-the-badge" alt="Fewer tokens" />
+  <img src="https://img.shields.io/badge/For-Grok%20Bot-08333A?style=flat-square" alt="For Grok Bot" />
+  <img src="https://img.shields.io/badge/Skill%20library-ask%20in%20plain%20English-08333A?style=flat-square" alt="Skill library" />
+  <img src="https://img.shields.io/badge/License-MIT-C9A227?style=flat-square" alt="License: MIT" />
 </p>
 
 <p align="center">
   A skill library for <b>Grok Bot</b>. Ask for the job in plain English. The bot picks up one skill. Your bot instructions stay short.
+</p>
 
 ## Contents
 
-- [What is Grokbot Skill Index?](#what-is-grokbot-skill-index)
+- [What is Skill Index?](#what-is-skill-index)
 - [What's the outcome of using it?](#whats-the-outcome-of-using-it)
 - [How can you use it with Grok Bot?](#how-can-you-use-it-with-grok-bot)
 - [How can you install it?](#how-can-you-install-it)
@@ -31,9 +26,9 @@
 - [License](#license)
 - [Trademarks](#trademarks)
 
-## What is Grokbot Skill Index?
+## What is Skill Index?
 
-Grokbot Skill Index is a skill library for Grok Bot. A skill is a saved way to do one job, such as writing a release note or checking a pull request. Each skill lives in its own file instead of being pasted into a bot's standing instructions.
+Skill Index is a skill library for Grok Bot. A skill is a saved way to do one job, such as writing a release note or checking a pull request. Each skill lives in its own file instead of being pasted into a bot's standing instructions.
 
 The bot only sees a short label for each skill: its name and when to use it. The full instructions load only when you ask for that job. The plugin also helps the bot find new skills in public skill marketplaces and add them to your local library, but only when you say so.
 
@@ -125,6 +120,6 @@ MIT. See [LICENSE](LICENSE).
 
 ## Trademarks
 
-Viaknox is a trademark of Viaknox Holding LLC. The MIT license covers the code and text, not the Viaknox name or marks. See [TRADEMARK.md](TRADEMARK.md).
+Viaknox is a trademark of Viaknox Holding LLC. The MIT license covers the code and text, not the Viaknox name or marks. See [TRADEMARK.md](TRADEMARK.md). Brand files and usage rules are in [brand/BRAND.md](brand/BRAND.md).
 
 Grok and Grok Bot are SpaceXAI (xAI) products, named here only to say what this plugin is built for. Not affiliated with or endorsed by SpaceXAI, xAI, or X.

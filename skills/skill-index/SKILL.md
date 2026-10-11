@@ -6,7 +6,7 @@ description: >-
   index into the standing prompt.
 license: MIT
 metadata:
-  author: SathiaAI
+  author: Viaknox Holding LLC
   publisher: Viaknox Holding LLC
   brand: Viaknox™
   version: "0.1.0"
@@ -76,4 +76,4 @@ Same repo, or a fork of that repo, is another link on the one listing. Do not gu
 
 ---
 
-A Viaknox™ skill — by SathiaAI, a Viaknox Holding LLC project. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
+Skill Index, by Viaknox™. MIT licensed. Viaknox is a trademark of Viaknox Holding LLC; see TRADEMARK.md. Not affiliated with or endorsed by SpaceXAI (xAI).
