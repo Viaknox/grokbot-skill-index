@@ -3,7 +3,9 @@
   "displayName": "Tune-Up",
   "version": "0.3.4",
   "description": "Tune-Up for Grok Bot. A bot that evaluates and improves your Grok bots, with a built-in skill index: ask in plain English and the bot picks up one skill. Shorter instructions, fewer tokens. By Viaknox™.",
-  "author": "Viaknox Holding LLC",
+  "author": {
+    "name": "Viaknox Holding LLC"
+  },
   "license": "MIT",
   "keywords": [
     "Grok Bot",
@@ -16,5 +18,7 @@
     "fewer tokens"
   ],
   "publisher": "Viaknox Holding LLC",
-  "repository": "https://github.com/viaknox/tune-up"
+  "repository": "https://github.com/viaknox/tune-up",
+  "homepage": "https://www.viaknox.com",
+  "logo": "icon.png"
 }
