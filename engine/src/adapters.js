@@ -6,7 +6,7 @@
 //    { "type": "http", "url": "...", "headers": {...}, "body": {...with "{{message}}" / "{{history}}"...}, "reply_path": "a.b.0.c" }
 export function httpAdapter(cfg, { fetchImpl = fetch } = {}) {
   const fill = (v, vars) => typeof v === 'string'
-    ? (v === '{{history}}' ? vars.history : v.replaceAll('{{message}}', vars.message))
+    ? (v === '{{history}}' ? vars.history : v.replaceAll('{{message}}', vars.message).replaceAll('{{instructions}}', vars.instructions ?? ''))
     : Array.isArray(v) ? v.map(x => fill(x, vars))
     : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fill(x, vars)]))
     : v;
@@ -14,10 +14,12 @@ export function httpAdapter(cfg, { fetchImpl = fetch } = {}) {
   const headers = Object.fromEntries(Object.entries(cfg.headers || {}).map(([k, v]) => [k, String(v).replace(/\$\{(\w+)\}/g, (_, n) => process.env[n] || '')]));
   return {
     name: 'http', observesTools: false,
-    async turn({ history, message }) {
+    // Tuning needs a way to hand the agent new instructions; without {{instructions}} in the body there is none.
+    acceptsInstructions: JSON.stringify(cfg.body || {}).includes('{{instructions}}'),
+    async turn({ history, message, instructions }) {
       const t = Date.now();
       const r = await fetchImpl(cfg.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers },
-        body: JSON.stringify(fill(cfg.body || { message: '{{message}}' }, { message, history })), signal: AbortSignal.timeout(cfg.timeout_ms || 60_000) });
+        body: JSON.stringify(fill(cfg.body || { message: '{{message}}' }, { message, history, instructions })), signal: AbortSignal.timeout(cfg.timeout_ms || 60_000) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(`agent endpoint ${r.status}`);
       return { reply: String(pick(j, cfg.reply_path || 'reply') ?? ''), tools: null, tokens: null, ms: Date.now() - t };
@@ -28,7 +30,9 @@ export function httpAdapter(cfg, { fetchImpl = fetch } = {}) {
 // 2) model: an agent defined by instructions + tools, run on an OpenRouter model with simulated tools.
 //    Used for Tune-Up's own demo agents and for "replay" of an agent's instructions. Tools are simulated by
 //    the suite's `tools` map: { name: { description, parameters, cases: [{ when: {arg: value}, result }], default } }.
-export function modelAdapter(cfg, or) {
+// Everything sent to the replay model is scrubbed with `scrub`; its replies and tool arguments are restored locally.
+export function modelAdapter(cfg, or, { scrub } = {}) {
+  const S = (t) => (scrub ? scrub.scrub(t) : t), U = (t) => (scrub ? scrub.unscrub(t) : t);
   const toolDefs = Object.entries(cfg.tools || {}).map(([name, d]) => ({ type: 'function', function: { name, description: d.description, parameters: d.parameters } }));
   const simulate = (name, args) => {
     const d = (cfg.tools || {})[name];
@@ -41,18 +45,19 @@ export function modelAdapter(cfg, or) {
     name: 'model:' + cfg.model, observesTools: true,
     async turn({ history, message, instructions }) {
       const t = Date.now(); const tools = []; let tokens = 0;
-      const msgs = [{ role: 'system', content: instructions }, ...history, { role: 'user', content: message }];
+      const msgs = [{ role: 'system', content: S(instructions) }, ...history.map(h => ({ ...h, content: S(h.content) })), { role: 'user', content: S(message) }];
       for (let hop = 0; hop < 4; hop++) {
         const r = await or.chat({ model: cfg.model, messages: msgs, tools: toolDefs.length ? toolDefs : undefined, max_tokens: cfg.max_tokens || 2000, temperature: cfg.temperature ?? 0.7 });
         tokens += (r.usage && r.usage.total_tokens) || 0;
         const m = r.choices[0].message;
-        if (!m.tool_calls || !m.tool_calls.length) return { reply: (m.content || '').trim(), tools, tokens, ms: Date.now() - t, truncated: r.choices[0].finish_reason === 'length' };
+        if (!m.tool_calls || !m.tool_calls.length) return { reply: U(m.content || '').trim(), tools, tokens, ms: Date.now() - t, truncated: r.choices[0].finish_reason === 'length' };
         msgs.push({ role: 'assistant', content: m.content || '', tool_calls: m.tool_calls });
         for (const c of m.tool_calls) {
-          let args = {}; try { args = JSON.parse(c.function.arguments || '{}'); } catch { /* keep {} */ }
-          const s = simulate(c.function.name, args);
+          let args = {}, s;
+          try { args = JSON.parse(U(c.function.arguments || '{}')); s = simulate(c.function.name, args); }
+          catch { s = { ok: false, result: { error: 'invalid tool arguments (not JSON)' } }; }
           tools.push({ name: c.function.name, args, ok: s.ok, result: s.result });
-          msgs.push({ role: 'tool', tool_call_id: c.id, content: JSON.stringify(s.result) });
+          msgs.push({ role: 'tool', tool_call_id: c.id, content: S(JSON.stringify(s.result)) });
         }
       }
       return { reply: '', tools, tokens, ms: Date.now() - t, note: 'stopped after 4 tool rounds' };

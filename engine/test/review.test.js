@@ -40,3 +40,33 @@ test('writer: a SACRED list copied onto the end of the instructions is dropped',
   const fix = await proposeFix(or, { instructions: 'You are a booking agent.', failures: [{ case: 'a', code: 'c', detail: 'd' }], sacred: ["Never share other people's calendars."] });
   assert.equal(fix.revised_instructions, body);
 });
+
+import { checkCase } from '../src/rules.js';
+import { modelAdapter, httpAdapter } from '../src/adapters.js';
+const seen2 = { observesTools: true };
+test('review: a refusal elsewhere in the reply does not hide a false "booked"', () => {
+  const f = checkCase({ expect: {} }, [{ reply: 'Room C is unavailable, but I booked room B for you.', tools: [] }], seen2);
+  assert.equal(f.filter(x => x.code === 'false_done').length, 1);
+  assert.equal(checkCase({ expect: {} }, [{ reply: 'Room C is fully booked. Want room B instead?', tools: [] }], seen2).filter(x => x.code === 'false_done').length, 0);
+});
+test('review: JSON exports keep only user and agent turns', () => {
+  const c = parseTranscripts(JSON.stringify([{ role: 'system', content: 'secret prompt' }, { role: 'user', content: 'hi' }, { role: 'tool', content: '{}' }, { role: 'assistant', content: 'hello' }]));
+  assert.deepEqual(c[0].map(m => m.role), ['user', 'assistant']);
+  assert.equal(parseTranscripts(JSON.stringify([{ role: 'system', content: 'x' }, { role: 'user', content: 'hi' }])).length, 0);
+});
+test('review: replay model sees only scrubbed text; malformed tool args fail', async () => {
+  const sent = []; let call = 0;
+  const or = { chat: async ({ messages }) => { sent.push(JSON.stringify(messages)); call++;
+    return call === 1 ? { choices: [{ message: { content: '', tool_calls: [{ id: 't1', function: { name: 'book_room', arguments: '{bad json' } }] } }] }
+                      : { choices: [{ message: { content: 'Mail [EMAIL_1] when done.' } }] }; } };
+  const s = scrubber();
+  const a = modelAdapter({ model: 'm', tools: { book_room: { description: 'd', parameters: {}, default: { id: 'R1' } } } }, or, { scrub: s });
+  const t = await a.turn({ history: [{ role: 'assistant', content: 'Hi jo@acme.com' }], message: 'book for jo@acme.com', instructions: 'Agent for jo@acme.com' });
+  assert.ok(sent.every(x => !x.includes('jo@acme.com')));
+  assert.equal(t.tools[0].ok, false);
+  assert.equal(t.reply, 'Mail jo@acme.com when done.');
+});
+test('review: http adapter can only be tuned when its body takes {{instructions}}', () => {
+  assert.equal(httpAdapter({ url: 'x', body: { message: '{{message}}' } }).acceptsInstructions, false);
+  assert.equal(httpAdapter({ url: 'x', body: { system: '{{instructions}}', message: '{{message}}' } }).acceptsInstructions, true);
+});

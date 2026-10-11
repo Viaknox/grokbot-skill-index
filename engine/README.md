@@ -53,8 +53,8 @@ A suite (see `examples/bookbot.suite.json`) holds the agent's instructions, the 
 
 | Adapter | Use | Tool calls visible? |
 | --- | --- | --- |
-| `http` | Any chatbot with an HTTP endpoint. You set the URL, headers, a body template with `{{message}}` / `{{history}}`, and where the reply is in the response | No |
-| `model` | An agent defined by instructions plus simulated tools, run on an OpenRouter model. Used for demos and for replaying an agent's instructions | Yes |
+| `http` | Any chatbot with an HTTP endpoint. You set the URL, headers, a body template with `{{message}}` / `{{history}}` (and `{{instructions}}` if the agent accepts them; `tune` needs it), and where the reply is in the response | No |
+| `model` | An agent defined by instructions plus simulated tools, run on an OpenRouter model. Used for demos and for replaying an agent's instructions. Everything it sends is scrubbed first | Yes |
 
 Pasted or exported chats go through `check` (see above). A Grok Bot adapter (an owner-created webhook routine) comes next.
 

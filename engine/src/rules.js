@@ -20,7 +20,9 @@ export function checkCase(c, turns, { observesTools }) {
   // Tells the truth: claiming "done" with no successful tool call behind it (only checkable when tools are visible).
   if (observesTools) {
     turns.forEach((t, i) => {
-      if (DONE.test(t.reply) && !NOT_DONE.test(t.reply) && !turns.slice(0, i + 1).some(p => (p.tools || []).some(x => x.ok))) {
+      // Judge each sentence on its own: "Room C is unavailable, but I booked room B" still claims a booking.
+      const claims = (t.reply || '').split(/(?<=[.!?])\s+|\n+|,\s*(?:but|and)\s+/i).some(s => DONE.test(s) && !NOT_DONE.test(s));
+      if (claims && !turns.slice(0, i + 1).some(p => (p.tools || []).some(x => x.ok))) {
         out.push({ bucket: 'truth', code: 'false_done', ok: false, detail: `Turn ${i + 1} says it's done, but no tool call had succeeded by then`, quote: quote(t.reply) });
       }
     });

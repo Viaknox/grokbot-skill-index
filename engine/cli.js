@@ -59,9 +59,12 @@ suite.repeats = repeats;
 // Ties reports and tune-up attempts to the exact suite they came from, so stale files are never mixed in.
 const suiteId = createHash('sha256').update(JSON.stringify(suite)).digest('hex').slice(0, 16);
 const or = client(loadKey(opt('keyfile')));
-const adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config) : modelAdapter(suite.agent_config, or);
-const log = (s) => console.error('  ' + s);
 const scrub = scrubber({ terms });
+const adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config) : modelAdapter(suite.agent_config, or, { scrub });
+if (cmd === 'tune' && adapter.acceptsInstructions === false) {
+  console.error('This http agent has no way to receive new instructions, so a tune-up cannot be verified by re-running it. Add "{{instructions}}" to agent_config.body, or use the model adapter.'); process.exit(2);
+}
+const log = (s) => console.error('  ' + s);
 const read = (f) => JSON.parse(readFileSync(join(out, f), 'utf8'));
 
 if (cmd === 'run') {

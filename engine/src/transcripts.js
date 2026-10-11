@@ -6,7 +6,9 @@ import { scrubber } from './redact.js';
 const USER = /^(user|you|me|human|customer|client|visitor|q)\s*:\s*/i;
 const AGENT = /^(assistant|bot|ai|agent|grok|chatgpt|claude|gemini|copilot|support|a)\s*:\s*/i;
 
-const norm = (m) => ({ role: /^(user|human|customer)$/i.test(m.role || m.author || m.sender || '') ? 'user' : 'assistant',
+// Only user and agent turns count; system, developer and tool messages are not part of the conversation.
+const roleOf = (r) => /^(user|human|customer)$/i.test(r) ? 'user' : /^(assistant|bot|ai|agent|model)$/i.test(r) ? 'assistant' : null;
+const norm = (m) => ({ role: roleOf(String(m.role || m.author || m.sender || '')),
   content: String(m.content ?? m.text ?? m.message ?? '').trim() });
 
 const twoSided = (c) => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant');
@@ -16,7 +18,7 @@ export function parseTranscripts(raw, { agentName } = {}) {
   if (txt.startsWith('[') || txt.startsWith('{')) {
     const j = JSON.parse(txt);
     const list = Array.isArray(j) ? (Array.isArray(j[0]) || (j[0] && j[0].messages) ? j : [j]) : (j.conversations || [j]);
-    return list.map(c => (Array.isArray(c) ? c : c.messages || []).map(norm).filter(m => m.content)).filter(twoSided);
+    return list.map(c => (Array.isArray(c) ? c : c.messages || []).map(norm).filter(m => m.role && m.content)).filter(twoSided);
   }
   const named = agentName ? new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i') : null;
   return txt.split(/^\s*(?:-{3,}|={3,})\s*$/m).map(block => {
