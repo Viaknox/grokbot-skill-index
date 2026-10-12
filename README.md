@@ -170,7 +170,7 @@ No. It shows every change first, unless you choose apply-after-yes, and even the
 Rename the plugin folder to `~/.cursor/plugins/local/tune-up` (this keeps any skills you added), run `git pull` inside it, and reload. The old GitHub link redirects here. If you already set up the Tune-Up bot, update its instructions from [tune-up/INSTRUCTIONS.md](tune-up/INSTRUCTIONS.md), because the library path changed.
 
 **Which agents does Tune-Up work with?**
-Grok Bot today. It does not support other agents yet, and we do not promise dates. Ask Tune-Up on [agenttuneup.ai](https://agenttuneup.ai) can pass a message to the team so you hear if that changes.
+The Tune-Up bot and plugin work with Grok Bot today. They don't support other agents yet, and we do not promise dates. Ask Tune-Up on [agenttuneup.ai](https://agenttuneup.ai) can pass a message to the team so you hear if that changes.
 
 **What can Tune-Up touch, and what does it never do?**
 The Tune-Up bot and plugin can review the bots you put in scope, write tests, suggest small fixes, and add a skill to your local library after you say yes. They never change a bot's purpose, never delete or rename a bot without your yes, never apply a change you haven't seen, and never send, post, spend or delete on your behalf. The optional [engine](engine/README.md) is different: `run` and `tune` send test messages to the agent you point them at, so point them at a test copy, because real actions (bookings, emails) would repeat.
