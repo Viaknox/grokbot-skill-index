@@ -1,0 +1,6 @@
+{{PEM_HEAD}}
+{{PEM_BODY 300}}
+{{PEM_FOOT}}
+this line follows a key of more than 16 KB
+{{PEM_HEAD RSA}}
+{{PEM_BODY 1100}}

@@ -1,0 +1,12 @@
+GET /api/v1/rooms HTTP/1.1
+Host: api.example.com
+Authorization: Basic {{BASIC}}
+Authorization: Bearer {{B64 40}}
+Authorization: Digest username="jo", realm="api", nonce="{{HEX 32}}", response="{{HEX 32}}"
+Proxy-Authorization: Basic {{BASIC}}
+Cookie: session={{HEX 32}}; theme=dark
+Set-Cookie: sid={{B64 40}}; Path=/; HttpOnly
+X-Api-Key: {{SECRET 32}}
+X-Auth-Token: {{SECRET 32}}
+Content-Type: application/json
+curl -H 'Authorization: Bearer {{B64 40}}' https://api.example.com/v1/rooms

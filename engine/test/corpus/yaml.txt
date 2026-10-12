@@ -1,0 +1,19 @@
+service:
+  name: api
+  password: {{SECRET 24}}
+  api_key: "{{SECRET 30}}"
+  secret_key: |
+    {{B64 64}}
+    {{B64 64}}
+  token: >
+    {{SECRET 40}}
+    {{SECRET 40}}
+  private_key:
+    {{B64 64}}
+    {{B64 64}}
+  client_secret: '{{SECRET 200}}LEAKED_SUFFIX_{{SECRET 12}}'
+  max_tokens: 128000
+  region: eu-west-1
+other:
+  secretary: Jonathan Smith
+  note: the session timed out

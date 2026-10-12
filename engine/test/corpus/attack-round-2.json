@@ -1,0 +1,242 @@
+[
+  {
+    "name": "properties-continuation-split-name",
+    "why": "Properties continuation can split the credential name so the visible line is not a direct name=value pair.",
+    "input": "pass\\\nword=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ini-section-credential",
+    "why": "INI files often put secrets under a credential-named section with generic value keys.",
+    "input": "[password]\nvalue=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "hocon-object-secret-section",
+    "why": "HOCON object nesting can put the credential concept in a parent key and the secret under a generic child.",
+    "input": "credentials { primary = CorrectHorse9! }",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "terraform-variable-default",
+    "why": "Terraform variable blocks may name the variable as secret while the actual value is under default.",
+    "input": "variable \"db_password\" {\n  type = string\n  default = \"CorrectHorse9!\"\n}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "k8s-stringdata-generic-key",
+    "why": "Kubernetes stringData often stores sensitive values under app-specific keys that are not credential names.",
+    "input": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: app\nstringData:\n  djangoSettings: CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "k8s-data-base64-generic-key",
+    "why": "(was held only) Kubernetes Secret data values are base64 and may sit under arbitrary keys.",
+    "input": "apiVersion: v1\nkind: Secret\ndata:\n  config.yml: {{B64 40}}",
+    "gone": [
+      "{{B64 40}}"
+    ]
+  },
+  {
+    "name": "systemd-envfile-reference",
+    "why": "systemd unit files may carry secrets in ExecStart arguments rather than simple assignments.",
+    "input": "[Service]\nExecStart=/usr/bin/app --login alice --pwfile=/run/secrets/CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ansible-vault-inline",
+    "why": "(was held only) Ansible vault encrypted blobs are secret material but not necessarily matched as credential assignments.",
+    "input": "db_password: !vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  {{HEX 32}}\n  {{HEX 32}}",
+    "gone": [
+      "{{HEX 32}}"
+    ]
+  },
+  {
+    "name": "sql-insert-password-column",
+    "why": "SQL INSERT columns can name a password separately from the VALUES tuple.",
+    "input": "INSERT INTO users (username, password) VALUES ('alice', 'CorrectHorse9!');",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "sql-copy-table",
+    "why": "SQL COPY dumps put credential column headers on one line and data values on following rows.",
+    "input": "COPY users (username, password) FROM stdin;\nalice\tCorrectHorse9!\n\\.",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "saml-attribute-value",
+    "why": "SAML/XML attributes can hold secrets in AttributeValue with credential meaning in a Name attribute.",
+    "input": "<saml:Attribute Name=\"password\"><saml:AttributeValue>CorrectHorse9!</saml:AttributeValue></saml:Attribute>",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "xml-attr-secret-parent",
+    "why": "XML can put credential context in an element name and the actual secret in a generic attribute.",
+    "input": "<credential value=\"CorrectHorse9!\" user=\"alice\"/>",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "xml-signature-keyinfo",
+    "why": "(was held only) XML signatures can include sensitive key material inside KeyInfo children not named private_key.",
+    "input": "<ds:Signature><ds:KeyInfo><ds:KeyName>{{B64 40}}</ds:KeyName></ds:KeyInfo></ds:Signature>",
+    "gone": [
+      "{{B64 40}}"
+    ]
+  },
+  {
+    "name": "html-table-password-column",
+    "why": "HTML tables can put Password in a header and the value in a following cell.",
+    "input": "<table><tr><th>User</th><th>Password</th></tr><tr><td>alice</td><td>CorrectHorse9!</td></tr></table>",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "markdown-table-password-column",
+    "why": "Markdown tables can carry secret semantics in column headers rather than key-value syntax.",
+    "input": "| user | password |\n| --- | --- |\n| alice | CorrectHorse9! |",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "windows-unc-userinfo",
+    "why": "Windows UNC-style resource strings can embed credentials outside URL syntax.",
+    "input": "net use \\\\fileserver\\share /user:EXAMPLE\\alice CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "powershell-securestring-plaintext",
+    "why": "PowerShell SecureString commands can contain cleartext values as positional arguments.",
+    "input": "$s = ConvertTo-SecureString 'CorrectHorse9!' -AsPlainText -Force",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "prose-creds-colon-pair",
+    "why": "Prose credential shorthand may use user:password without a URL scheme.",
+    "input": "The creds are alice:CorrectHorse9! for staging.",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "prose-possessive-pw",
+    "why": "Possessive shorthand can evade exact natural-language patterns.",
+    "input": "the pw's CorrectHorse9!, don't paste it anywhere public",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "multiline-name-separator-value",
+    "why": "Credential name, separator, and value can be split across separate lines with no continuation marker.",
+    "input": "password\n:\nCorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "csv-quoted-multiline-cell",
+    "why": "CSV quoted cells can span lines and carry secret values under a header.",
+    "input": "username,password\nalice,\"Correct\nHorse9!\"",
+    "gone": [
+      "Correct\nHorse9!"
+    ]
+  },
+  {
+    "name": "url-query-token-generic-path",
+    "why": "URLs can carry credential query parameters without known token prefixes.",
+    "input": "https://example.test/callback?state=ok&code=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "cookie-inside-set-cookie-comma",
+    "why": "Cookie values can appear inside combined header blobs with commas and attributes.",
+    "input": "headers=[Set-Cookie sessionid=CorrectHorse9!; HttpOnly; Path=/, content-type=text/html]",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "never-send-normalization-ligature",
+    "why": "(was held only) Compatibility characters can hide never-send terms if only simple folding is used.",
+    "input": "The oﬃce deployment passphrase is CorrectHorse9!",
+    "terms": [
+      "office"
+    ],
+    "gone": [
+      "oﬃce",
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "never-send-greek-homoglyph",
+    "why": "Greek homoglyphs in never-send terms can evade ASCII-only term matching.",
+    "input": "Αcme customer secret is CorrectHorse9!",
+    "terms": [
+      "Acme"
+    ],
+    "gone": [
+      "Αcme",
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "toml-array-of-tables",
+    "why": "TOML arrays of tables can put secret semantics in table names and generic fields.",
+    "input": "[[credentials]]\nname = \"prod\"\nvalue = \"CorrectHorse9!\"",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "python-dict-tuple-pair",
+    "why": "Python config may use tuples of key/value pairs rather than assignments.",
+    "input": "settings = dict([('user','alice'), ('password','CorrectHorse9!')])",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "cpp-designated-init",
+    "why": "(was held only) C++ designated initializers can use credential field names with dot syntax.",
+    "input": "Config cfg{ .user = \"alice\", .password = \"CorrectHorse9!\" };",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "pem-json-escaped-no-footer",
+    "why": "(was held only) JSON-escaped PEM-like material may use escaped newlines and omit a footer.",
+    "input": "{\"key\":\"{{PEM_HEAD RSA}}\\n{{PEM_BODY 3}}\"}",
+    "gone": [
+      "{{PEM_HEAD RSA}}\\n{{PEM_BODY 3}}"
+    ]
+  }
+]

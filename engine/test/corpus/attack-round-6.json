@@ -1,0 +1,10 @@
+[
+  {
+    "name": "placeholder-prefix-secret",
+    "why": "Credential value starts with an existing placeholder token and then continues with a literal secret.",
+    "input": "password=[SECRET_1]CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  }
+]

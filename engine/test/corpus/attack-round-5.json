@@ -1,0 +1,258 @@
+[
+  {
+    "name": "qualified-label-parens",
+    "why": "Credential label has a parenthesized qualifier before the separator, so a strict name-separator matcher may miss it.",
+    "input": "password (prod): CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "qualified-label-brackets",
+    "why": "Credential label has a bracketed qualifier between the name and separator.",
+    "input": "token [staging]: tok_staging_lowentropy",
+    "gone": [
+      "tok_staging_lowentropy"
+    ]
+  },
+  {
+    "name": "qualified-label-slash",
+    "why": "Credential name is followed by a slash qualifier before the separator.",
+    "input": "api key/prod: plain-api-value",
+    "gone": [
+      "plain-api-value"
+    ]
+  },
+  {
+    "name": "git-config-quoted-subsection",
+    "why": "Credential appears as a generic value inside a git-config subsection whose credential meaning is in the quoted subsection.",
+    "input": "[credential \"https://example.com\"]\n\thelper = store\n\tvalue = CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "html-data-credential-attr",
+    "why": "HTML stores the credential name and value in data-* attributes rather than name/id/http-equiv plus value/content.",
+    "input": "<div data-field=\"password\" data-value=\"CorrectHorse9!\"></div>",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "html-aria-label-password",
+    "why": "Credential cue appears in aria-label with the secret in a value attribute.",
+    "input": "<input aria-label=\"Password\" value=\"CorrectHorse9!\">",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "html-placeholder-cue",
+    "why": "Credential cue appears only in placeholder text, not name/id/http-equiv.",
+    "input": "<input placeholder=\"Password\" value=\"CorrectHorse9!\">",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "yaml-sequence-pair",
+    "why": "YAML expresses a credential pair as name/value objects in a sequence.",
+    "input": "- name: password\n  value: CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "yaml-flow-object-name-value",
+    "why": "YAML flow object uses generic name/value keys, with the credential cue in the name value.",
+    "input": "{name: password, value: CorrectHorse9!}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "json-name-value-pair",
+    "why": "JSON uses a generic name/value object rather than a credential key.",
+    "input": "{\"name\":\"password\",\"value\":\"CorrectHorse9!\"}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "json-env-array-pair",
+    "why": "Container env arrays commonly store credential names and values in separate fields.",
+    "input": "{\"env\":[{\"name\":\"DB_PASSWORD\",\"value\":\"CorrectHorse9!\"}]}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "toml-array-of-tables-name-value",
+    "why": "TOML stores env var credentials as name/value entries, not credential keys.",
+    "input": "[[env]]\nname = \"DB_PASSWORD\"\nvalue = \"CorrectHorse9!\"",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ini-name-value-object",
+    "why": "INI section is generic and the credential cue is a value of name, with the secret under generic value.",
+    "input": "[env]\nname=password\nvalue=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "properties-indexed-env",
+    "why": "Indexed property path hides the credential name in a previous sibling field.",
+    "input": "env[0].name=DB_PASSWORD\nenv[0].value=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "spring-relaxed-binding-brackets",
+    "why": "Spring-style indexed properties split name and value across sibling keys.",
+    "input": "app.env[0].name=TOKEN\napp.env[0].value=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "dotenv-array-name-value",
+    "why": "(was held only) Dotenv-like indexed name/value variables keep the credential cue separate from the value variable.",
+    "input": "ENV_0_NAME=PASSWORD\nENV_0_VALUE=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "python-dict-name-value",
+    "why": "Python code uses generic name/value keys in a dict.",
+    "input": "item = {\"name\": \"password\", \"value\": \"CorrectHorse9!\"}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "python-click-option-default",
+    "why": "CLI option declares password semantics while the secret is in a default argument.",
+    "input": "@click.option('--password', default='CorrectHorse9!')\ndef main(password): pass",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "javascript-object-label-value",
+    "why": "JavaScript object stores a credential label and generic value field.",
+    "input": "const field = { label: 'password', value: 'CorrectHorse9!' };",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "go-struct-tag-env",
+    "why": "Go struct tag identifies the env credential, but the value is in a generic Default field.",
+    "input": "type Config struct { Secret string `env:\"PASSWORD\" default:\"CorrectHorse9!\"` }",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "java-annotation-default",
+    "why": "Java annotation value has credential semantics in one attribute and secret in another.",
+    "input": "@ConfigProperty(name=\"password\", defaultValue=\"CorrectHorse9!\") String password;",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "csharp-attribute-name-value",
+    "why": "C# attribute stores credential name and generic default separately.",
+    "input": "[Setting(Name=\"Password\", DefaultValue=\"CorrectHorse9!\")]",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "php-array-name-value",
+    "why": "PHP array uses name/value fields rather than a credential key.",
+    "input": "$field = ['name' => 'password', 'value' => 'CorrectHorse9!'];",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ruby-hash-name-value",
+    "why": "Ruby hash separates the credential cue from the generic value field.",
+    "input": "field = { name: 'password', value: 'CorrectHorse9!' }",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "rust-attribute-env-default",
+    "why": "Rust config attribute names the credential env var and stores secret in a generic default.",
+    "input": "#[config(env = \"PASSWORD\", default = \"CorrectHorse9!\")]\npassword: String,",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "url-path-key-value",
+    "why": "Credential cue and value are encoded as path segments.",
+    "input": "https://example.test/api/token/CorrectHorse9!/status",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "graphql-variable-name-value",
+    "why": "GraphQL variables use generic input object fields with credential cue in a name field.",
+    "input": "mutation { setConfig(input: {name: \"password\", value: \"CorrectHorse9!\"}) }",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "graphql-directive-default",
+    "why": "GraphQL directive carries credential name and generic default separately.",
+    "input": "field @setting(name: \"password\", default: \"CorrectHorse9!\")",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "protobuf-text-name-value",
+    "why": "Protobuf text format uses repeated name/value entries rather than credential keys.",
+    "input": "env { name: \"PASSWORD\" value: \"CorrectHorse9!\" }",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ansible-vars-name-value",
+    "why": "Ansible list of vars stores credential variable name and value as separate keys.",
+    "input": "vars:\n  - var: db_password\n    val: CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "helm-set-json-array",
+    "why": "Helm --set-json carries name/value objects inside a quoted command argument.",
+    "input": "helm upgrade app chart --set-json 'env=[{\"name\":\"PASSWORD\",\"value\":\"CorrectHorse9!\"}]'",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "plist-key-string",
+    "why": "Apple plist stores key and value in adjacent XML elements instead of a credential tag containing text.",
+    "input": "<plist><dict><key>Password</key><string>CorrectHorse9!</string></dict></plist>",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  }
+]

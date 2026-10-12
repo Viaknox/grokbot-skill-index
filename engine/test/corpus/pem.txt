@@ -1,0 +1,26 @@
+{{PEM_HEAD}}
+{{PEM_BODY 4}}
+{{PEM_FOOT}}
+
+{{PEM_HEAD RSA}}
+Proc-Type: 4,ENCRYPTED
+DEK-Info: AES-128-CBC,{{HEX 32}}
+
+{{PEM_BODY 4}}
+{{PEM_FOOT RSA}}
+
+{{PEM_HEAD EC}}
+{{PEM_BODY 2}}
+{{PEM_FOOT EC}}
+{{PEM_HEAD DSA}}
+{{PEM_BODY 3}}
+{{PEM_FOOT DSA}}
+{{PEM_HEAD OPENSSH}}
+{{PEM_BODY 6}}
+
+{{PEM_BODY 2}}
+{{PEM_FOOT OPENSSH}}
+{{PEM_HEAD ENCRYPTED}}
+{{PEM_BODY 4}}
+{{PEM_FOOT ENCRYPTED}}
+after the keys, this text stays

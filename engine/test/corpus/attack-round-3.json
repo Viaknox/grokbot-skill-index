@@ -1,0 +1,117 @@
+[
+  {
+    "name": "french-label-colon",
+    "why": "Non-English credential label may not be in credential-name set or residual name scan.",
+    "input": "Mot de passe: CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "german-label-equals",
+    "why": "German credential label may be missed as a password synonym.",
+    "input": "Passwort = Sommer2026!",
+    "gone": [
+      "Sommer2026!"
+    ]
+  },
+  {
+    "name": "spanish-label-arrow",
+    "why": "Spanish credential label may not be normalized to a covered credential name.",
+    "input": "contraseña -> AzulCasa77!",
+    "gone": [
+      "AzulCasa77!"
+    ]
+  },
+  {
+    "name": "russian-label-colon",
+    "why": "Cyrillic credential word may evade English-only credential detection and residual name=value checks.",
+    "input": "пароль: Zima2026!",
+    "gone": [
+      "Zima2026!"
+    ]
+  },
+  {
+    "name": "japanese-label-equals",
+    "why": "Japanese password label may be outside the covered credential spellings.",
+    "input": "パスワード=TokyoDoor9!",
+    "gone": [
+      "TokyoDoor9!"
+    ]
+  },
+  {
+    "name": "chinese-label-colon",
+    "why": "Chinese password label may not be treated as a credential name.",
+    "input": "密码: Bamboo2026!",
+    "gone": [
+      "Bamboo2026!"
+    ]
+  },
+  {
+    "name": "french-copula",
+    "why": "Other-language natural-language copula may bypass English phrase handling.",
+    "input": "Le mot de passe est CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "german-copula",
+    "why": "German natural-language password phrase may evade prose credential rules.",
+    "input": "Das Passwort ist Sommer2026!",
+    "gone": [
+      "Sommer2026!"
+    ]
+  },
+  {
+    "name": "spanish-copula",
+    "why": "Spanish natural-language password phrase may evade prose credential rules.",
+    "input": "La contraseña es AzulCasa77!",
+    "gone": [
+      "AzulCasa77!"
+    ]
+  },
+  {
+    "name": "ini-semicolon-inline",
+    "why": "Some INI dialects allow an inline comment between key and separator that may break key detection.",
+    "input": "password ; kept by parser\n= CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ini-bracketed-key",
+    "why": "Bracketed INI key syntax may hide the credential name from whole-name matching.",
+    "input": "[database]\n[password]=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "dockerfile-env-space-pair",
+    "why": "Dockerfile ENV supports multiple key value pairs on one line after an uncredentialed directive.",
+    "input": "ENV USER=app PASSWORD CorrectHorse9! HOST=db",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "powershell-credential-object",
+    "why": "Credential value passed as a constructor argument may not match command-line flag or assignment rules.",
+    "input": "$c = New-Object pscredential 'user', 'CorrectHorse9!'",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "never-send-plural",
+    "why": "(was held only) Pluralized never-send term may not match a singular configured term.",
+    "input": "The Acmes account list is attached.",
+    "terms": [
+      "Acme"
+    ],
+    "gone": [
+      "Acmes"
+    ]
+  }
+]
