@@ -251,7 +251,7 @@ test('review: bracketed placeholder turns never count as asking again or correct
 test('review: credentials named like AWS_SECRET_ACCESS_KEY, client_secret or X-Api-Key are removed', () => {
   const s = scrubber();
   const v = (n) => 'v' + String(n).repeat(8);   // made-up values, built here so secret scanners don't flag the test itself
-  const names = ['AWS_SECRET_ACCESS_KEY=', 'SECRET_KEY=', 'PRIVATE_KEY: ', 'client_secret: "', 'X-Api-Key: ', 'db_password='];
+  const names = ['AWS_SECRET_ACCESS_KEY=', 'SECRET_KEY=', 'PRIVATE_KEY: ', 'client_secret: "', 'X-Api-Key: ', 'db_password=', 'accessKeyId: ', 'secretAccessKey='];
   const out = s.scrub(names.map((n, i) => n + v(i)).join('\n') + '\naws key ' + 'ASIA' + 'Q'.repeat(16));
   for (const leak of [...names.map((_, i) => v(i)), 'ASIA' + 'Q'.repeat(16)]) assert.ok(!out.includes(leak), leak);
   assert.equal(s.scrub('the keyboard: fine, secretary: Jo'), 'the keyboard: fine, secretary: Jo');
