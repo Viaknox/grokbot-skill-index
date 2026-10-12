@@ -15,7 +15,8 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { loadKey, client } from './src/openrouter.js';
 import { httpAdapter, modelAdapter, headerVars } from './src/adapters.js';
-import { evaluate } from './src/evaluate.js';
+import { evaluate, pool, CONCURRENCY } from './src/evaluate.js';
+import { validateSuite } from './src/rules.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
 import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
 import { scrubber } from './src/redact.js';
@@ -38,11 +39,12 @@ if (cmd === 'check') {
   if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(1); }
   const or = consent ? client(loadKey(opt('keyfile'))) : null;
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
-  const runs = await Promise.all(convos.map(async (msgs, i) => {
+  // At most CONCURRENCY conversations at once (each asks the judge three times).
+  const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
     const findings = [...checkConversation(msgs), ...(or ? await judgeConversation(or, scrub.scrub(chatState(instructions, msgs)), { hasInstructions: !!instructions }) : [])];
     return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && scrub.scrub(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: scrub.scrub(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
-  }));
+  });
   const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
   rep.scrubbed = scrub.counts();
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
@@ -53,12 +55,13 @@ if (cmd === 'check') {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
 const suite = JSON.parse(readFileSync(file, 'utf8'));
-if (!Array.isArray(suite.cases) || !suite.cases.length) { console.error('The suite has no test cases. Add at least one case to "cases".'); process.exit(2); }
+{ const errs = validateSuite(suite); if (errs.length) { console.error('Fix the suite before running (nothing was sent):\n- ' + errs.join('\n- ')); process.exit(2); } }
 const repeats = Number(opt('repeats', suite.repeats ?? 1));
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) { console.error('--repeats (or the suite\'s "repeats") must be a whole number from 1 to 20.'); process.exit(2); }
 suite.repeats = repeats;
 // Ties reports and tune-up attempts to the exact suite they came from, so stale files are never mixed in.
-const suiteId = createHash('sha256').update(JSON.stringify(suite)).digest('hex').slice(0, 16);
+// The --private list is part of the identity, so a tune-up can never run with a weaker never-send list than its baseline.
+const suiteId = createHash('sha256').update(JSON.stringify(suite) + '\u0000' + JSON.stringify([...terms].map(t => t.toLowerCase()).sort())).digest('hex').slice(0, 16);
 const or = client(loadKey(opt('keyfile')));
 const scrub = scrubber({ terms });
 let adapter;
@@ -67,12 +70,16 @@ catch (e) { console.error(e.message); process.exit(2); }
 if (suite.agent_config.type === 'http') {
   const vars = headerVars(suite.agent_config);
   console.error('Use a test copy of your agent: every case is sent ' + repeats + ' time(s), and again after each tune-up, so real actions (bookings, emails) would repeat.');
-  console.error(`Test messages go unchanged to your agent at ${suite.agent_config.url}` + (vars.length ? ` with ${vars.join(', ')} from your environment.` : '.') + ' Words in --private are never sent.');
+  const where = (() => { try { return new URL(suite.agent_config.url).origin; } catch { return '(invalid url)'; } })();   // origin only: a signed URL's secrets never reach logs
+  console.error(`Test messages go unchanged to your agent at ${where}` + (vars.length ? ` with ${vars.join(', ')} from your environment.` : '.') + ' Words in --private are never sent.');
 }
 if (cmd === 'tune' && adapter.acceptsInstructions === false) {
   console.error('This http agent has no way to receive new instructions, so a tune-up cannot be verified by re-running it. Add "{{instructions}}" to agent_config.body, or use the model adapter.'); process.exit(2);
 }
 const log = (s) => console.error('  ' + s);
+// Lift in percentage points from raw pass counts (reports round pass rates for display only).
+const rate = (rep) => 100 * rep.runs.filter(r => r.passed).length / rep.runs.length;
+const liftOf = (before, after) => rate(after) - rate(before);
 const read = (f) => JSON.parse(readFileSync(join(out, f), 'utf8'));
 
 if (cmd === 'run') {
@@ -97,14 +104,14 @@ if (cmd === 'run') {
     tried: attempts.filter(a => a.lift <= 0 || regressions(before, a.after).length).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })), scrub });
   console.error('Re-running the same tests on the fixed instructions…');
   const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log, scrub });
-  const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: after.pass_rate - before.pass_rate, after, cost: or.spent() };
+  const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: liftOf(before, after), after, cost: or.spent() };
   writeFileSync(join(out, `attempt-${n}.json`), JSON.stringify(attempt, null, 2));
   const all = [...attempts, attempt].map(a => ({ ...a, regressions: regressions(before, a.after) }));
   // A tune-up that breaks something that worked, or adds any rules failure, is never proposed, whatever its lift.
   const eligible = all.filter(a => a.lift > 0 && !a.regressions.length);
   const best = eligible.length ? eligible.reduce((a, b) => (b.lift > a.lift ? b : a)) : null;
   let md = toMarkdown(before, { title: 'Report card (before)' });
-  md += `\n## Tune-up attempts\n\n| Attempt | Fix lift | Pass rate after | New failures |\n| --- | --- | --- | --- |\n${all.map(a => `| ${a.attempt} | ${a.lift > 0 ? '+' : ''}${a.lift} | ${a.after.pass_rate}% | ${a.regressions.join(', ') || 'none'} |`).join('\n')}\n`;
+  md += `\n## Tune-up attempts\n\n| Attempt | Fix lift | Pass rate after | New failures |\n| --- | --- | --- | --- |\n${all.map(a => `| ${a.attempt} | ${a.lift > 0 ? '+' : ''}${Math.round(a.lift * 10) / 10} | ${a.after.pass_rate}% | ${a.regressions.join(', ') || 'none'} |`).join('\n')}\n`;
   if (best) {
     md += `\n## Best proposed tune-up: attempt ${best.attempt} (not applied)\n\n${best.fix.changes.map(c => '- ' + c).join('\n')}\n\n**Revised instructions:**\n\n> ${best.fix.revised_instructions.replace(/\n/g, '\n> ')}\n\n`;
     md += toMarkdown(best.after, { title: 'After the best tune-up', lift: best.lift }).replace(/^# /, '## ');

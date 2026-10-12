@@ -53,6 +53,11 @@ export function httpAdapter(cfg, { fetchImpl = fetch, privateTerms = [] } = {}) 
 //    Used for Tune-Up's own demo agents and for "replay" of an agent's instructions. Tools are simulated by
 //    the suite's `tools` map: { name: { description, parameters, cases: [{ when: {arg: value}, result }], default } }.
 // Everything sent to the replay model is scrubbed with `scrub`; its replies and tool arguments are restored locally.
+// Simulator argument match: scalars case-insensitively, objects and arrays structurally (key order ignored).
+const canon = (v) => Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canon(v[k])])) : v;
+const same = (a, v) => (a !== null && typeof a === 'object') || (v !== null && typeof v === 'object')
+  ? JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(v)) : String(a ?? '').toLowerCase() === String(v).toLowerCase();
+
 export function modelAdapter(cfg, or, { scrub } = {}) {
   const S = (t) => (scrub ? scrub.scrub(t) : t), U = (t) => (scrub ? scrub.unscrub(t) : t);
   // Tool definitions are sent too, so every string in them is scrubbed (descriptions, enums, examples) except
@@ -66,7 +71,7 @@ export function modelAdapter(cfg, or, { scrub } = {}) {
   const simulate = (name, args) => {
     const d = (cfg.tools || {})[name];
     if (!d) return { ok: false, result: { error: 'unknown tool' } };
-    const hit = (d.cases || []).find(c => Object.entries(c.when || {}).every(([k, v]) => String(args[k] ?? '').toLowerCase() === String(v).toLowerCase()));
+    const hit = (d.cases || []).find(c => Object.entries(c.when || {}).every(([k, v]) => same(args[k], v)));
     // No matching case and no default means the simulator has nothing to return: that is a failed call, not a success.
     // A defined result of false, 0, '' or null is still a real result.
     if (hit ? !('result' in hit) : !('default' in d)) return { ok: false, result: { error: 'no simulated result for these arguments' } };

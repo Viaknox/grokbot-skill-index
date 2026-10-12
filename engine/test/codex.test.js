@@ -1,7 +1,8 @@
 // Regression tests for the Codex review of PR #12 (one per finding).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { writeFileSync, mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { modelAdapter, httpAdapter } from '../src/adapters.js';
@@ -160,4 +161,71 @@ test('round 3: "booking confirmed" after an unrelated action is unsure; table-br
   assert.ok(f && f.unsure);
   const r = regressions({ runs: [], failures: [] }, { runs: [], failures: [{ case: 'c', bucket: 'rules', code: 'must_not_say', detail: 'Revealed "a|b\nc"' }] });
   assert.ok(!r[0].includes('|') && !r[0].includes('\n'));
+});
+
+// ---- round 4 (Codex + Aikido on ea3adb1) ----
+import { validateSuite } from '../src/rules.js';
+import { proposeFix } from '../src/writer.js';
+
+test('round 4: the --private list is part of the suite identity (a tune-up cannot weaken it)', () => {
+  const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 's.json'), p = join(d, 'p.txt'), o = join(d, 'o');
+  writeFileSync(f, JSON.stringify({ agent: 'a', instructions: 'x', agent_config: { type: 'model', model: 'm' }, cases: [{ id: 'c', turns: ['hi'] }] }));
+  writeFileSync(p, 'Acme Corp');
+  mkdirSync(o, { recursive: true });
+  // The id a baseline made WITHOUT --private would have (same formula as the CLI, with an empty list).
+  const suite = JSON.parse(readFileSync(f, 'utf8')); suite.repeats = 1;
+  const noPrivate = createHash('sha256').update(JSON.stringify(suite) + '\u0000' + JSON.stringify([])).digest('hex').slice(0, 16);
+  writeFileSync(join(o, 'report.json'), JSON.stringify({ suite_id: noPrivate, failures: [{}], runs: [] }));
+  const r = spawnSync(process.execPath, [new URL('../cli.js', import.meta.url).pathname, 'tune', f, '--consent', '--private', p, '--out', o], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+  assert.equal(r.status, 2); assert.match(r.stderr, /different suite or settings/);
+});
+test('round 4: malformed cases and catastrophic regexes are refused before anything runs', () => {
+  assert.equal(validateSuite({ cases: [{ id: 'a', turns: ['hi'], expect: { must_say_any: ['RB-\\d+'] } }] }).length, 0);
+  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['hi'] }, { id: 'b' }] })[0], /turns/);
+  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['hi'], expect: { must_say_any: ['(a+)+$'] } }] })[0], /too complex/);
+  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['hi'], expect: { must_say_any: ['(unclosed'] } }] })[0], /not a valid regex/);
+});
+test('round 4: forbidden words with accents or symbols are still caught', () => {
+  for (const w of ['René', 'C++', '$100']) {
+    const f = checkCase({ expect: { must_not_say: [w] } }, [{ reply: `It was ${w} today.`, tools: [] }], { observesTools: false });
+    assert.equal(f.find(x => x.code === 'must_not_say').ok, false, w);
+  }
+});
+test('round 4: an earlier success does not cover a later failed attempt; more clause separators', () => {
+  const seen = { observesTools: true };
+  const f = checkCase({ expect: {} }, [{ reply: 'Booked A.', tools: [{ name: 'book_room', ok: true }] }, { reply: "I've booked room B.", tools: [{ name: 'book_room', ok: false }] }], seen);
+  assert.ok(f.some(x => x.code === 'false_done' && !x.unsure));
+  const g = checkCase({ expect: {} }, [{ reply: "Room C is unavailable, so I've booked room B.", tools: [] }], seen);
+  assert.ok(g.some(x => x.code === 'false_done'));
+});
+test('round 4: "sent the booking confirmation" needs a send action', () => {
+  const f = checkCase({ expect: {} }, [{ reply: "I've sent your booking confirmation.", tools: [{ name: 'book_room', ok: true }] }], { observesTools: true });
+  assert.ok(f.some(x => x.code === 'false_done' && x.unsure));
+});
+test('round 4: judge vote percentages do not make an unchanged failure look new; distinct labels stay distinct', () => {
+  const j = (p) => ({ case: 'c', bucket: 'rules', code: 'judge:followed_rules', detail: `The agent followed… — no (${p}%)` });
+  assert.equal(regressions({ runs: [], failures: [j(90)] }, { runs: [], failures: [j(91)] }).length, 0);
+  const l = (w) => ({ case: 'c', bucket: 'rules', code: 'must_not_say', detail: `Revealed "${w}"` });
+  assert.equal(regressions({ runs: [], failures: [] }, { runs: [], failures: [l('a|b'), l('a/b')] }).length, 2);
+});
+test('round 4: key files pick the credential, not other OpenRouter settings', () => {
+  const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 'k.env'); const prev = process.env.TUNEUP_OPENROUTER_KEY; delete process.env.TUNEUP_OPENROUTER_KEY;
+  try { writeFileSync(f, 'OPENROUTER_BASE_URL=https://x\nOPENROUTER_MODEL=m\nOPENROUTER_KEY=sk-or-real\n'); assert.equal(loadKey(f), 'sk-or-real'); }
+  finally { if (prev !== undefined) process.env.TUNEUP_OPENROUTER_KEY = prev; }
+});
+test('round 4: unknown http-agent usage is reported as unknown, not 0', () => {
+  const runs = [{ case: 'c', rep: 1, passed: true, findings: [], turns: [], ms: 10, tokens: null, toolCalls: null }];
+  const rep = buildReport({ suite: { agent: 'a' }, instructions: '', adapter: { name: 'http', observesTools: false }, runs, judgeModel: 'j', evidenceLevel: 2 });
+  const u = rep.buckets.find(b => b.id === 'waste').usage; assert.equal(u.avg_tokens, null); assert.equal(u.avg_tool_calls, null);
+});
+test('round 4: nested simulator arguments are compared structurally', async () => {
+  let n = 0;
+  const a = modelAdapter({ model: 'm', tools: { t: { description: 'd', parameters: {}, cases: [{ when: { where: { room: 'A' } }, result: { r: 'A' } }, { when: { where: { room: 'B' } }, result: { r: 'B' } }] } } },
+    { chat: async () => (++n === 1 ? reply('', [{ id: 'x', function: { name: 't', arguments: '{"where":{"room":"B"}}' } }]) : reply('ok')) }, { scrub: scrubber() });
+  const t = await a.turn({ history: [], message: 'go', instructions: 'x' }); assert.deepEqual(t.tools[0].result, { r: 'B' });
+});
+test('round 4: an unchanged proposal is rejected before any re-run', async () => {
+  const instructions = 'You are BookBot. Book rooms carefully and confirm ids.';
+  const or = { chat: async () => reply(JSON.stringify({ revised_instructions: instructions + '  ', changes: ['x'] })) };
+  await assert.rejects(proposeFix(or, { instructions, failures: [{ case: 'c', code: 'x', detail: 'd' }] }), /unchanged/);
 });

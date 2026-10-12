@@ -29,7 +29,9 @@ export function buildReport({ suite, instructions, adapter, runs, judgeModel, ev
   });
   const waste = runs.reduce((a, r) => ({ ms: a.ms + r.ms, tokens: a.tokens + (r.tokens || 0), toolCalls: a.toolCalls + r.toolCalls }), { ms: 0, tokens: 0, toolCalls: 0 });
   const wb = /** @type {any} */ (buckets.find(b => b.id === 'waste'));
-  wb.usage = { avg_seconds: +(waste.ms / runs.length / 1000).toFixed(1), avg_tokens: Math.round(waste.tokens / runs.length), avg_tool_calls: +(waste.toolCalls / runs.length).toFixed(1) };
+  // Tokens and tool calls are unknown (null) for agents that don't expose them, never shown as 0.
+  const known = (k) => runs.every(r => r[k] !== null && r[k] !== undefined);
+  wb.usage = { avg_seconds: +(waste.ms / runs.length / 1000).toFixed(1), avg_tokens: known('tokens') ? Math.round(waste.tokens / runs.length) : null, avg_tool_calls: known('toolCalls') ? +(waste.toolCalls / runs.length).toFixed(1) : null };
   const byCase = {};
   for (const r of runs) (byCase[r.case] ||= []).push(r.passed);
   const inconsistent = Object.entries(byCase).filter(([, v]) => v.some(Boolean) && v.some(x => !x)).map(([k]) => k);
@@ -52,11 +54,12 @@ export function regressions(before, after) {
   const broke = Object.keys(b).filter(c => b[c] && a[c] === false);
   // Rules failures are compared one by one (case, rule and what was violated, counted), so a second leak in a case
   // that already leaked something else still counts as new.
-  const key = (f) => JSON.stringify([f.case, f.code, f.detail]);
+  // Judge details carry a vote percentage that changes run to run; compare without it.
+  const key = (f) => JSON.stringify([f.case, f.code, String(f.detail || '').replace(/\s*\(\d+%\)(, unsure)?/, '')]);
   const left = new Map(); for (const f of before.failures.filter(f => f.bucket === 'rules')) left.set(key(f), (left.get(key(f)) || 0) + 1);
   const newRules = after.failures.filter(f => f.bucket === 'rules').filter(f => { const n = left.get(key(f)) || 0; if (n) { left.set(key(f), n - 1); return false; } return true; })
-    .map(f => cell(`${f.case} (${f.code}: ${f.detail})`));   // goes into a Markdown table row
-  return [...new Set([...broke.map(cell), ...newRules])];
+    .map(f => `${f.case} (${f.code}: ${f.detail})`);
+  return [...new Set(broke), ...newRules].map(cell);   // escape after de-duplicating, so distinct failures stay distinct
 }
 
 function hash(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h.toString(16); }
@@ -76,7 +79,7 @@ export function toMarkdown(rep, { title, lift } = {}) {
   L.push('| Part | Result | Why |', '| --- | --- | --- |');
   for (const b of rep.buckets) {
     let why = b.reason + (b.quote ? ` — "${b.quote}"` : '');
-    if (b.usage && rep.evidence_level > 1) why += ` (avg ${b.usage.avg_seconds}s, ${b.usage.avg_tokens} tokens, ${b.usage.avg_tool_calls} tool calls per case)`;
+    if (b.usage && rep.evidence_level > 1) why += ` (avg ${b.usage.avg_seconds}s, ${b.usage.avg_tokens ?? 'unknown'} tokens, ${b.usage.avg_tool_calls ?? 'unknown'} tool calls per case)`;
     L.push(`| ${b.name} | ${ICON[b.status]} | ${cell(why)} |`);
   }
   return L.join('\n') + '\n';

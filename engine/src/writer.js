@@ -30,6 +30,8 @@ export async function proposeFix(or, { instructions, failures, sacred = [], case
     if (!/^\s*SACRED:/m.test(instructions)) j.revised_instructions = j.revised_instructions.replace(/\n+\s*SACRED:[\s\S]*$/, '').trim();
   }
   if (typeof j.revised_instructions !== 'string' || j.revised_instructions.trim().length < 20) throw new Error('Fix writer returned no usable instructions');
+  const norm = (s) => s.replace(/\s+/g, ' ').trim();
+  if (norm(j.revised_instructions) === norm(instructions)) throw new Error('Fix writer returned the instructions unchanged; nothing to test');
   j.changes = Array.isArray(j.changes) && j.changes.length ? j.changes.map(c => scrub.unscrub(String(c))) : ['(the writer did not list its changes; compare the instructions)'];
   for (const s of sacred) if (!j.revised_instructions.includes(s)) throw new Error('Fix writer changed a sacred sentence; proposal rejected');
   return j;

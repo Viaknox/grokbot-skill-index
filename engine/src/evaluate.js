@@ -5,7 +5,7 @@ import { buildReport, runPassed } from './report.js';
 import { scrubber } from './redact.js';
 
 export const CONCURRENCY = 4;
-async function pool(items, n, fn) {
+export async function pool(items, n, fn) {
   const out = new Array(items.length); let next = 0;
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i]); } }));
   return out;
@@ -26,7 +26,8 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
       const findings = [...checkCase(c, turns, adapter), ...await judgeCase(or, scrub.scrub(transcript(c, instructions, turns, adapter.observesTools)))];
       const passed = runPassed(findings);
       runs.push({ case: c.id, rep, passed, findings, turns: turns.map(t => ({ reply: t.reply, tools: t.tools, ...(t.truncated ? { truncated: true } : {}) })),
-        ms: turns.reduce((a, t) => a + t.ms, 0), tokens: turns.reduce((a, t) => a + (t.tokens || 0), 0), toolCalls: turns.reduce((a, t) => a + ((t.tools || []).length), 0) });
+        ms: turns.reduce((a, t) => a + t.ms, 0), tokens: turns.some(t => t.tokens == null) ? null : turns.reduce((a, t) => a + t.tokens, 0),
+        toolCalls: adapter.observesTools ? turns.reduce((a, t) => a + ((t.tools || []).length), 0) : null });
       log(`${c.id} run ${rep}: ${passed ? 'pass' : 'FAIL'}`);
     }
     return runs;

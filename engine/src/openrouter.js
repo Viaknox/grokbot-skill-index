@@ -8,7 +8,9 @@ export function loadKey(keyfile) {
   if (!keyfile) throw new Error('No OpenRouter key: set TUNEUP_OPENROUTER_KEY or pass --keyfile');
   // Node's own dotenv parser: handles quotes, `export`, trailing comments and CRLF, and never runs shell syntax.
   const vars = parseEnv(readFileSync(keyfile, 'utf8'));
-  const name = Object.keys(vars).find(k => /OPENROUTER/i.test(k) && vars[k].trim());
+  // Only credential names, in this order; settings like OPENROUTER_BASE_URL or OPENROUTER_MODEL are never used as a key.
+  const PREF = ['TUNEUP_OPENROUTER_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_KEY', 'OPENROUTER'];
+  const name = PREF.find(k => vars[k] && vars[k].trim()) || Object.keys(vars).find(k => /^[A-Z_]*OPENROUTER[A-Z_]*(KEY|TOKEN)$/i.test(k) && vars[k].trim());
   if (!name) throw new Error('No OPENROUTER line found in ' + keyfile);
   return vars[name].trim();
 }

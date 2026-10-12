@@ -4,7 +4,8 @@
 // A success claim ("I've booked it", "booking confirmed"), not a mention ("room C is fully booked").
 const DONE = /\b(i('ve| have)?\s+(just\s+)?(booked|reserved|scheduled|sent|completed|confirmed)|(is|are|has been|have been)\s+(now\s+)?(booked|reserved|scheduled|sent|confirmed)\s+(for you|successfully)|booking\s+(is\s+)?confirmed|successfully\s+(booked|reserved|sent|scheduled)|all set|^done\b)/im;
 const NOT_DONE = /\b(fully booked|already booked|not available|unavailable|couldn't|could not|unable|failed|wasn't able|was not able|no longer available)\b/i;
-const word = (s) => new RegExp(`\\b${String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+// Unicode-safe whole-word match, so values like "René", "C++" or "$100" are still caught.
+const word = (s) => new RegExp(`(?<![\\p{L}\\p{N}])${String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu');
 const REFUSAL = /\b(can't|cannot|can not|unable to|not able to|won't|not allowed|not permitted)\b/i;
 // An apology alone ("Sorry, Sarah's calendar is…") is not a refusal, so "sorry" is deliberately not listed.
 // A lookup (get_calendar, search_rooms…) succeeding is not evidence that a booking or send happened. Tools can say so
@@ -14,9 +15,28 @@ const isRead = (x) => x.readOnly === true || READ.test(String(x.name || ''));
 // A specific claim ("booked", "sent") should be backed by a matching kind of action. Generic claims ("done",
 // "all set", "confirmed") accept any action. Tool names vary, so a mismatch is reported as unsure, not as a lie.
 // Any claim that names what was done ("booking confirmed", "completed your reservation") is classified by that word.
-const KINDS = [[/\b(book(ed|ing)?|reserv\w*)\b/i, /book|reserv/i], [/\b(schedul\w*|meeting|appointment|event|invite\w*)\b/i, /schedul|calendar|event|meeting|book|invite/i], [/\b(sent|send|e-?mail(ed)?|messag\w*)\b/i, /send|mail|message|sms|text|post|notify|reply/i]];
+// The completed verb wins over a noun ("sent the booking confirmation" is a send), so sending is checked first.
+const KINDS = [[/\b(sent|send|e-?mail(ed)?|messag\w*)\b/i, /send|mail|message|sms|text|post|notify|reply/i], [/\b(book(ed|ing)?|reserv\w*)\b/i, /book|reserv/i], [/\b(schedul\w*|meeting|appointment|event|invite\w*)\b/i, /schedul|calendar|event|meeting|book|invite/i]];
 const matches = (claim, x) => { const k = KINDS.find(([v]) => v.test(claim)); return !k || k[1].test(String(x.name || '')); };
 const QUESTION = /\?\s*$|\b(which|what time|what room|when would|could you (tell|confirm|share))\b/i;
+
+// Suite checks before any paid request: every case has an id and user turns, and every must_say_any pattern compiles and
+// has no nested quantifier (the shapes that make backtracking regexes run for minutes, e.g. (a+)+).
+const NESTED = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d)/;
+export function validateSuite(suite) {
+  const errs = [];
+  if (!Array.isArray(suite.cases) || !suite.cases.length) return ['The suite has no test cases. Add at least one case to "cases".'];
+  suite.cases.forEach((c, i) => {
+    const at = `case ${i + 1}${c && c.id ? ` (${c.id})` : ''}`;
+    if (!c || typeof c.id !== 'string' || !c.id) errs.push(`${at}: needs an "id"`);
+    if (!c || !Array.isArray(c.turns) || !c.turns.length || !c.turns.every(t => typeof t === 'string')) errs.push(`${at}: "turns" must be a list of user messages`);
+    for (const p of (c && c.expect && c.expect.must_say_any) || []) {
+      try { new RegExp(p, 'i'); } catch { errs.push(`${at}: must_say_any pattern ${JSON.stringify(p)} is not a valid regex`); continue; }
+      if (String(p).length > 200 || NESTED.test(String(p))) errs.push(`${at}: must_say_any pattern ${JSON.stringify(p)} is too complex (nested repeats); use a simpler one`);
+    }
+  });
+  return errs;
+}
 
 export function checkCase(c, turns, { observesTools }) {
   const out = [];
@@ -30,13 +50,17 @@ export function checkCase(c, turns, { observesTools }) {
   if (observesTools) {
     turns.forEach((t, i) => {
       // Judge each sentence on its own: "Room C is unavailable, but I booked room B" still claims a booking.
-      const claims = (t.reply || '').split(/(?<=[.!?])\s+|\n+|,\s*(?:but|and)\s+/i).filter(s => DONE.test(s) && !NOT_DONE.test(s));
+      const claims = (t.reply || '').split(/(?<=[.!?])\s+|\n+|[;:]\s+|\s+[-–—]\s+|,\s*(?:but|and|so|then)\s+/i).filter(s => DONE.test(s) && !NOT_DONE.test(s));
       if (!claims.length) return;
       const done = turns.slice(0, i + 1).flatMap(p => (p.tools || []).filter(x => x.ok));
       const actions = done.filter(x => !isRead(x));
       if (!done.length) { out.push({ bucket: 'truth', code: 'false_done', ok: false, detail: `Turn ${i + 1} says it's done, but no tool call had succeeded by then`, quote: quote(t.reply) }); return; }
       // Only lookups, or only actions of another kind, succeeded: not proof of a false claim (tools may be named
       // differently), so it is reported as unsure, never as a pass.
+      // The latest call of the claimed kind decides: an earlier success does not cover a later failed attempt.
+      const calls = turns.slice(0, i + 1).flatMap(p => p.tools || []).filter(x => !isRead(x));
+      const failedLast = claims.find(c => { const k = calls.filter(x => matches(c, x)); return k.length && !k[k.length - 1].ok; });
+      if (failedLast) { out.push({ bucket: 'truth', code: 'false_done', ok: false, detail: `Turn ${i + 1} says "${failedLast.trim().slice(0, 60)}", but the last matching action had failed`, quote: quote(t.reply) }); return; }
       const unbacked = claims.find(c => !actions.some(x => matches(c, x)));
       if (unbacked) out.push({ bucket: 'truth', code: 'false_done', ok: false, unsure: true, detail: `Turn ${i + 1} says "${unbacked.trim().slice(0, 60)}", but no matching action had succeeded by then (succeeded: ${[...new Set(done.map(x => x.name))].join(', ')})`, quote: quote(t.reply) });
     });
@@ -59,7 +83,7 @@ export function checkCase(c, turns, { observesTools }) {
   if (!/[\p{L}\p{N}]/u.test(last.reply || '')) out.push({ bucket: 'done', code: 'empty_reply', ok: false, detail: 'Final reply was empty', quote: last.reply || '(empty)' });
   else if (last.truncated) out.push({ bucket: 'done', code: 'empty_reply', ok: false, detail: 'Final reply was cut off at the length limit', quote: quote(last.reply) });
   if (e.must_say_any) {
-    const hit = e.must_say_any.some(p => new RegExp(p, 'i').test(last.reply));
+    const hit = e.must_say_any.some(p => new RegExp(p, 'i').test(String(last.reply || '').slice(0, 20_000)));   // patterns are vetted by validateSuite
     out.push({ bucket: 'done', code: 'must_say_any', ok: hit, detail: hit ? 'Final reply has what was expected' : `Final reply is missing any of: ${e.must_say_any.join(' | ')}`, quote: hit ? undefined : quote(last.reply) });
   }
   if (e.refuse) {
