@@ -1,0 +1,9 @@
+{
+  "name": "agent-tune-up-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=20.12" },
+  "scripts": { "test": "node --test test/engine.test.js test/paste.test.js test/review.test.js test/codex.test.js" }
+}
