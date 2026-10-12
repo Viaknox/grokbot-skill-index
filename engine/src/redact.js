@@ -4,18 +4,25 @@
 
 // Private keys only (public keys and certificates are meant to be shared), header to footer, before anything else
 // (including the owner's never-send words, which could otherwise rename "PRIVATE" in the header).
-const PEM = /-----BEGIN (?:[A-Z0-9]+ ){0,4}PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ ){0,4}PRIVATE KEY-----/g;
+// The body is capped (a 4096-bit RSA key is ~3.3 KB) so a header with no footer can't make every header scan to the end.
+const PEM = /-----BEGIN (?:[A-Z0-9]+ ){0,4}PRIVATE KEY-----[\s\S]{1,16384}?-----END (?:[A-Z0-9]+ ){0,4}PRIVATE KEY-----/g;
 
 // Credential words must be whole parts of the name (split at _, -, and camelCase), so "secretary", "tokenizer" and
 // "passwordless" are ordinary words, while CLIENT_SECRET_CURRENT, apiKey and db-password are credentials.
-const ONE = new Set(['secret', 'secrets', 'token', 'tokens', 'password', 'passwd', 'pwd', 'credential', 'credentials', 'apikey', 'passphrase']);
-const PAIR = new Set(['api key', 'access key', 'private key', 'secret key', 'auth token']);
+// The credential word must end the name, or be followed only by words that describe a version of it
+// (PASSWORD_HASH, CLIENT_SECRET_CURRENT, accessKeyId), so tokenLimit and secretSanta are ordinary settings.
+const ONE = new Set(['secret', 'secrets', 'token', 'tokens', 'password', 'passwords', 'passwd', 'pwd', 'credential', 'credentials', 'passphrase',
+  'apikey', 'apikeys', 'secretkey', 'accesskey', 'privatekey', 'authtoken', 'accesstoken', 'apitoken', 'clientsecret']);
+const PAIR = new Set(['api key', 'access key', 'private key', 'secret key', 'auth token', 'access token', 'api token', 'client secret']);
+const VERSION = new Set(['hash', 'hashed', 'current', 'old', 'new', 'next', 'prev', 'previous', 'backup', 'value', 'id', 'key', 'keys', 'b64', 'base64',
+  'enc', 'encrypted', 'raw', 'prod', 'production', 'dev', 'staging', 'test', 'live', 'primary', 'secondary', 'default', 'v1', 'v2']);
 export function isCredentialName(match) {
   const name = match.slice(0, match.search(/["']?[ \t]*[:=]/));
-  const parts = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[\s_-]+/).filter(Boolean);
+  const parts = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase().split(/[\s_-]+/).filter(Boolean).map(p => p.replace(/s$/, (s) => p.endsWith('ss') ? s : ''));
   const value = match.slice(match.search(/[:=]/) + 1).trim().replace(/^["']|["']$/g, '');
   if (value.length < 6 || /^\[[A-Z]+_\d+\]$/.test(value)) return false;   // too short, or already a placeholder
-  return parts.some((p, i) => ONE.has(p) || PAIR.has(`${p} ${parts[i + 1]}`));
+  const rest = (i) => parts.slice(i).every(p => VERSION.has(p) || /^\d+$/.test(p));
+  return parts.some((p, i) => (ONE.has(p) && rest(i + 1)) || (PAIR.has(`${p} ${parts[i + 1]}`) && rest(i + 2)));
 }
 
 const PATTERNS = [
@@ -25,10 +32,10 @@ const PATTERNS = [
   ['KEY', /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g],
   ['KEY', /(?<=:\/\/[^/\s:@]{1,64}:)[^@\s/]{1,128}(?=@)/g],   // password inside a URL
   // Any setting that holds a credential: AWS_SECRET_ACCESS_KEY=…, PASSWORD_HASH=…, accessKeyId: …, X-Api-Key: …,
-  // CLIENT_SECRET="two words". The name (at most 64 characters, one character class, so it runs in linear time) and
+  // CLIENT_SECRET="two words". The name (at most 128 characters, one character class, so it runs in linear time) and
   // the value are matched here; isCredentialName (above) decides whether the name really is a credential.
-  ['KEY', /\b[A-Za-z][A-Za-z0-9_-]{0,63}["']?[ \t]*[:=][ \t]*(?:"[^"\n]{1,200}"|'[^'\n]{1,200}'|["']?[^\s"',;]{6,})/g, (m) => isCredentialName(m)],
-  ['EMAIL', /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g],
+  ['KEY', /\b[A-Za-z][A-Za-z0-9_-]{0,127}["']?[ \t]*[:=][ \t]*(?:"[^"\n]{1,200}"|'[^'\n]{1,200}'|["']?[^\s"']{6,})/g, (m) => isCredentialName(m)],
+  ['EMAIL', /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}\b/g],   // bounded, so long junk can't make it slow
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],   // separators only between digits, never after the last one
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],

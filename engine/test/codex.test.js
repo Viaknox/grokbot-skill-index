@@ -310,3 +310,28 @@ test('review: identical regression rows from repeated runs are shown once', () =
   const f = { case: 'c', bucket: 'rules', code: 'must_not_say', detail: 'Revealed "x"' };
   assert.equal(regressions({ runs: [], failures: [] }, { runs: [], failures: [f, f] }).length, 1);
 });
+
+// PR #14 review round 3 (Aikido + Codex)
+test('review: punctuation in values, long and plural and run-together names, but not tokenLimit or secretSanta', () => {
+  const s = scrubber();
+  const out = s.scrub('PASSWORD=correct,horse,battery\nAPI_KEY=Ab3;CorrectHorse9!\nAPI_KEYS=abcdefgh1\naccessKeys=abcdefgh2\nSECRETKEY=abcdefgh3\nACCESSKEY=abcdefgh4\n' + 'X'.repeat(80) + '_SECRET=abcdefgh5');
+  for (const leak of ['horse', 'CorrectHorse9', 'abcdefgh1', 'abcdefgh2', 'abcdefgh3', 'abcdefgh4', 'abcdefgh5']) assert.ok(!out.includes(leak), leak);
+  assert.equal(s.scrub('tokenLimit=100000 tokenBudget=128000 secretSanta=Jonathan'), 'tokenLimit=100000 tokenBudget=128000 secretSanta=Jonathan');
+});
+test('review: the whole scrubber stays fast on hostile input (emails, unterminated PEM headers)', () => {
+  for (const junk of ['password-'.repeat(10000), 'a.'.repeat(40000) + '@', '-----BEGIN PRIVATE KEY-----\n'.repeat(20000)]) {
+    const t0 = Date.now(); scrubber().scrub(junk); assert.ok(Date.now() - t0 < 1500, `${junk.slice(0, 12)}… took ${Date.now() - t0} ms`);
+  }
+});
+test('review: a keyfile saved with a byte-order mark still loads', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs'); const { join } = await import('node:path'); const { tmpdir } = await import('node:os');
+  const d = mkdtempSync(join(tmpdir(), 'tu-')), f = join(d, '.env'); writeFileSync(f, '\uFEFFOPENROUTER_API_KEY=sk-or-v1-test\n');
+  const old = process.env.TUNEUP_OPENROUTER_KEY; delete process.env.TUNEUP_OPENROUTER_KEY;
+  try { assert.equal(loadKey(f), 'sk-or-v1-test'); } finally { if (old !== undefined) process.env.TUNEUP_OPENROUTER_KEY = old; }
+});
+test('review: a case id that looks like a rule row does not hide the rule failure', () => {
+  const f = { case: 'c', bucket: 'rules', code: 'must_not_say', detail: 'Revealed "x"' };
+  const before = { runs: [{ case: 'c (must_not_say: Revealed "x")', passed: true }], failures: [] };
+  const after = { runs: [{ case: 'c (must_not_say: Revealed "x")', passed: false }], failures: [f] };
+  assert.equal(regressions(before, after).length, 2);
+});
