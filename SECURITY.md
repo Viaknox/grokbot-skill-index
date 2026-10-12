@@ -21,7 +21,7 @@ The things we most want to hear about:
 
 **Removed before Tune-Up sends text to a model it calls** (the judge, the fix writer and the replay model): email addresses, phone numbers, card numbers, US Social Security numbers, IPv4 addresses, private keys, API keys and tokens in common formats, values of settings named like a password, secret, API key or token, and any words you list as "never send".
 
-**Your own agent is different:** when Tune-Up tests your agent over HTTP, your agent receives the test messages as written. Only "never send" words are removed.
+**Your own agent is different:** when Tune-Up tests your agent over HTTP, your agent receives the test messages as written. "Never send" words are not replaced there: if one appears, that request is not sent and the run stops.
 
 **Not removed:** names, street addresses, other ID numbers, and secrets that look like ordinary words, unless you list them as "never send".
 
