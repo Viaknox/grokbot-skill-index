@@ -173,10 +173,10 @@ Rename the plugin folder to `~/.cursor/plugins/local/tune-up` (this keeps any sk
 Grok Bot today. It does not support other agents yet, and we do not promise dates. Ask Tune-Up on [agenttuneup.ai](https://agenttuneup.ai) can pass a message to the team so you hear if that changes.
 
 **What can Tune-Up touch, and what does it never do?**
-It can review the bots you put in scope, write tests, suggest small fixes, and add a skill to your local library after you say yes. It never changes a bot's purpose, never deletes or renames a bot without your yes, never applies a change you haven't seen, and never sends, posts, spends or deletes on your behalf.
+The Tune-Up bot and plugin can review the bots you put in scope, write tests, suggest small fixes, and add a skill to your local library after you say yes. They never change a bot's purpose, never delete or rename a bot without your yes, never apply a change you haven't seen, and never send, post, spend or delete on your behalf. The optional [engine](engine/README.md) is different: `run` and `tune` send test messages to the agent you point them at, so point them at a test copy, because real actions (bookings, emails) would repeat.
 
 **Does Tune-Up send my data anywhere?**
-The plugin has no tracking. It goes online only when no local skill fits a job: it searches public skill marketplace APIs and reads listings (name, purpose, source repo, marketplace link). Nothing is saved until you say add.
+The plugin has no tracking. It goes online in two cases: when no local skill fits a job, and when you ask it to search a site you name. Either way it uses your request as the search and reads listings (name, purpose, source repo, marketplace link). Nothing is saved until you say add. The optional [engine](engine/README.md) sends anything only when you run it with `--consent`. It then sends your chats, bot instructions and test cases to models on OpenRouter, after scrubbing emails, keys, numbers and your own never-send list on your machine.
 
 **How do I report a bug or a security issue?**
 Open an issue at [github.com/viaknox/tune-up/issues](https://github.com/viaknox/tune-up/issues). Report security issues privately through the repository's Security tab (see [SECURITY.md](SECURITY.md)).
