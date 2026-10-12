@@ -6,6 +6,6 @@
   "license": "MIT",
   "engines": { "node": ">=20.12" },
   "scripts": {
-    "test": "node --test test/engine.test.js test/paste.test.js test/review.test.js test/codex.test.js test/scrubber-v2.test.js test/boundary.test.js test/transcripts-v2.test.js"
+    "test": "node --test test/engine.test.js test/paste.test.js test/review.test.js test/codex.test.js test/scrubber-v2.test.js test/boundary.test.js test/transcripts-v2.test.js test/fuzz.test.js test/perf.test.js"
   }
 }
