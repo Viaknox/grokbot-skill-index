@@ -7,10 +7,10 @@ Agent Tune-Up checks other people's chats, so a privacy bug is the most serious 
 | Area | Where |
 |---|---|
 | The scrubber that removes secrets and some personal data before anything is sent to a model (see coverage below) | `engine/src/redact.js` |
-| Everything that sends text to a model (judge and fix writer) | `engine/src/openrouter.js`, `judge.js`, `writer.js`, `evaluate.js` |
+| Everything that sends text to a model (judge, fix writer and replay adapter) | `engine/src/openrouter.js`, `judge.js`, `writer.js`, `evaluate.js`, `adapters.js` |
 | How chats are parsed | `engine/src/transcripts.js` |
 | The hosted connector at `viaknox.com/api/tuneup/mcp`: sign-in, tokens, free-check limits, deleting your data, how reports display | Hosted by Viaknox (code not in this repo; report issues here anyway) |
-| The skill library and the Tune-Up plugin | `skills/`, `tune-up/` |
+| The skill library and the Tune-Up plugin | `skills/`, `tune-up/`, `starters/`, `rules/`, `library.sqlite`, `schema.sql`, `marketplaces.json` |
 
 The things we most want to hear about:
 - **Leaks:** any input where a secret, a personal detail the scrubber claims to cover, or a "never send" word reaches a model.
