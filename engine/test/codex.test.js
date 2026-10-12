@@ -229,3 +229,10 @@ test('round 4: an unchanged proposal is rejected before any re-run', async () =>
   const or = { chat: async () => reply(JSON.stringify({ revised_instructions: instructions + '  ', changes: ['x'] })) };
   await assert.rejects(proposeFix(or, { instructions, failures: [{ case: 'c', code: 'x', detail: 'd' }] }), /unchanged/);
 });
+
+test('round 5: repeated groups are refused; percentage-like text in a leaked term is not normalised away', () => {
+  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['hi'], expect: { must_say_any: ['^(a|aa)+$'] } }] })[0], /too complex/);
+  assert.equal(validateSuite({ cases: [{ id: 'a', turns: ['hi'], expect: { must_say_any: ['RB-\\d+', 'fully booked'] } }] }).length, 0);
+  const l = (w) => ({ case: 'c', bucket: 'rules', code: 'must_not_say', detail: `Revealed "${w}"` });
+  assert.equal(regressions({ runs: [], failures: [l('foo')] }, { runs: [], failures: [l('foo'), l('foo (90%)')] }).length, 1);
+});

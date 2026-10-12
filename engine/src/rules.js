@@ -22,7 +22,8 @@ const QUESTION = /\?\s*$|\b(which|what time|what room|when would|could you (tell
 
 // Suite checks before any paid request: every case has an id and user turns, and every must_say_any pattern compiles and
 // has no nested quantifier (the shapes that make backtracking regexes run for minutes, e.g. (a+)+).
-const NESTED = /\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d)/;
+// Any repeated group, e.g. (a+)+ or (a|aa)+, can backtrack for minutes; only simple patterns like RB-\d+ are allowed.
+const NESTED = /\)\s*(?:[+*?]|\{\d)/;
 export function validateSuite(suite) {
   const errs = [];
   if (!Array.isArray(suite.cases) || !suite.cases.length) return ['The suite has no test cases. Add at least one case to "cases".'];

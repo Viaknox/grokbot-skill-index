@@ -55,7 +55,7 @@ export function regressions(before, after) {
   // Rules failures are compared one by one (case, rule and what was violated, counted), so a second leak in a case
   // that already leaked something else still counts as new.
   // Judge details carry a vote percentage that changes run to run; compare without it.
-  const key = (f) => JSON.stringify([f.case, f.code, String(f.detail || '').replace(/\s*\(\d+%\)(, unsure)?/, '')]);
+  const key = (f) => JSON.stringify([f.case, f.code, String(f.code).startsWith('judge:') ? String(f.detail || '').replace(/\s*\(\d+%\)(, unsure)?$/, '') : f.detail]);
   const left = new Map(); for (const f of before.failures.filter(f => f.bucket === 'rules')) left.set(key(f), (left.get(key(f)) || 0) + 1);
   const newRules = after.failures.filter(f => f.bucket === 'rules').filter(f => { const n = left.get(key(f)) || 0; if (n) { left.set(key(f), n - 1); return false; } return true; })
     .map(f => `${f.case} (${f.code}: ${f.detail})`);
