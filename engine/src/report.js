@@ -59,7 +59,7 @@ export function regressions(before, after) {
   const left = new Map(); for (const f of before.failures.filter(f => f.bucket === 'rules')) left.set(key(f), (left.get(key(f)) || 0) + 1);
   const newRules = after.failures.filter(f => f.bucket === 'rules').filter(f => { const n = left.get(key(f)) || 0; if (n) { left.set(key(f), n - 1); return false; } return true; })
     .map(f => `${f.case} (${f.code}: ${f.detail})`);
-  return [...new Set(broke), ...newRules].map(cell);   // escape after de-duplicating, so distinct failures stay distinct
+  return [...new Set(broke), ...new Set(newRules)].map(cell);   // de-duplicated within each kind, so a case id can't hide a rule failure
 }
 
 function hash(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h.toString(16); }

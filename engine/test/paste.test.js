@@ -9,7 +9,7 @@ test('scrub: emails, phones, keys, valid card numbers, SSNs and IPs become stabl
   const out = s.scrub('Mail jo@acme.com or jo@acme.com, call +1 336-555-0142, key sk-or-v1-abcdefghijklmnopqrstuvwx1234, card 4111 1111 1111 1111, ssn 123-45-6789, ip 10.0.0.12, password: hunter22x');
   for (const leak of ['jo@acme.com', '555-0142', 'sk-or-v1', '4111', '123-45-6789', '10.0.0.12', 'hunter22x']) assert.ok(!out.includes(leak), leak);
   assert.equal(out.match(/\[EMAIL_1\]/g).length, 2);
-  assert.deepEqual(Object.keys(s.counts()).sort(), ['CARD', 'EMAIL', 'IP', 'KEY', 'PHONE', 'SSN']);
+  assert.deepEqual(Object.keys(s.counts()).sort(), ['CARD', 'EMAIL', 'IP', 'KEY', 'PHONE', 'SECRET', 'SSN']);
 });
 
 test('scrub: order numbers that fail the card checksum, prices and dates are left alone', () => {
