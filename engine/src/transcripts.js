@@ -47,7 +47,7 @@ const similar = (a, b) => { const A = words(a), B = words(b); if (A.size < 3 || 
 // a bare media note ("[image]", "[screenshot attached]"). It never counts as asking again or correcting the bot, and the
 // judge is told it is an action. Anything else in brackets ("[please send the document now]", "[No, I already sent
 // the file]") is still the user's own words.
-const PLACEHOLDER = /^\[(?:(?:the )?user (?:has )?)?(?:submitted|entered|attached|uploaded|pasted|shared|selected|clicked|pressed|saved|redacted|filled)\b[^\]\n]{0,60}\]$|^\[(?:image|photo|file|screenshot|audio|voice note|voice message|video|attachment|document|sticker|gif)(?: (?:attached|uploaded|omitted|sent|shared|removed))?\]$/i;
+const PLACEHOLDER = /^\[(?:(?:the )?user (?:has )?)?(?:submitted|entered|attached|uploaded|pasted|shared|selected|clicked|pressed|saved|redacted|filled)\b[^\]\n]{0,60}\]$|^\[(?:image|photo|file|screenshot|audio|voice note|voice message|video|attachment|document|sticker|gif)(?: (?:attached|uploaded|omitted|sent|shared|removed))?(?:: [^\]\n]{1,80})?\]$/i;
 /** True for a user turn that only describes an action the user took (see PLACEHOLDER). */
 export const isPlaceholder = (m) => m.role === 'user' && PLACEHOLDER.test(String(m.content).trim());
 
@@ -68,6 +68,7 @@ export function checkConversation(msgs) {
     const c = scrubber(); c.scrub(m.content); const k = c.counts();
     const hard = ['CARD', 'KEY', 'SSN'].filter(x => k[x]), soft = ['PHONE', 'EMAIL'].filter(x => k[x]);
     if (hard.length) out.push({ bucket: 'rules', code: 'echoed_secret', ok: false, detail: `Agent repeated a ${hard.join('/').toLowerCase()} number back (message ${i + 1})` });
+    else if (k.SECRET) out.push({ bucket: 'rules', code: 'echoed_setting', ok: false, unsure: true, detail: `It repeated something that looks like a password or key setting (message ${i + 1}). Check it wasn't a real one.` });
     else if (soft.length) out.push({ bucket: 'rules', code: 'echoed_contact', ok: false, unsure: true, detail: `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` });
   });
   const lastAgent = [...msgs].reverse().find(m => m.role === 'assistant');

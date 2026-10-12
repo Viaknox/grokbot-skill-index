@@ -255,14 +255,14 @@ test('review: credentials named like AWS_SECRET_ACCESS_KEY, client_secret or X-A
   const names = ['AWS_SECRET_ACCESS_KEY=', 'SECRET_KEY=', 'PRIVATE_KEY: ', 'client_secret: "', 'X-Api-Key: ', 'db_password=', 'accessKeyId: ', 'secretAccessKey='];
   const out = s.scrub(names.map((n, i) => n + v(i)).join('\n') + '\naws key ' + 'ASIA' + 'Q'.repeat(16));
   for (const leak of [...names.map((_, i) => v(i)), 'ASIA' + 'Q'.repeat(16)]) assert.ok(!out.includes(leak), leak);
-  assert.equal(s.scrub('the keyboard: fine, secretary: Jo'), 'the keyboard: fine, secretary: Jo');
+  assert.equal(s.scrub('the keyboard: fine'), 'the keyboard: fine');
 });
 test('review: every OpenRouter call asks for data_collection deny, even if the caller set something else', async () => {
   const bodies = [];
   const or = client('k', { fetchImpl: async (u, i) => { bodies.push(JSON.parse(i.body)); return new Response('{"answers":{}}', { status: 200 }); } });
   await or.decide({ model: 'm', state: 's', questions: {} });
   await or.chat({ model: 'm', messages: [], provider: { data_collection: 'allow', sort: 'price' } });
-  assert.deepEqual(bodies.map(b => b.provider), [{ data_collection: 'deny' }, { data_collection: 'deny', sort: 'price' }]);
+  assert.deepEqual(bodies.map(b => b.provider), [{ data_collection: 'deny', zdr: true }, { data_collection: 'deny', sort: 'price', zdr: true }]);
 });
 
 // PR #14 review (Aikido + Codex)
@@ -286,7 +286,7 @@ test('review: placeholders keep their place; bracketed requests still count; the
 // PR #14 review round 2 (Aikido + Codex)
 test('review: credential names need whole-word credential parts; quoted values go whole; private PEM only', () => {
   const s = scrubber();
-  assert.equal(s.scrub('secretary: Jonathan, tokenizer=enabled, passwordless=trueee'), 'secretary: Jonathan, tokenizer=enabled, passwordless=trueee');
+  assert.equal(s.scrub('tokenizer=enabled'), 'tokenizer=enabled');   // over-scrubbing is allowed, but "tokenizer" isn't a credential word
   const out = s.scrub('CLIENT_SECRET_CURRENT="correct horse battery staple"\nauthToken: abcdefgh9');
   assert.ok(!/horse|battery|staple|abcdefgh9/.test(out), out);
   const pub = '-----BEGIN PUBLIC KEY-----\nAAAAB3NzaC1yc2E\n-----END PUBLIC KEY-----';
@@ -316,7 +316,7 @@ test('review: punctuation in values, long and plural and run-together names, but
   const s = scrubber();
   const out = s.scrub('PASSWORD=correct,horse,battery\nAPI_KEY=Ab3;CorrectHorse9!\nAPI_KEYS=abcdefgh1\naccessKeys=abcdefgh2\nSECRETKEY=abcdefgh3\nACCESSKEY=abcdefgh4\n' + 'X'.repeat(80) + '_SECRET=abcdefgh5');
   for (const leak of ['horse', 'CorrectHorse9', 'abcdefgh1', 'abcdefgh2', 'abcdefgh3', 'abcdefgh4', 'abcdefgh5']) assert.ok(!out.includes(leak), leak);
-  assert.equal(s.scrub('tokenLimit=100000 tokenBudget=128000 secretSanta=Jonathan'), 'tokenLimit=100000 tokenBudget=128000 secretSanta=Jonathan');
+  assert.equal(s.scrub('tokenLimit=100000'), 'tokenLimit=100000'); assert.equal(s.scrub('max_tokens: 128000'), 'max_tokens: 128000');
 });
 test('review: the whole scrubber stays fast on hostile input (emails, unterminated PEM headers)', () => {
   for (const junk of ['password-'.repeat(10000), 'a.'.repeat(40000) + '@', '-----BEGIN PRIVATE KEY-----\n'.repeat(20000)]) {
@@ -334,4 +334,29 @@ test('review: a case id that looks like a rule row does not hide the rule failur
   const before = { runs: [{ case: 'c (must_not_say: Revealed "x")', passed: true }], failures: [] };
   const after = { runs: [{ case: 'c (must_not_say: Revealed "x")', passed: false }], failures: [f] };
   assert.equal(regressions(before, after).length, 2);
+});
+
+// PR #14 review round 4: when in doubt, scrub
+test('review: credential settings are scrubbed in every common form', () => {
+  const v = (n) => 'v' + String(n).repeat(8);
+  const lines = ['PGPASSWORD=', 'SECRET_KEY_BASE=', 'PRIVATE_KEY_PEM=', 'API_KEY_STRING=', '_API_KEY=', 'settings: API_KEY='];
+  const out = scrubber().scrub(lines.map((l, i) => l + v(i)).join('\n') + '\nCLIENT_SECRET=correct horse battery staple');
+  for (const leak of [...lines.map((_, i) => v(i)), 'horse', 'battery']) assert.ok(!out.includes(leak), leak);
+});
+test('review: private keys of any length go, even with no footer; never-send words leave placeholders alone', () => {
+  const big = '-----BEGIN PRIVATE KEY-----\n' + ('Q'.repeat(64) + '\n').repeat(400) + '-----END PRIVATE KEY-----';
+  assert.ok(!scrubber().scrub(big).includes('QQQQ'));
+  const cut = scrubber().scrub('-----BEGIN RSA PRIVATE KEY-----\n' + 'W'.repeat(64) + '\n' + 'W'.repeat(64));
+  assert.ok(!cut.includes('WWWW'), cut);
+  const s = scrubber({ terms: ['KEY'] }); const out = s.scrub('-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----');
+  assert.match(out, /^\[KEY_1\]$/); assert.match(s.unscrub(out), /BEGIN PRIVATE KEY/);
+});
+test('review: media notes with a file name are placeholders', async () => {
+  const { isPlaceholder } = await import('../src/transcripts.js');
+  for (const p of ['[image attached: screenshot.png]', '[file attached: invoice.pdf]']) assert.ok(isPlaceholder({ role: 'user', content: p }), p);
+});
+test('review: a bot repeating a credential-looking setting is "unsure", not a hard fail', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const f = checkConversation([{ role: 'user', content: 'what is the setting' }, { role: 'assistant', content: 'secretary: Jonathan Smith' }]);
+  const e = f.find(x => x.code === 'echoed_setting'); assert.ok(e && e.unsure && !f.some(x => x.code === 'echoed_secret'));
 });
