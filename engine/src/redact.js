@@ -8,8 +8,8 @@ const PATTERNS = [
   ['KEY', /\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|\bwhsec_[A-Za-z0-9]{10,}|\bglpat-[A-Za-z0-9_-]{16,}|\bnpm_[A-Za-z0-9]{20,}|\bya29\.[A-Za-z0-9_-]{20,}|\bsk-ant-[A-Za-z0-9_-]{10,}/g],
   ['KEY', /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g],
   ['KEY', /(?<=:\/\/[^/\s:@]{1,64}:)[^@\s/]{1,128}(?=@)/g],   // password inside a URL
-  // Any setting name that holds a credential: AWS_SECRET_ACCESS_KEY=…, SECRET_KEY=…, client_secret: …, X-Api-Key: …, db_password=…
-  ['KEY', /\b[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|passw(?:or)?d|pwd|credential)s?(?:[_-](?:key|id|value))?\b["']?\s*[:=]\s*["']?[^\s"']{6,}/gi],
+  // Any setting name that holds a credential: AWS_SECRET_ACCESS_KEY=…, SECRET_KEY=…, accessKeyId: …, client_secret: …, X-Api-Key: …, db_password=…
+  ['KEY', /\b[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|passw(?:or)?d|pwd|credential)s?(?:[_-]?(?:key|id|value))?\b["']?\s*[:=]\s*["']?[^\s"']{6,}/gi],
   ['EMAIL', /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],   // separators only between digits, never after the last one
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
