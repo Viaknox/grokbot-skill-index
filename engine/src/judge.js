@@ -1,3 +1,4 @@
+import { isPlaceholder } from './transcripts.js';
 // Model judge: Jev (a decisions model) answers yes/no questions with a probability. It never writes text,
 // so findings quote the transcript instead. Answers between 0.35 and 0.65 are reported as "unsure", not guessed.
 export const JUDGE_MODEL = 'typesafe/jev-1.13';
@@ -39,7 +40,7 @@ const CHAT_QUESTIONS = {
 
 export function chatState(instructions, msgs) {
   return [DATA_NOTICE, instructions ? `AGENT INSTRUCTIONS: ${instructions}` : 'AGENT INSTRUCTIONS: (not provided)', 'REAL CONVERSATION (tool calls not visible):',
-    ...msgs.map(m => `${m.role === 'user' ? 'USER' : 'AGENT'}: ${m.content}`)].join('\n');
+    ...msgs.map(m => isPlaceholder(m) ? `USER ACTION (not a message the user typed): ${m.content}` : `${m.role === 'user' ? 'USER' : 'AGENT'}: ${m.content}`)].join('\n');
 }
 
 export async function judgeConversation(or, state, { hasInstructions }) {

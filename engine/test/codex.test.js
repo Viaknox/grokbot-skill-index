@@ -264,3 +264,21 @@ test('review: every OpenRouter call asks for data_collection deny, even if the c
   await or.chat({ model: 'm', messages: [], provider: { data_collection: 'allow', sort: 'price' } });
   assert.deepEqual(bodies.map(b => b.provider), [{ data_collection: 'deny' }, { data_collection: 'deny', sort: 'price' }]);
 });
+
+// PR #14 review (Aikido + Codex)
+test('review: whole PEM blocks and credential names with any suffix are scrubbed', () => {
+  const s = scrubber(), body = 'M' + 'I'.repeat(3) + 'Evg' + 'Q'.repeat(40);
+  const pem = 'private_key: -----BEGIN PRIVATE KEY-----\n' + body + '\n' + body + '\n-----END PRIVATE KEY-----';
+  const out = s.scrub(pem + '\nPASSWORD_HASH=abcdefgh1\nCLIENT_SECRET_CURRENT=abcdefgh2\nMY_API_KEY_BACKUP=abcdefgh3');
+  for (const leak of [body, 'BEGIN PRIVATE', 'abcdefgh1', 'abcdefgh2', 'abcdefgh3']) assert.ok(!out.includes(leak), leak);
+});
+test('review: placeholders keep their place; bracketed requests still count; the judge sees an action, not a message', async () => {
+  const { checkConversation, isPlaceholder } = await import('../src/transcripts.js');
+  const { chatState } = await import('../src/judge.js');
+  const fix = [{ role: 'user', content: '[image attached]' }, { role: 'assistant', content: 'That is a cat.' }, { role: 'user', content: "No, that's wrong" }, { role: 'assistant', content: 'Sorry.' }];
+  assert.equal(checkConversation(fix).filter(f => f.code === 'correction').length, 1, 'a correction after a placeholder still counts');
+  const req = [{ role: 'user', content: '[please reset my account now]' }, { role: 'assistant', content: 'Done.' }, { role: 'user', content: '[please reset my account now]' }, { role: 'assistant', content: 'Ok.' }];
+  assert.equal(checkConversation(req).filter(f => f.code === 'repeated_ask').length, 1, 'bracketed words are still a request');
+  assert.ok(!isPlaceholder(req[0]));
+  assert.match(chatState('', fix), /USER ACTION \(not a message the user typed\): \[image attached\]/);
+});

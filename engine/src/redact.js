@@ -9,7 +9,10 @@ const PATTERNS = [
   ['KEY', /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g],
   ['KEY', /(?<=:\/\/[^/\s:@]{1,64}:)[^@\s/]{1,128}(?=@)/g],   // password inside a URL
   // Any setting name that holds a credential: AWS_SECRET_ACCESS_KEY=…, SECRET_KEY=…, accessKeyId: …, client_secret: …, X-Api-Key: …, db_password=…
-  ['KEY', /\b[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|passw(?:or)?d|pwd|credential)s?(?:[_-]?(?:key|id|value))?\b["']?\s*[:=]\s*["']?[^\s"']{6,}/gi],
+  // Whole PEM blocks (private keys, certificates) go first, header to footer, so no line of the body survives.
+  ['KEY', /-----BEGIN [A-Z0-9][A-Z0-9 -]*-----[\s\S]*?-----END [A-Z0-9][A-Z0-9 -]*-----/g],
+  // A credential word anywhere in the setting name counts (PASSWORD_HASH=, CLIENT_SECRET_CURRENT=, MY_API_KEY_BACKUP=).
+  ['KEY', /\b[A-Za-z0-9_-]*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|passw(?:or)?d|pwd|credential)[A-Za-z0-9_-]*["']?\s*[:=]\s*["']?[^\s"']{6,}/gi],
   ['EMAIL', /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],   // separators only between digits, never after the last one
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],

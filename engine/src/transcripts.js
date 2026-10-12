@@ -42,14 +42,22 @@ const CORRECTION = /^(no\b|nope|wait\b|that'?s (wrong|not (it|right|what i))|i s
 const words = (s) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) || []);
 const similar = (a, b) => { const A = words(a), B = words(b); if (A.size < 3 || B.size < 3) return false; let n = 0; for (const w of A) if (B.has(w)) n++; return n / Math.min(A.size, B.size) >= 0.7; };
 
-// A user turn that is only a bracketed note ("[submitted the hidden field]", "[image]") is the bot standing in for
-// something the user did, not words they typed, so it never counts as asking again or correcting the bot.
-const PLACEHOLDER = /^\[[^\]\n]{1,80}\]$/;
+// A user turn that is only a bracketed note about an action ("[submitted the hidden field]", "[image attached]") is the
+// bot standing in for something the user did, not words they typed. It never counts as asking again or correcting
+// the bot, and the judge is told it is an action. A bracketed request ("[please reset my account]") is still words.
+const PLACEHOLDER = /^\[(?=[^\]\n]{1,80}\]$)[^\]\n]*\b(?:submitted|entered|attached|uploaded|pasted|shared|sent|selected|clicked|pressed|saved|redacted|hidden|image|photo|file|screenshot|audio|voice|video|attachment|document)\b[^\]\n]*\]$/i;
+/** True for a user turn that only describes an action the user took (see PLACEHOLDER). */
+export const isPlaceholder = (m) => m.role === 'user' && PLACEHOLDER.test(String(m.content).trim());
 
 export function checkConversation(msgs) {
-  const out = []; const users = msgs.filter(m => m.role === 'user' && !PLACEHOLDER.test(m.content.trim())).map(m => m.content);
+  const out = [];
+  // Placeholders keep their place (so "message 2" stays message 2 and a later "No, that's wrong" is still a correction)
+  // but are never themselves a repeat or a correction, and never what a later message repeats.
+  const turns = msgs.filter(m => m.role === 'user'), users = turns.map(m => m.content);
   users.forEach((u, i) => {
-    if (i > 0 && users.slice(0, i).some(p => similar(p, u))) out.push({ bucket: 'happy', code: 'repeated_ask', ok: false, detail: `User had to ask again (message ${i + 1})`, quote: u.slice(0, 160) });
+    if (isPlaceholder(turns[i])) return;
+    const earlier = users.slice(0, i).filter((_, j) => !isPlaceholder(turns[j]));
+    if (i > 0 && earlier.some(p => similar(p, u))) out.push({ bucket: 'happy', code: 'repeated_ask', ok: false, detail: `User had to ask again (message ${i + 1})`, quote: u.slice(0, 160) });
     if (i > 0 && CORRECTION.test(u.trim())) out.push({ bucket: 'happy', code: 'correction', ok: false, detail: `User corrected the agent (message ${i + 1})`, quote: u.slice(0, 160) });
   });
   // The agent repeating sensitive data back: card, key and ID numbers fail; phones and emails are flagged as unsure.
