@@ -9,7 +9,7 @@ import { modelAdapter, httpAdapter } from '../src/adapters.js';
 import { checkCase } from '../src/rules.js';
 import { scrubber } from '../src/redact.js';
 import { buildReport, regressions } from '../src/report.js';
-import { loadKey } from '../src/openrouter.js';
+import { loadKey, client } from '../src/openrouter.js';
 import { evaluate } from '../src/evaluate.js';
 
 const reply = (content, tool_calls) => ({ choices: [{ message: { content, ...(tool_calls ? { tool_calls } : {}) } }] });
@@ -235,4 +235,19 @@ test('round 5: repeated groups are refused; percentage-like text in a leaked ter
   assert.equal(validateSuite({ cases: [{ id: 'a', turns: ['hi'], expect: { must_say_any: ['RB-\\d+', 'fully booked'] } }] }).length, 0);
   const l = (w) => ({ case: 'c', bucket: 'rules', code: 'must_not_say', detail: `Revealed "${w}"` });
   assert.equal(regressions({ runs: [], failures: [l('foo')] }, { runs: [], failures: [l('foo'), l('foo (90%)')] }).length, 1);
+});
+
+// PR review (Aikido): credential settings by name, and the no-training provider flag on every model call.
+test('review: credentials named like AWS_SECRET_ACCESS_KEY, client_secret or X-Api-Key are removed', () => {
+  const s = scrubber();
+  const out = s.scrub('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nclient_secret: "abc123def456"\nX-Api-Key: Zz9yy8xx7ww6\naws key ASIAIOSFODNN7EXAMPLE');
+  for (const leak of ['wJalrXUtnFEMI', 'abc123def456', 'Zz9yy8xx7ww6', 'ASIAIOSFODNN7EXAMPLE']) assert.ok(!out.includes(leak), leak);
+  assert.equal(s.scrub('the keyboard: fine, secretary: Jo'), 'the keyboard: fine, secretary: Jo');
+});
+test('review: every OpenRouter call asks for data_collection deny, even if the caller set something else', async () => {
+  const bodies = [];
+  const or = client('k', { fetchImpl: async (u, i) => { bodies.push(JSON.parse(i.body)); return new Response('{"answers":{}}', { status: 200 }); } });
+  await or.decide({ model: 'm', state: 's', questions: {} });
+  await or.chat({ model: 'm', messages: [], provider: { data_collection: 'allow', sort: 'price' } });
+  assert.deepEqual(bodies.map(b => b.provider), [{ data_collection: 'deny' }, { data_collection: 'deny', sort: 'price' }]);
 });

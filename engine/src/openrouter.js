@@ -22,7 +22,8 @@ export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fe
     const r = await fetchImpl(base + path, {
       method: 'POST',
       headers: { authorization: 'Bearer ' + key, 'content-type': 'application/json', 'x-title': 'Agent Tune-Up' },
-      body: JSON.stringify(body),
+      // Never let the provider keep or train on the text: OpenRouter fails the call (no fallback) if no provider agrees.
+      body: JSON.stringify({ ...body, provider: { ...(body && body.provider), data_collection: 'deny' } }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     const j = await r.json().catch(() => ({}));
