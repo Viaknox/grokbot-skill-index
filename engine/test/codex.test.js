@@ -282,3 +282,31 @@ test('review: placeholders keep their place; bracketed requests still count; the
   assert.ok(!isPlaceholder(req[0]));
   assert.match(chatState('', fix), /USER ACTION \(not a message the user typed\): \[image attached\]/);
 });
+
+// PR #14 review round 2 (Aikido + Codex)
+test('review: credential names need whole-word credential parts; quoted values go whole; private PEM only', () => {
+  const s = scrubber();
+  assert.equal(s.scrub('secretary: Jonathan, tokenizer=enabled, passwordless=trueee'), 'secretary: Jonathan, tokenizer=enabled, passwordless=trueee');
+  const out = s.scrub('CLIENT_SECRET_CURRENT="correct horse battery staple"\nauthToken: abcdefgh9');
+  assert.ok(!/horse|battery|staple|abcdefgh9/.test(out), out);
+  const pub = '-----BEGIN PUBLIC KEY-----\nAAAAB3NzaC1yc2E\n-----END PUBLIC KEY-----';
+  assert.equal(scrubber().scrub(pub), pub, 'public keys are meant to be shared');
+});
+test('review: a never-send word like PRIVATE cannot break private-key scrubbing', () => {
+  const body = 'M' + 'I'.repeat(3) + 'Evg' + 'Q'.repeat(40);
+  const out = scrubber({ terms: ['PRIVATE'] }).scrub('-----BEGIN PRIVATE KEY-----\n' + body + '\n-----END PRIVATE KEY-----');
+  assert.ok(!out.includes(body), out);
+});
+test('review: the credential rule runs in linear time on crafted input', () => {
+  const t0 = Date.now(); scrubber().scrub('password-'.repeat(5000)); assert.ok(Date.now() - t0 < 500, `took ${Date.now() - t0} ms`);
+});
+test('review: only action notes are placeholders; bracketed requests and corrections are the user\'s words', async () => {
+  const { isPlaceholder } = await import('../src/transcripts.js');
+  const u = (content) => ({ role: 'user', content });
+  for (const p of ['[submitted the hidden field]', '[user attached a file]', '[image]', '[screenshot attached]']) assert.ok(isPlaceholder(u(p)), p);
+  for (const w of ['[please send the document now]', '[No, I already sent the file]', '[please attach the file to the ticket now]', '[please reset my account now]']) assert.ok(!isPlaceholder(u(w)), w);
+});
+test('review: identical regression rows from repeated runs are shown once', () => {
+  const f = { case: 'c', bucket: 'rules', code: 'must_not_say', detail: 'Revealed "x"' };
+  assert.equal(regressions({ runs: [], failures: [] }, { runs: [], failures: [f, f] }).length, 1);
+});

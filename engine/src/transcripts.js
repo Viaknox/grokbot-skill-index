@@ -42,10 +42,12 @@ const CORRECTION = /^(no\b|nope|wait\b|that'?s (wrong|not (it|right|what i))|i s
 const words = (s) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) || []);
 const similar = (a, b) => { const A = words(a), B = words(b); if (A.size < 3 || B.size < 3) return false; let n = 0; for (const w of A) if (B.has(w)) n++; return n / Math.min(A.size, B.size) >= 0.7; };
 
-// A user turn that is only a bracketed note about an action ("[submitted the hidden field]", "[image attached]") is the
-// bot standing in for something the user did, not words they typed. It never counts as asking again or correcting
-// the bot, and the judge is told it is an action. A bracketed request ("[please reset my account]") is still words.
-const PLACEHOLDER = /^\[(?=[^\]\n]{1,80}\]$)[^\]\n]*\b(?:submitted|entered|attached|uploaded|pasted|shared|sent|selected|clicked|pressed|saved|redacted|hidden|image|photo|file|screenshot|audio|voice|video|attachment|document)\b[^\]\n]*\]$/i;
+// A user turn that is only a bracketed note about an action is the bot standing in for something the user did, not
+// words they typed: it starts with a past-tense action ("[submitted the hidden field]", "[user attached a file]") or is
+// a bare media note ("[image]", "[screenshot attached]"). It never counts as asking again or correcting the bot, and the
+// judge is told it is an action. Anything else in brackets ("[please send the document now]", "[No, I already sent
+// the file]") is still the user's own words.
+const PLACEHOLDER = /^\[(?:(?:the )?user (?:has )?)?(?:submitted|entered|attached|uploaded|pasted|shared|selected|clicked|pressed|saved|redacted|filled)\b[^\]\n]{0,60}\]$|^\[(?:image|photo|file|screenshot|audio|voice note|voice message|video|attachment|document|sticker|gif)(?: (?:attached|uploaded|omitted|sent|shared|removed))?\]$/i;
 /** True for a user turn that only describes an action the user took (see PLACEHOLDER). */
 export const isPlaceholder = (m) => m.role === 'user' && PLACEHOLDER.test(String(m.content).trim());
 
