@@ -169,6 +169,18 @@ No. It shows every change first, unless you choose apply-after-yes, and even the
 **I installed it before it was called Tune-Up. What do I do?**
 Rename the plugin folder to `~/.cursor/plugins/local/tune-up` (this keeps any skills you added), run `git pull` inside it, and reload. The old GitHub link redirects here. If you already set up the Tune-Up bot, update its instructions from [tune-up/INSTRUCTIONS.md](tune-up/INSTRUCTIONS.md), because the library path changed.
 
+**Which agents does Tune-Up work with?**
+Grok Bot today. It does not support other agents yet, and we do not promise dates. Ask Tune-Up on [agenttuneup.ai](https://agenttuneup.ai) can pass a message to the team so you hear if that changes.
+
+**What can Tune-Up touch, and what does it never do?**
+It can review the bots you put in scope, write tests, suggest small fixes, and add a skill to your local library after you say yes. It never changes a bot's purpose, never deletes or renames a bot without your yes, never applies a change you haven't seen, and never sends, posts, spends or deletes on your behalf.
+
+**Does Tune-Up send my data anywhere?**
+The plugin has no tracking. It goes online only when no local skill fits a job: it searches public skill marketplace APIs and reads listings (name, purpose, source repo, marketplace link). Nothing is saved until you say add.
+
+**How do I report a bug or a security issue?**
+Open an issue at [github.com/viaknox/tune-up/issues](https://github.com/viaknox/tune-up/issues). Report security issues privately through the repository's Security tab (see [SECURITY.md](SECURITY.md)).
+
 **Does it cost anything?**
 No. It's free and open source under the MIT license.
 
