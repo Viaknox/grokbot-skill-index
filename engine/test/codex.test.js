@@ -9,7 +9,7 @@ import { modelAdapter, httpAdapter } from '../src/adapters.js';
 import { checkCase } from '../src/rules.js';
 import { scrubber } from '../src/redact.js';
 import { buildReport, regressions } from '../src/report.js';
-import { loadKey } from '../src/openrouter.js';
+import { loadKey, client } from '../src/openrouter.js';
 import { evaluate } from '../src/evaluate.js';
 
 const reply = (content, tool_calls) => ({ choices: [{ message: { content, ...(tool_calls ? { tool_calls } : {}) } }] });
@@ -247,4 +247,17 @@ test('review: bracketed placeholder turns never count as asking again or correct
   const real = [{ role: 'user', content: 'reset my password for the account' }, { role: 'assistant', content: 'Done!' },
     { role: 'user', content: 'reset my password for the account please' }, { role: 'assistant', content: 'Sorry.' }];
   assert.equal(checkConversation(real).filter(f => f.code === 'repeated_ask').length, 1, 'real repeats still count');
+// PR review (Aikido): credential settings by name, and the no-training provider flag on every model call.
+test('review: credentials named like AWS_SECRET_ACCESS_KEY, client_secret or X-Api-Key are removed', () => {
+  const s = scrubber();
+  const out = s.scrub('AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\nclient_secret: "abc123def456"\nX-Api-Key: Zz9yy8xx7ww6\naws key ASIAIOSFODNN7EXAMPLE');
+  for (const leak of ['wJalrXUtnFEMI', 'abc123def456', 'Zz9yy8xx7ww6', 'ASIAIOSFODNN7EXAMPLE']) assert.ok(!out.includes(leak), leak);
+  assert.equal(s.scrub('the keyboard: fine, secretary: Jo'), 'the keyboard: fine, secretary: Jo');
+});
+test('review: every OpenRouter call asks for data_collection deny, even if the caller set something else', async () => {
+  const bodies = [];
+  const or = client('k', { fetchImpl: async (u, i) => { bodies.push(JSON.parse(i.body)); return new Response('{"answers":{}}', { status: 200 }); } });
+  await or.decide({ model: 'm', state: 's', questions: {} });
+  await or.chat({ model: 'm', messages: [], provider: { data_collection: 'allow', sort: 'price' } });
+  assert.deepEqual(bodies.map(b => b.provider), [{ data_collection: 'deny' }, { data_collection: 'deny', sort: 'price' }]);
 });

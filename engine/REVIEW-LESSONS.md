@@ -13,3 +13,5 @@ each row before opening a PR; the test named in the last column guards it.
 | Compare failures by stable identity (case, rule, what was violated, without vote percentages), counted | regressions were masked or invented | round 2/4 regressions |
 | Unknown is not zero | http usage printed as 0 tokens | round 4 unknown usage |
 | A user turn that is only a bracketed note ("[submitted the hidden field]") is something the bot did for the user, not words they typed: never a repeat or a correction | live Grok Bot test flagged "you had to ask again" | `test/codex.test.js` "bracketed placeholder turns" |
+| Secrets are found by their setting name too, not only by known value shapes (any name holding key/secret/token/password/credential) | `AWS_SECRET_ACCESS_KEY=…` reached the judge | `test/codex.test.js` "credentials named like…" (viaknox PR #14, Aikido) |
+| A privacy promise is enforced in the request, not left to account settings: every OpenRouter call sends `provider.data_collection: 'deny'` and fails rather than falls back | no-training was only an account setting | `test/codex.test.js` "every OpenRouter call…" (viaknox PR #14, Aikido) |
