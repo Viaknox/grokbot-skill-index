@@ -247,6 +247,7 @@ test('review: bracketed placeholder turns never count as asking again or correct
   const real = [{ role: 'user', content: 'reset my password for the account' }, { role: 'assistant', content: 'Done!' },
     { role: 'user', content: 'reset my password for the account please' }, { role: 'assistant', content: 'Sorry.' }];
   assert.equal(checkConversation(real).filter(f => f.code === 'repeated_ask').length, 1, 'real repeats still count');
+});
 // PR review (Aikido): credential settings by name, and the no-training provider flag on every model call.
 test('review: credentials named like AWS_SECRET_ACCESS_KEY, client_secret or X-Api-Key are removed', () => {
   const s = scrubber();
