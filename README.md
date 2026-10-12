@@ -176,10 +176,10 @@ The Tune-Up bot and plugin work with Grok Bot today. They don't support other ag
 The Tune-Up bot and plugin can review the bots you put in scope, write tests, suggest small fixes, and add a skill to your local library after you say yes. They never change a bot's purpose, never delete or rename a bot without your yes, never apply a change you haven't seen, and never send, post, spend or delete on your behalf. The optional [engine](engine/README.md) is different: `run` and `tune` send test messages to the agent you point them at, so point them at a test copy, because real actions (bookings, emails) would repeat.
 
 **Does Tune-Up send my data anywhere?**
-The plugin has no tracking. It goes online in two cases: when no local skill fits a job, and when you ask it to search a site you name. Either way it uses your request as the search and reads listings (name, purpose, source repo, marketplace link). Nothing is saved until you say add. The optional [engine](engine/README.md) sends anything only when you run it with `--consent`. It then sends your chats, bot instructions and test cases to models on OpenRouter, after scrubbing emails, keys, numbers and your own never-send list on your machine.
+The plugin has no tracking. It goes online in two cases: when no local skill fits a job, and when you ask it to search a site you name. Either way it uses your request as the search and reads listings (name, purpose, source repo, marketplace link). Nothing is saved until you say add. The optional [engine](engine/README.md) sends anything only when you run it with `--consent`. It then sends your chats, bot instructions and test cases to models on OpenRouter, after scrubbing emails, keys, numbers and your own never-send list on your machine. Test messages to an agent you connect over HTTP are your own bot's traffic, so they reach it as written; only your never-send list is removed from them.
 
 **How do I report a bug or a security issue?**
-Open an issue at [github.com/viaknox/tune-up/issues](https://github.com/viaknox/tune-up/issues). Report security issues privately through the repository's Security tab (see [SECURITY.md](SECURITY.md)).
+Open an issue at [github.com/viaknox/tune-up/issues](https://github.com/viaknox/tune-up/issues). Report security issues privately with **Report a vulnerability** on the repository's [Security tab](https://github.com/Viaknox/tune-up/security) (see [SECURITY.md](SECURITY.md)).
 
 **Does it cost anything?**
 No. It's free and open source under the MIT license.

@@ -1,21 +1,21 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Security fixes go into the latest release on `main`. Please update to it before reporting.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+## Reporting a vulnerability
 
-## Reporting a Vulnerability
+Please report security issues **privately**, not in a public issue:
 
-Use this section to tell people how to report a vulnerability.
+1. Open the [Security tab](https://github.com/Viaknox/tune-up/security) of this repository.
+2. Click **Report a vulnerability** ([direct link](https://github.com/Viaknox/tune-up/security/advisories/new)).
+3. Describe what you found, how to reproduce it, and what an attacker could do with it. Don't include real keys, chats or personal data.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Only you and the maintainers can see the report. We reply in that private thread, work on a fix there, and credit you in the advisory if you'd like.
+
+## Scope
+
+In scope: the Tune-Up plugin, its skills and instructions, the skill index, and the engine in `engine/`.
+
+Out of scope: Grok Bot itself (report those to xAI), third-party skill marketplaces, and skills published by others.
