@@ -12,3 +12,4 @@ each row before opening a PR; the test named in the last column guards it.
 | Unsure verdicts never dilute, hide or inflate a result | unsure diluted failure rates | codex 8 |
 | Compare failures by stable identity (case, rule, what was violated, without vote percentages), counted | regressions were masked or invented | round 2/4 regressions |
 | Unknown is not zero | http usage printed as 0 tokens | round 4 unknown usage |
+| A user turn that is only a bracketed note ("[submitted the hidden field]") is something the bot did for the user, not words they typed: never a repeat or a correction | live Grok Bot test flagged "you had to ask again" | `test/codex.test.js` "bracketed placeholder turns" |

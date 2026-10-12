@@ -42,8 +42,12 @@ const CORRECTION = /^(no\b|nope|wait\b|that'?s (wrong|not (it|right|what i))|i s
 const words = (s) => new Set(s.toLowerCase().match(/[a-z0-9']+/g) || []);
 const similar = (a, b) => { const A = words(a), B = words(b); if (A.size < 3 || B.size < 3) return false; let n = 0; for (const w of A) if (B.has(w)) n++; return n / Math.min(A.size, B.size) >= 0.7; };
 
+// A user turn that is only a bracketed note ("[submitted the hidden field]", "[image]") is the bot standing in for
+// something the user did, not words they typed, so it never counts as asking again or correcting the bot.
+const PLACEHOLDER = /^\[[^\]\n]{1,80}\]$/;
+
 export function checkConversation(msgs) {
-  const out = []; const users = msgs.filter(m => m.role === 'user').map(m => m.content);
+  const out = []; const users = msgs.filter(m => m.role === 'user' && !PLACEHOLDER.test(m.content.trim())).map(m => m.content);
   users.forEach((u, i) => {
     if (i > 0 && users.slice(0, i).some(p => similar(p, u))) out.push({ bucket: 'happy', code: 'repeated_ask', ok: false, detail: `User had to ask again (message ${i + 1})`, quote: u.slice(0, 160) });
     if (i > 0 && CORRECTION.test(u.trim())) out.push({ bucket: 'happy', code: 'correction', ok: false, detail: `User corrected the agent (message ${i + 1})`, quote: u.slice(0, 160) });

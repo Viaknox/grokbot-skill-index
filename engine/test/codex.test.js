@@ -236,3 +236,15 @@ test('round 5: repeated groups are refused; percentage-like text in a leaked ter
   const l = (w) => ({ case: 'c', bucket: 'rules', code: 'must_not_say', detail: `Revealed "${w}"` });
   assert.equal(regressions({ runs: [], failures: [l('foo')] }, { runs: [], failures: [l('foo'), l('foo (90%)')] }).length, 1);
 });
+
+// Live Grok Bot test (2026-10-12): the bot wrote "[submitted the hidden field]" for the user's secret entry, twice.
+test('review: bracketed placeholder turns never count as asking again or correcting', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const msgs = [{ role: 'user', content: 'add the connector please' }, { role: 'assistant', content: 'Paste the value in the hidden field.' },
+    { role: 'user', content: '[submitted the hidden field]' }, { role: 'assistant', content: 'Saved.' },
+    { role: 'user', content: '[submitted the hidden field]' }, { role: 'assistant', content: 'Connected.' }];
+  assert.deepEqual(checkConversation(msgs).filter(f => f.code === 'repeated_ask' || f.code === 'correction'), []);
+  const real = [{ role: 'user', content: 'reset my password for the account' }, { role: 'assistant', content: 'Done!' },
+    { role: 'user', content: 'reset my password for the account please' }, { role: 'assistant', content: 'Sorry.' }];
+  assert.equal(checkConversation(real).filter(f => f.code === 'repeated_ask').length, 1, 'real repeats still count');
+});
