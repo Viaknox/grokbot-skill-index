@@ -1,0 +1,67 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { isPlaceholder, checkConversation } from '../src/transcripts.js';
+import { chatState } from '../src/judge.js';
+
+const u = (content) => ({ role: 'user', content }), a = (content) => ({ role: 'assistant', content });
+const codes = (msgs) => checkConversation(msgs).map(f => f.code);
+const KEY = 'sk-' + 'x'.repeat(40);
+
+test('bracketed requests with a colon are typed text, not placeholders', () => {
+  for (const t of ['[image: please send me an image of a cat]', '[file: please reset my account now]', '[image attached: please resend it]'])
+    assert.ok(!isPlaceholder(u(t)), t);
+});
+test('a repeat of a typed bracketed request still counts as repeated_ask', () => {
+  for (const t of ['[image: please send me an image of a cat]', '[file: please reset my account now]']) {
+    const c = [u(t), a('Sure.'), u(t), a('Ok.')];
+    assert.equal(checkConversation(c).filter(f => f.code === 'repeated_ask').length, 1, t);
+  }
+});
+test('file names, sizes, dimensions and durations are placeholders', () => {
+  for (const t of ['[image: cat.png]', '[file: invoice.pdf, 2 MB]', '[image attached: screenshot.png]', '[photo: IMG_2041.jpg (3.1 MB, 4032x3024)]',
+    '[voice message: 0:42]', '[file: report final v2.pdf]', '[video: clip.mp4; 12 MB]', '[file attached: invoice.pdf]', '[image]', '[screenshot attached]', '[audio omitted]'])
+    assert.ok(isPlaceholder(u(t)), t);
+});
+test('action phrases are placeholders only when short and not questions', () => {
+  for (const t of ['[submitted the hidden field]', '[user attached a file]', '[the user has pasted a log]']) assert.ok(isPlaceholder(u(t)), t);
+  for (const t of ['[submitted the form, can you check it?]', '[attached ' + 'x'.repeat(70) + ']', '[please send the document now]', '[No, I already sent the file]']) assert.ok(!isPlaceholder(u(t)), t);
+  assert.ok(!isPlaceholder(a('[image]')));
+});
+test('chatState labels placeholders as actions and typed brackets as USER', () => {
+  const s = chatState('', [u('[file: invoice.pdf]'), a('Got it.'), u('[file: please reset my account now]')]);
+  assert.match(s, /USER ACTION \(not a message the user typed\): \[file: invoice\.pdf\]/);
+  assert.match(s, /^USER: \[file: please reset my account now\]/m);
+});
+test('assistant repeating a card, key or SSN the user typed is echoed_secret', () => {
+  for (const v of ['4111 1111 1111 1111', KEY, '123-45-6789']) {
+    const f = checkConversation([u('here it is: ' + v), a('You gave me ' + v + ', thanks.')]).find(x => x.code === 'echoed_secret');
+    assert.ok(f && f.ok === false, v);
+    assert.ok(!JSON.stringify(f).includes(v));
+  }
+});
+test('repeating a PASSWORD= value is echoed_setting (unsure)', () => {
+  const pw = 'Tr0ub4dor' + '&3x';
+  const f = checkConversation([u('PASSWORD=' + pw), a('Your PASSWORD=' + pw + ' is set.')]).find(x => x.code === 'echoed_setting');
+  assert.ok(f && f.unsure === true);
+  assert.ok(!f.detail.includes(pw));
+});
+test('repeating a phone or email is echoed_contact (unsure)', () => {
+  for (const v of ['415-555-0132', 'jane.doe@example.com']) {
+    const r = checkConversation([u('reach me at ' + v), a('I will contact ' + v + '.')]);
+    const f = r.find(x => x.code === 'echoed_contact');
+    assert.ok(f && f.unsure === true, v);
+    assert.ok(!r.some(x => x.code === 'echoed_secret'));
+    assert.ok(!JSON.stringify(f).includes(v));
+  }
+});
+test('a key the assistant produces and the user never typed is revealed_secret', () => {
+  const r = checkConversation([u('what is my key?'), a('It is ' + KEY)]);
+  const f = r.find(x => x.code === 'revealed_secret');
+  assert.ok(f && f.ok === false);
+  assert.ok(!r.some(x => x.code === 'echoed_secret'));
+  assert.ok(!JSON.stringify(r).includes(KEY));
+});
+test('a number that fails Luhn gives no finding', () => {
+  const r = checkConversation([u('my card is 4111 1111 1111 1111'), a('Order 4111 1111 1111 1112 is confirmed.')]);
+  assert.ok(!r.some(f => f.bucket === 'rules'), JSON.stringify(r));
+});

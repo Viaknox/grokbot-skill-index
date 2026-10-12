@@ -58,8 +58,31 @@ const canon = (v) => Array.isArray(v) ? v.map(canon) : v && typeof v === 'object
 const same = (a, v) => (a !== null && typeof a === 'object') || (v !== null && typeof v === 'object')
   ? JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(v)) : String(a ?? '').toLowerCase() === String(v).toLowerCase();
 
-export function modelAdapter(cfg, or, { scrub } = {}) {
+// Tool names, property names and `required` lists are sent to the replay model unscrubbed (it must echo them back exactly
+// for dispatch), so a never-send word inside one of them cannot be hidden without breaking the tool. The only safe
+// answer is to refuse the run before anything is sent (viaknox #25 review).
+function namesWithPrivate(cfg, privateTerms) {
+  if (!privateTerms.length) return [];
+  // Names are split at camelCase and separators first, so "acmeId" and "ACME_LOOKUP" count as containing "Acme".
+  const has = (text) => { const s = scrubber({ terms: privateTerms }); s.scrub(String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_\-.]+/g, ' ')); return (s.counts().PRIVATE || 0) > 0; };
+  const hits = [];
+  const walk = (v, where) => {
+    if (!v || typeof v !== 'object') return;
+    if (Array.isArray(v)) { v.forEach((x, i) => walk(x, `${where}[${i}]`)); return; }
+    for (const [k, x] of Object.entries(v)) {
+      if (k === 'properties' && x && typeof x === 'object') { for (const [pk, pv] of Object.entries(x)) { if (has(pk)) hits.push(`${where}.properties.${pk}`); walk(pv, `${where}.properties.${pk}`); } continue; }
+      if (k === 'required' && Array.isArray(x)) { for (const r of x) if (has(String(r))) hits.push(`${where}.required:${r}`); continue; }
+      walk(x, `${where}.${k}`);
+    }
+  };
+  for (const [name, d] of Object.entries(cfg.tools || {})) { if (has(name)) hits.push(`tool ${name}`); walk(d && d.parameters, `tool ${name}.parameters`); }
+  return hits;
+}
+
+export function modelAdapter(cfg, or, { scrub, privateTerms = [] } = {}) {
   const S = (t) => (scrub ? scrub.scrub(t) : t), U = (t) => (scrub ? scrub.unscrub(t) : t);
+  const clash = namesWithPrivate(cfg, privateTerms);
+  if (clash.length) throw new Error(`A word from your --private list is in a tool name, a parameter name or a required list (${clash.length} place${clash.length > 1 ? 's' : ''}); it cannot be scrubbed without breaking the tool, so nothing was sent. Rename it or remove the word from the list.`);
   // Tool definitions are sent too, so every string in them is scrubbed (descriptions, enums, examples) except
   // tool and property names and `required` lists, which the model must echo back exactly for dispatch.
   const scrubSchema = (v, key) => typeof v === 'string' ? S(v)

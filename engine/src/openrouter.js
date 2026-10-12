@@ -2,6 +2,7 @@
 // passed with --keyfile; it is never logged.
 import { readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
+import { Sanitized } from './redact.js';
 
 export function loadKey(keyfile) {
   if (process.env.TUNEUP_OPENROUTER_KEY) return process.env.TUNEUP_OPENROUTER_KEY.trim();
@@ -40,4 +41,21 @@ export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fe
     decide: (body) => post('/alpha/decisions', body),
     spent: () => spent,
   };
+}
+
+// Raised instead of a call when the residual scan found something secret-looking. The message is what the user sees.
+export class HeldBack extends Error {
+  constructor() { super('unsure: we held back part of this chat to protect a secret'); this.name = 'HeldBack'; }
+}
+
+// The ONE door through which judge and writer text leaves this machine (brief item 7). It accepts only a Sanitized
+// made by the scrubber (a plain object with the same shape is refused, so no caller can hand over raw text by mistake),
+// refuses to call at all when the residual scan held the text, and gives `build` nothing but the scrubbed string. It
+// never logs, never keeps the text, and never attaches the text or the hold reasons to an error, so a stack trace or a
+// crash report cannot carry a secret either.
+export async function outbound(or, kind, sanitized, build) {
+  if (kind !== 'chat' && kind !== 'decide') throw new TypeError('outbound: kind must be "chat" or "decide"');
+  if (!Sanitized.is(sanitized)) throw new TypeError('outbound: only a Sanitized value from the scrubber may leave this machine');
+  if (sanitized.held) throw new HeldBack();
+  return or[kind](build(sanitized.text));
 }

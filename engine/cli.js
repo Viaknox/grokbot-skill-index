@@ -41,7 +41,7 @@ if (cmd === 'check') {
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
   // At most CONCURRENCY conversations at once (each asks the judge three times).
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
-    const findings = [...checkConversation(msgs), ...(or ? await judgeConversation(or, scrub.scrub(chatState(instructions, msgs)), { hasInstructions: !!instructions }) : [])];
+    const findings = [...checkConversation(msgs), ...(or ? await judgeConversation(or, scrub.sanitize(chatState(instructions, msgs)), { hasInstructions: !!instructions }) : [])];
     return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && scrub.scrub(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: scrub.scrub(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });
@@ -65,7 +65,7 @@ const suiteId = createHash('sha256').update(JSON.stringify(suite) + '\u0000' + J
 const or = client(loadKey(opt('keyfile')));
 const scrub = scrubber({ terms });
 let adapter;
-try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub }); }
+try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub, privateTerms: terms }); }
 catch (e) { console.error(e.message); process.exit(2); }
 if (suite.agent_config.type === 'http') {
   const vars = headerVars(suite.agent_config);
