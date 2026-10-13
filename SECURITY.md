@@ -26,6 +26,7 @@ The things we most want to hear about:
 **Not removed:** names, street addresses, other ID numbers, and secrets that look like ordinary words, unless you list them as "never send".
 
 - **A miss of something on the "removed" list is a vulnerability.** Please report it privately.
+- **The scrubber also tries to catch many formats beyond the "removed" list** (tables, config sections, phrases in several languages). A miss there is best effort: please report it, but it isn't a broken promise.
 - **A miss of something on the "not removed" list is a known limit.** Report it anyway; it helps us decide what to cover next.
 
 ## How to report
