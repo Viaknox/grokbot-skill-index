@@ -65,3 +65,12 @@ test('a number that fails Luhn gives no finding', () => {
   const r = checkConversation([u('my card is 4111 1111 1111 1111'), a('Order 4111 1111 1111 1112 is confirmed.')]);
   assert.ok(!r.some(f => f.bucket === 'rules'), JSON.stringify(r));
 });
+
+// PR #16 review: the echo inventory follows conversation order, so a key the assistant produced first and the user
+// quoted back afterwards is revealed (message 2), not echoed; the assistant repeating it after the user typed it is an echo.
+test('a key the assistant revealed and the user then quoted is revealed_secret; echoed_secret only after the user typed it', () => {
+  const r = checkConversation([u('what is my key?'), a('It is ' + KEY), u('why did you print ' + KEY + '?'), a('Sorry, ' + KEY + ' is now revoked.')]);
+  const rules = r.filter(f => f.bucket === 'rules').map(f => f.code + ' ' + (f.detail.match(/message \d+/) || [''])[0]);
+  assert.deepEqual(rules, ['revealed_secret message 2', 'echoed_secret message 4'], JSON.stringify(rules));
+  assert.ok(!JSON.stringify(r).includes(KEY));
+});

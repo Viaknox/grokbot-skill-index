@@ -1,5 +1,6 @@
 import { isPlaceholder } from './transcripts.js';
 import { outbound, HeldBack } from './openrouter.js';
+import { ScrubError } from './redact.js';
 // Model judge: Jev (a decisions model) answers yes/no questions with a probability. It never writes text,
 // so findings quote the transcript instead. Answers between 0.35 and 0.65 are reported as "unsure", not guessed.
 export const JUDGE_MODEL = 'typesafe/jev-1.13';
@@ -55,6 +56,16 @@ export async function judgeCase(or, sanitized) { return ask(or, sanitized, QUEST
 // The one local finding a run gets when nothing could be sent: the residual scan held the text, or the scrubber hit its
 // cap. It is "unsure" (never a pass, never a confident fail), and it sits in the rules bucket because a secret is at stake.
 export const heldFinding = () => ({ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' });
+
+// Scrubs `text` and hands the Sanitized to `ask`. The scrubber's size or time cap (a ScrubError) becomes the held
+// finding instead of an exception, so one oversized or slow chat marks its own run unsure and never crashes a whole
+// `run` or `check` (PR #16 review: check mode used to exit without a report). Every caller that judges goes through here.
+export async function judgeHeld(scrub, text, ask) {
+  let sanitized;
+  try { sanitized = scrub.sanitize(text); }
+  catch (e) { if (e instanceof ScrubError) return [heldFinding()]; throw e; }
+  return ask(sanitized);
+}
 
 // The judge varies between calls (calibration v1: 3 of 50 verdicts flipped on a re-run), so each question
 // is asked VOTES times and the probabilities are averaged. Jev costs ~$0.0001 per conversation, so 3x is cheap.

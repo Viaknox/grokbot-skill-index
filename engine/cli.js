@@ -21,7 +21,7 @@ import { proposeFix, WRITER_MODEL } from './src/writer.js';
 import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
 import { scrubber } from './src/redact.js';
 import { parseTranscripts, checkConversation } from './src/transcripts.js';
-import { judgeConversation, chatState, JUDGE_MODEL } from './src/judge.js';
+import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judge.js';
 
 const [cmd, file, ...rest] = process.argv.slice(2);
 const opt = (name, dflt) => { const i = rest.indexOf('--' + name); return i < 0 ? dflt : (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[i + 1] : true); };
@@ -41,7 +41,8 @@ if (cmd === 'check') {
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
   // At most CONCURRENCY conversations at once (each asks the judge three times).
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
-    const findings = [...checkConversation(msgs), ...(or ? await judgeConversation(or, scrub.sanitize(chatState(instructions, msgs)), { hasInstructions: !!instructions }) : [])];
+    // A chat over the scrubber's size or time cap gets the held finding (unsure), like a run in evaluate: never a crash.
+    const findings = [...checkConversation(msgs), ...(or ? await judgeHeld(scrub, chatState(instructions, msgs), (san) => judgeConversation(or, san, { hasInstructions: !!instructions })) : [])];
     return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && scrub.scrub(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: scrub.scrub(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });

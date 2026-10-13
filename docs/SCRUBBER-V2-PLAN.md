@@ -146,6 +146,18 @@ and the user never typed is reported as `revealed_secret` (same bucket, hard fai
 - **D15 Pre-existing placeholders never collide.** When the input already contains `[KIND_n]`, that number is reserved
   for that kind, so a placeholder this scrubber makes never equals a literal already in the text (otherwise `unscrub`
   could loop forever). `unscrub` is a single pass in reverse creation order, which is dependency order.
+- **D16 A YAML credential scope is a record at any depth** (PR #16 review, 2026-10-13). A credential-named YAML block
+  map used to become a plain container as soon as one child was structured, so `credentials:` with a nested map kept
+  `username: admin` and the nested `account: hunter2`. Now every scalar under it goes at any depth (nested maps are
+  walked, block scalars take their block, list items lose their scalar); the line-level test that kept `region: eu`
+  under `creds:` was changed to expect it gone, the option that removes more text.
+- **D17 Placeholder exemptions are narrow** (PR #16 review). Only the eight kinds the scrubber mints are reserved
+  tokens; `[ATTACK_1]` is data. A placeholder is "already scrubbed" only when nothing but closers, punctuation, another
+  placeholder or a named sibling field follows it on the line; `[SECRET_1])CorrectHorse9!` is a value and goes whole.
+- **D18 Perf budgets are ratios against an in-test baseline** (PR #16 review). The reviewer's machine took 163 ms for
+  the 100 ms case, so fixed milliseconds measured the hardware. One unit is a fixed set of linear scans over the same
+  text, measured in the same process; the brief's 100 ms and 500 ms become 12 and 60 units (about 8 ms per unit on
+  the reference machine). Growth compares 80k to 20k (under 6×, linear is 4×), best of five in two interleaved rounds.
 
 ## Phase 1 record: new suite against the old `redact.js`
 

@@ -1,8 +1,8 @@
 // Runs a test suite against an agent: every case `repeats` times, rule checks first, then the judge.
 import { checkCase } from './rules.js';
-import { judgeCase, transcript, heldFinding, JUDGE_MODEL } from './judge.js';
+import { judgeCase, judgeHeld, transcript, JUDGE_MODEL } from './judge.js';
 import { buildReport, runPassed } from './report.js';
-import { scrubber, ScrubError } from './redact.js';
+import { scrubber } from './redact.js';
 
 export const CONCURRENCY = 4;
 export async function pool(items, n, fn) {
@@ -13,12 +13,7 @@ export async function pool(items, n, fn) {
 
 // The judge sees a Sanitized only. A ScrubError (the scrubber's size or time cap) means no call for that run: the run is
 // marked unsure with the held finding rather than crashing the whole evaluation or sending unscrubbed text.
-async function judge(or, scrub, text) {
-  let sanitized;
-  try { sanitized = scrub.sanitize(text); }
-  catch (e) { if (e instanceof ScrubError) return [heldFinding()]; throw e; }
-  return judgeCase(or, sanitized);
-}
+const judge = (or, scrub, text) => judgeHeld(scrub, text, (sanitized) => judgeCase(or, sanitized));
 
 export async function evaluate({ suite, instructions, adapter, or, log = () => {}, scrub = scrubber() }) {
   // Up to CONCURRENCY cases run at once (bounds cost and rate-limit bursts); repeats of one case run one after another.

@@ -129,7 +129,7 @@ test('line level: an unterminated quote carries the value onto the following lin
 
 test('line level: a YAML block scalar and an indented block under an empty key go with the key', () => {
   const a = sec(40), b = sec(40), c = sec(40); const out = scrubber().scrub(`creds:\n  token: |\n    ${a}\n    ${b}\n  private_key:\n    ${c}\n  region: eu\nname: x`);
-  assertGone(out, [a, b, c]); assertKept(out, ['region: eu', 'name: x']);
+  assertGone(out, [a, b, c]); assert.match(out, /region: \[SECRET_\d+\]/); assertKept(out, ['name: x']);   // every scalar under creds: goes, nested or not (PR #16 review, plan D16)
 });
 
 test('line level: a comment after a long value goes with the value', () => {
@@ -407,6 +407,64 @@ test('known bypass (review 3): internationalised email addresses become [EMAIL_n
   const s = scrubber(); const out = s.scrub('mail usér@exämple.com or δοκιμή@παράδειγμα.δοκιμή or jo@x.example today');
   assert.equal(out, 'mail [EMAIL_1] or [EMAIL_2] or [EMAIL_3] today', out);
   assert.equal(s.unscrub(out), 'mail usér@exämple.com or δοκιμή@παράδειγμα.δοκιμή or jo@x.example today');
+});
+
+// ---- PR #16 review (Codex, head 87b3b71): fixtures written before their fixes ----
+
+test('known bypass (review 4): URL userinfo has no length ceiling', () => {
+  const pw = 'a'.repeat(300), user = 'b'.repeat(300);
+  for (const text of ['see https://user:' + pw + '@example.com ok', 'https://' + user + '@h.example']) {
+    const s = scrubber(); const out = s.scrub(text);
+    assert.ok(!out.includes('a'.repeat(8)) && !out.includes('b'.repeat(8)), out.slice(0, 80));
+    assert.equal(s.counts().KEY, 1, out.slice(0, 80));
+  }
+});
+
+test('known bypass (review 4): HTML closing tags match case-insensitively', () => {
+  for (const text of ['<textarea name="password">hunter2</TEXTAREA>', '<TextArea Name="password">hunter2</TeXtArEa>']) {
+    const out = scrubber().scrub(text); assert.ok(!out.includes('hunter2'), out);
+  }
+});
+
+test('known bypass (review 4): only real placeholder kinds are reserved; [ATTACK_1] as a value is scrubbed', () => {
+  const s = scrubber();
+  assert.equal(s.scrub('password=[ATTACK_1]'), 'password=[SECRET_1]');
+  assert.equal(s.scrub('password=[SECRET_1]'), 'password=[SECRET_1]');   // a real placeholder in the input is left alone
+  assert.equal(s.scrub('PASSWORD=x9k2'), 'PASSWORD=[SECRET_2]');         // and its number stays reserved
+  assert.equal(s.scrub('note [FOO_1] here'), 'note [FOO_1] here');       // plain text is not a credential value
+  assert.deepEqual(s.counts(), { SECRET: 2 });
+});
+
+test('known bypass (review 4): nested YAML maps, block scalars and lists under a credential key', () => {
+  const text = 'credentials:\n  username: admin\n  nested:\n    account: hunter2\n    deeper:\n      token: abc\n  blob: |\n    line1\n    line2\n  list:\n    - item9\n    - name: n1\n  note: plain\nother: keepme\n';
+  const out = scrubber().scrub(text);
+  for (const v of ['admin', 'hunter2', 'abc', 'line1', 'line2', 'item9', 'n1', 'plain']) assert.ok(!out.includes(v), v + ' survived: ' + out);
+  for (const k of ['credentials:', 'nested:', 'deeper:', 'other: keepme']) assert.ok(out.includes(k), k + ' missing: ' + out);
+});
+
+test('known bypass (review 4): an escaped pipe inside a Markdown cell is not a cell boundary', () => {
+  const text = '| note | password |\n|---|---|\n| a\\|b | hunter2 |\n| c | p2x |\n';
+  const out = scrubber().scrub(text);
+  assert.ok(!out.includes('hunter2') && !out.includes('p2x'), out);
+  assert.ok(out.includes('a\\|b') && out.includes('| c |'), out);
+});
+
+test('known bypass (review 4): data trailing a placeholder is scrubbed; closers and sibling fields still count as complete', () => {
+  for (const [text, v] of [['PASSWORD=[SECRET_1])CorrectHorse9!', 'CorrectHorse9!'], ['PASSWORD=[SECRET_1]; CorrectHorse9!', 'CorrectHorse9!'], ['password: [KEY_1], CorrectHorse9!', 'CorrectHorse9!']]) {
+    const out = scrubber().scrub(text); assert.ok(!out.includes(v), text + ' -> ' + out);
+  }
+  for (const keep of ['(agent said: "Authorization: [SECRET_1]")', '{"password":"[SECRET_1]","after":"x"}', 'tokens: [SECRET_1], [SECRET_2]', 'PASSWORD=[SECRET_1]; next=1']) {
+    const s = scrubber(); assert.equal(s.scrub(keep), keep, keep); assert.deepEqual(s.counts(), {}, keep);
+  }
+});
+
+test('known bypass (review 4): a never_send term next to @ is still scrubbed when it is not an email', () => {
+  const s = scrubber({ terms: ['Acme'] });
+  assert.equal(s.scrub('ping user@Acme please'), 'ping user@[PRIVATE_1] please');
+  assert.equal(s.scrub('jo@Acme'), 'jo@[PRIVATE_1]');
+  assert.equal(s.scrub('jo@acme.example'), '[EMAIL_1]');            // a real address goes whole, term included
+  assert.equal(scrubber({ terms: ['x'] }).scrub('mail jo@x.example'), 'mail [EMAIL_1]');   // a one-letter term never eats a host label
+  for (const t of ['user@Acme', 'jo@acme', 'mail to jo@acme.example now']) assert.ok(!/acme/i.test(scrubber({ terms: ['Acme'] }).scrub(t)), t);
 });
 
 // ---- mutation survivors (engine/scripts/mutate.mjs): each test kills one mutant that the suite missed ----

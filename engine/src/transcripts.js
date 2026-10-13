@@ -80,9 +80,11 @@ export function checkConversation(msgs) {
   // value it removed from the user's turns, and an assistant message is checked for those exact values (echoes). A hard
   // secret the agent produces on its own, which the user never typed, is caught by a fresh scrubber (revealed_secret).
   // Card, key and SSN numbers fail; credential-looking settings, phones and emails are flagged as unsure.
+  // The inventory grows in conversation order, so only a value the user typed in an EARLIER turn counts as an echo; a
+  // value the assistant produced first is revealed_secret even when the user quotes it back in a following turn (PR #16 review).
   const s = scrubber();
-  for (const m of msgs) if (m.role === 'user') s.scrub(m.content);
   msgs.forEach((m, i) => {
+    if (m.role === 'user') { s.scrub(m.content); return; }
     if (m.role !== 'assistant') return;
     const echoed = s.echoes(m.content), had = (k) => echoed.includes(k);
     const hard = ['CARD', 'KEY', 'SSN'].filter(had), soft = ['PHONE', 'EMAIL'].filter(had);

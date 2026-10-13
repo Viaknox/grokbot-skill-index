@@ -10,6 +10,8 @@ nothing here was merged, pushed to `main`, or marked ready.
 |---|---|---|
 | Before (HEAD `79a3266`) | 79 | 77 pass on Windows (2 tests built the CLI path with `URL.pathname`); 79 on Linux/macOS |
 | After (`npm test`, commit `7de8ea1`) | 308 | 308 pass, exit 0 |
+| After PR #16 review round 3 (commit `87b3b71`) | 311 | 311 pass, exit 0 |
+| After PR #16 review round 4 (Codex, 11 threads on `87b3b71`) | 325 | 325 pass, exit 0 |
 
 New files: `engine/test/scrubber-v2.test.js` (corpus, known bypasses, placeholders, residual, sanitize, echoes, mutation
 survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `transcripts-v2.test.js`, `fuzz.test.js`
@@ -39,6 +41,20 @@ survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `tra
 | Review 2: `--password=x`, `--api-key=x`, `--token x` | partly leaked | all three removed, and the result is not falsely held |
 | Review 2: bare `key=CorrectHorseBatteryStaple` | leaked | scrubbed in dotenv form (`key=`, `export key=`); `key:` labels stay (contract) |
 | Review 2: never_send term in a tool name, schema property name or `required` entry (`adapters.js`) | sent unscrubbed | the run is refused before any request is built |
+| Review 3: `Use the password 'cat123'`, `use password x9k2`, `The secret phrase is secret12345.`, `my api key here is abc123xyz` | leaked (prose forms) | scrubbed; `my password yesterday.` and `API key rotation policy is documented` stay |
+| Review 3: `usér@exämple.com`, `δοκιμή@παράδειγμα.δοκιμή` | leaked (ASCII email rule) | `[EMAIL_n]`, round trip |
+| Review 4 (PR #16, Codex): URL password over 256 characters | leaked (regex ceiling) | whole userinfo goes, no ceiling |
+| Review 4: `<textarea name="password">hunter2</TEXTAREA>` | leaked (case-sensitive closing tag) | element text goes |
+| Review 4: `password=[ATTACK_1]` | treated as already sanitized | only the eight real kinds are reserved; the value is scrubbed |
+| Review 4: `credentials:` with a nested YAML map | both scalars leaked (scope abandoned) | every scalar under the scope goes at any depth (plan D16) |
+| Review 4: Markdown row `\| a\\\|b \| hunter2 \|` under a `password` header | row skipped (cell count) | escaped pipe is cell text; `hunter2` goes |
+| Review 4: `PASSWORD=[SECRET_1])CorrectHorse9!` | trailing data leaked (any delimiter exempted) | whole value goes; closers, another placeholder or a named sibling still count as complete (plan D17) |
+| Review 4: `user@Acme` with never_send `Acme` | leaked (`@` excluded for the one-letter-term case) | `user@[PRIVATE_1]` by a second sweep after the email rule; `jo@x.example` with term `x` is still `[EMAIL_1]` |
+| Review 4: never_send term in `$defs`, `definitions`, `patternProperties`, `dependentSchemas`, `dependentRequired`, `dependencies` names | sent unscrubbed | the run is refused like a property name |
+| Review 4: `check --consent` on a chat over the 4,000,000-character cap | `ScrubError` crashed the command | one `judge:held` finding (unsure), exit 0, no call (`judgeHeld` shared with `evaluate`) |
+| Review 4: key revealed by the agent in message 2 and quoted by the user in message 3 | `echoed_secret` (inventory built from all user turns first) | `revealed_secret` (message 2); an echo only after the user typed it |
+| Review 4: perf budgets in fixed milliseconds | failed on the reviewer's slower machine | ratios against an in-test baseline unit (plan D18) |
+| Found while adding the review-4 perf payloads: 4000 `<textarea name="password">x</textarea>` lines | 1.6 s (the sibling-pair pass rescanned to the end of the text for every name with no `value=`) | 150 ms, linear (last search remembered; the indexed-variable search bounded to its 20 lines) |
 
 ## Fuzz, oracle, perf
 
@@ -51,10 +67,13 @@ survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `tra
   held, 0 failures; 81 bare values are not knowable (low-entropy shapes, UUID-shaped ids, context-only values) and are
   reported, not asserted. Two sample lines are
   accepted misses (`secrete.assign(…)`, `other_value_here: 1234567890a`; contract "Known non-coverage").
-- **Perf** (`engine/test/perf.test.js`, best of 3, this Windows machine, final code): `sanitize` of a realistic 60k
-  mixed chat 25.9 ms (budget 100 ms); residual alone 0.6 ms; growth 10k 3.3 ms, 20k 7.3 ms, 40k 16.7 ms, 80k 34.9 ms
-  (10.6× for 8×, roughly linear); 18 ReDoS payloads all under 90 ms (worst `token: |` × 20000, 89 ms; limit 500 ms);
-  60k Cyrillic chat 23 ms. v1 scrubbed the same 60k in about 1.5 ms; v2 pays for whole-scope, sibling-pair and
+- **Perf** (`engine/test/perf.test.js`, best of 3, this Windows machine, after the PR #16 review round): budgets are
+  ratios against a baseline unit measured in the same process (plan D18); here 1 unit = 6.1 ms. `sanitize` of a
+  realistic 60k mixed chat 31.4 ms = 5.2 units (budget 12 = 100 ms on the reference machine); residual alone 0.6 ms;
+  growth 10k 3.7 ms, 20k 8.8 ms, 40k 18.6 ms, 80k 38.9 ms (4.4× for 20k→80k, limit 6×, linear is 4×); 21 ReDoS
+  payloads all under 18 units (worst `token: |` × 20000, 103.9 ms = 17.1 units; the new `<textarea name=password>` × 5000
+  payload 95.3 ms = 15.7 units; limit 60 units = 500 ms on the reference machine). No CI workflow exists in this
+  repository; the ratios are what make a Linux runner pass, verified only on this machine. v1 scrubbed the same 60k in about 1.5 ms; v2 pays for whole-scope, sibling-pair and
   folded-view passes.
 
 ## Mutation check (`engine/scripts/mutate.mjs`)
@@ -148,7 +167,8 @@ a never-send term in mathematical bold letters). Still open after this build:
   the shared scrubber and now refuses runs with never-send words in tool or property names, but its requests do not pass
   the residual hold. Needs a decision on simulated tool results.
 - **Over-scrubbing inside credential scopes.** By design (plan: when in doubt, remove more), every value inside a
-  credential-named object or section goes, including a `username`. Reports therefore show `[SECRET_n]` for some harmless
+  credential-named object or section goes, including a `username`, and since the PR #16 review round a YAML scope is
+  walked at any depth (plan D16). Reports therefore show `[SECRET_n]` for some harmless
   fields; the judge treats those as "unsure", never a hard fail.
 - `engine/src/judge.js:34` contains the word "later" in a pre-existing question string (not changed code; gate 5 is
   about changed code).

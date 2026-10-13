@@ -4,7 +4,10 @@
 // Secrets are built at run time from pieces, never written literally.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { client, outbound, HeldBack } from '../src/openrouter.js';
 import { judgeCase, judgeConversation, chatState } from '../src/judge.js';
@@ -165,4 +168,47 @@ test('model adapter refuses a run when a --private word sits in a tool name, a p
   const ok = mk({ lookup: { ...base, description: 'Mail Acme Corp' } });
   const t = await ok.turn({ history: [], message: 'hi', instructions: 'x' }); assert.equal(t.reply, 'ok'); assert.equal(calls, 1);
   const plain = modelAdapter({ model: 'm', tools: { acme_lookup: base } }, or, { scrub: scrubber() }); assert.ok(plain);
+});
+
+// PR #16 review: identifiers in every schema-keyed map ($defs, definitions, patternProperties, dependentSchemas,
+// dependentRequired, dependencies) travel unscrubbed like property names, so a never-send word in any of them refuses the run.
+test('model adapter refuses a run when a --private word sits in a $defs, definitions or other schema-keyed map name', async () => {
+  let calls = 0; const or = { chat: async () => { calls++; return { choices: [{ message: { content: 'ok' } }] }; } };
+  const mk = (parameters) => modelAdapter({ model: 'm', tools: { lookup: { description: 'd', parameters } } }, or, { scrub: scrubber({ terms: ['Acme'] }), privateTerms: ['Acme'] });
+  const str = { type: 'string' };
+  assert.throws(() => mk({ type: 'object', $defs: { AcmeUser: str }, properties: { to: { $ref: '#/$defs/AcmeUser' } } }), /--private/);
+  assert.throws(() => mk({ type: 'object', definitions: { acme_user: str }, properties: { to: str } }), /--private/);
+  assert.throws(() => mk({ type: 'object', patternProperties: { '^acme_': str } }), /--private/);
+  assert.throws(() => mk({ type: 'object', properties: { x: str }, dependentRequired: { acmeId: ['x'] } }), /--private/);
+  assert.throws(() => mk({ type: 'object', properties: { x: str }, dependentSchemas: { x: { properties: { ACME: str } } } }), /--private/);
+  assert.throws(() => mk({ type: 'object', properties: { x: str }, dependencies: { acmeFlag: ['x'] } }), /--private/);
+  assert.equal(calls, 0);
+  const ok = mk({ type: 'object', $defs: { User: str }, properties: { to: { $ref: '#/$defs/User' } } });
+  const t = await ok.turn({ history: [], message: 'hi', instructions: 'x' }); assert.equal(t.reply, 'ok'); assert.equal(calls, 1);
+});
+
+// PR #16 review: check mode must treat the scrubber's caps like evaluate does: one held finding, no call, no crash.
+test('judgeHeld turns a ScrubError into the judge:held finding for the chat judge, and cli.js check mode goes through it', async () => {
+  const { judgeHeld } = await import('../src/judge.js');
+  assert.equal(typeof judgeHeld, 'function', 'judgeHeld is not exported');
+  const { or, calls } = recorder();
+  const real = scrubber(); const capped = { ...real, sanitize: (t) => real.sanitize(t, { maxChars: 5 }) };
+  const state = chatState('', [{ role: 'user', content: 'hello there' }, { role: 'assistant', content: 'hi' }]);
+  const f = await judgeHeld(capped, state, (s) => judgeConversation(or, s, { hasInstructions: false }));
+  assert.deepEqual(f, [{ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' }]);
+  assert.equal(calls.length, 0);
+  const ok = await judgeHeld(real, state, (s) => judgeConversation(or, s, { hasInstructions: false }));
+  assert.ok(ok.length > 1 && ok.every(x => x.code !== 'judge:held'), JSON.stringify(ok));
+  const cli = readFileSync(fileURLToPath(new URL('../cli.js', import.meta.url)), 'utf8');
+  assert.ok(/\bjudgeHeld\(/.test(cli) && !/scrub\.sanitize\(/.test(cli), 'cli.js check mode must sanitize through judgeHeld');
+});
+
+test('cli check --consent on a conversation over the size cap exits 0 with a judge:held finding', () => {
+  const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 'chats.txt');
+  writeFileSync(f, 'User: ' + 'hello there '.repeat(340_000) + '\nBot: ok\n');   // over the 4,000,000-character cap
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8', maxBuffer: 256e6 });
+  assert.equal(r.status, 0, r.stderr.slice(-500));
+  const rep = readFileSync(join(d, 'o', 'report.json'), 'utf8');
+  assert.ok(rep.includes('held back part of this chat'), 'no held finding in the report');   // the report card carries the finding text, not its code
+  assert.ok(!rep.includes('ScrubError') && !r.stderr.includes('ScrubError'));
 });
