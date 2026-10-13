@@ -388,6 +388,27 @@ test('known bypass (review 2): bare key= in dotenv form is scrubbed; key: labels
   for (const l of ['key: user_id', '{"key": "user_id", "value": 1}', '- key: name']) assert.equal(scrubber().scrub(l), l, l);
 });
 
+// ---- known bypasses from the review of PR #16 ----
+
+test('known bypass (review 3): a credential noun followed by a quoted or bare value in prose', () => {
+  for (const [text, v] of [["Use the password 'cat123' to log in.", 'cat123'], ['use password "x9k2"', 'x9k2'], ['Use the password cat123 to log in.', 'cat123'], ['enter api key Zz8def when asked', 'Zz8def']]) {
+    const out = scrubber().scrub(text); assert.ok(!out.includes(v), text + ' -> ' + out);
+  }
+  for (const keep of ['I forgot my password yesterday and the reset mail never came', 'my password yesterday.']) assert.equal(scrubber().scrub(keep), keep, keep);
+});
+
+test('known bypass (review 3): a credential noun with qualifier words before the copula', () => {
+  for (const [text, v] of [['The secret phrase is secret12345.', 'secret12345'], ['my api key here is abc123xyz', 'abc123xyz'], ['the db password for staging is Qq7ghi.', 'Qq7ghi']]) {
+    const out = scrubber().scrub(text); assert.ok(!out.includes(v), text + ' -> ' + out);
+  }
+});
+
+test('known bypass (review 3): internationalised email addresses become [EMAIL_n]', () => {
+  const s = scrubber(); const out = s.scrub('mail usér@exämple.com or δοκιμή@παράδειγμα.δοκιμή or jo@x.example today');
+  assert.equal(out, 'mail [EMAIL_1] or [EMAIL_2] or [EMAIL_3] today', out);
+  assert.equal(s.unscrub(out), 'mail usér@exämple.com or δοκιμή@παράδειγμα.δοκιμή or jo@x.example today');
+});
+
 // ---- mutation survivors (engine/scripts/mutate.mjs): each test kills one mutant that the suite missed ----
 
 test('mutation: names split at letter/digit boundaries, so token2 and v2token are credentials', () => {

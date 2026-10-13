@@ -782,11 +782,20 @@ const PROSE_CRED = '(?:passwords?|passphrases?|passwd|pwd|pw|passcodes?|pins?|ot
 const NOT_L = '(?![\\p{L}\\p{N}])', NOT_L_BEHIND = '(?<![\\p{L}\\p{N}])';
 // "password is X", "creds are user:pass", "pw's X", "le mot de passe est X", "das Passwort ist X", "la contraseña es X":
 // a copula (is/are/est/ist/lautet/es/é/è/это/—) or a possessive 's, then the value.
+// Up to two plain words may sit between the noun and the copula ("the secret phrase is X", "my api key here is X") when
+// the value carries a digit or a symbol, so "Our API key rotation policy is documented" (a plain word) is left alone.
 const COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+|[\'’]s[ \\t]+)("[^"\\n]*"|\'[^\'\\n]*\'|\\S+)', 'giu');
+const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+\\p{L}{1,20}){1,2}' + '[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)\\S+)', 'giu');
+// A credential noun, after a prose word ("use the password", "enter api key"), followed directly by its value: a quoted
+// token that carries a digit or a symbol before its last character ("use password x9k2"), so "my password yesterday."
+// is left alone (letters only, and a final full stop does not count).
+const NOUN_VALUE_RE = new RegExp('(?<=\\p{L}[ \\t]+)' + PROSE_CRED + NOT_L + '[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)[\\p{L}\\p{N}][^\\s"\']*)', 'giu');
 // A multi-word foreign name before a separator: "Mot de passe: X", "clé API = X".
 const PHRASE2_RE = new RegExp(NOT_L_BEHIND + '(?:mot[ \\t]+de[ \\t]+passe|cl[eé][ \\t]+(?:api|secr[eè]te)|chave[ \\t]+(?:de[ \\t]+)?api)' + NOT_L + '[ \\t]*(?:->|[:=\\u2236\\uFF1D\\uFF1A\\u2192])[ \\t]*("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]+)', 'giu');
 function scrubCopula(s, label) {
-  return s.replace(COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  const out = s.replace(COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  const mid = out.replace(QUAL_COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  return mid.replace(NOUN_VALUE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
 }
 
 // A credential phrase written as separate words before a colon or equals: "api key: X", "openai api key = X",
@@ -862,7 +871,8 @@ const KEY_SHAPES = [
 const KEY_SHAPE_RE = new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')', 'g');
 
 const PATTERNS = [
-  ['EMAIL', /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,63}\b/g],
+  // Internationalised addresses too (usér@exämple.com, δοκιμή@παράδειγμα.δοκιμή): letters of any script, bounded classes.
+  ['EMAIL', /(?<![\p{L}\p{N}])[\p{L}\p{N}._%+-]{1,64}@[\p{L}\p{N}.-]{1,253}\.\p{L}{2,63}(?![\p{L}\p{N}])/gu],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
