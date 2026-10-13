@@ -132,7 +132,7 @@ function buildCase(i) {
   return { text, frags, label: `${shapeName} in ${ctxFinal}${notes.length ? ' +' + notes.join('+') : ''}` };
 }
 
-test('fuzz: no seeded secret survives sanitize() unless the text is held; scrub round-trips and is idempotent', () => {
+test('[promised] fuzz: no seeded secret survives sanitize() unless the text is held; scrub round-trips and is idempotent', () => {
   console.log(`fuzz: seed=${SEED} iterations=${ITER}${ONLY === null ? '' : ` only=${ONLY}`}`);
   assert.equal(typeof scrubber().sanitize, 'function', 'scrubber().sanitize is missing (the v2 contract)');
   const stats = { scrub: 0, residual: 0 }; const failures = [];
@@ -197,7 +197,7 @@ const EXPECTED_MISSES = [
   ['secrete.assign(', 'a name that merely starts with a credential word (secrete, secretary) is not a credential, brief item 2'],
   ['other_value_here: ', 'no credential name on the line, no known shape, low entropy'],
 ];
-test('oracle: every sample secret is gone (or the text is held), in its sample line and as a knowable bare value', () => {
+test('[best-effort] oracle: every sample secret is gone (or the text is held), in its sample line and as a knowable bare value', () => {
   assert.equal(typeof scrubber().sanitize, 'function', 'scrubber().sanitize is missing (the v2 contract)');
   const samples = loadOracle();
   assert.ok(samples.length >= 300, 'oracle file looks too small: ' + samples.length);

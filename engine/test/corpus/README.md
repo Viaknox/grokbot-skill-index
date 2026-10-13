@@ -18,6 +18,12 @@ and returns every value it made, so a test can assert that no 8-character window
 
 Files are read with CRLF normalised to LF (Windows checkouts); CRLF behaviour is tested from strings built in code.
 
+## Tiers
+
+Every `attack-round-*.json` fixture carries `"tier": "promised"` or `"tier": "best-effort"` (the loader refuses a fixture
+without one), and every scrubber test name starts with the same tag; see "Tiers" in `docs/SCRUBBER-CONTRACT.md`.
+`npm run test:promised` runs only the merge-blocking set.
+
 ## Families
 
 | File | Covers |

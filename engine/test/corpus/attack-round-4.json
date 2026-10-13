@@ -1,6 +1,7 @@
 [
   {
     "name": "json-object-generic-under-credential",
+    "tier": "best-effort",
     "why": "Credential scope inside JSON object may not be covered if scope handling is only INI/TOML/XML/HCL.",
     "input": "{\"credentials\":{\"username\":\"ada\",\"value\":\"CorrectHorse9!\"}}",
     "gone": [
@@ -9,6 +10,7 @@
   },
   {
     "name": "json-nested-default-under-secret",
+    "tier": "best-effort",
     "why": "Nested JSON generic value under a credential object may survive if only direct assignments are scrubbed.",
     "input": "{\"secret\":{\"metadata\":{\"default\":\"CorrectHorse9!\"}}}",
     "gone": [
@@ -17,6 +19,7 @@
   },
   {
     "name": "json-schema-example-password",
+    "tier": "best-effort",
     "why": "Schema/example fields can carry a secret without the field name itself being credential-like.",
     "input": "{\"properties\":{\"password\":{\"type\":\"string\",\"example\":\"CorrectHorse9!\"}}}",
     "gone": [
@@ -25,6 +28,7 @@
   },
   {
     "name": "openapi-security-example",
+    "tier": "best-effort",
     "why": "OpenAPI examples often store auth material under non-credential leaf names.",
     "input": "components:\n  securitySchemes:\n    ApiKeyAuth:\n      type: apiKey\n      in: header\n      name: X-Api-Key\n      example: \"CorrectHorse9!\"",
     "gone": [
@@ -33,6 +37,7 @@
   },
   {
     "name": "yaml-flow-map-nested-credential",
+    "tier": "best-effort",
     "why": "YAML flow style may bypass block-oriented credential scopes.",
     "input": "credentials: { user: ada, value: CorrectHorse9! }",
     "gone": [
@@ -41,6 +46,7 @@
   },
   {
     "name": "yaml-flow-sequence-pair",
+    "tier": "best-effort",
     "why": "Credential name and value are paired inside a YAML flow sequence rather than key-value syntax.",
     "input": "settings: [password, CorrectHorse9!]",
     "gone": [
@@ -49,6 +55,7 @@
   },
   {
     "name": "yaml-anchor-alias-secret",
+    "tier": "best-effort",
     "why": "A credential field references an alias while the literal value is stored under a benign anchor source.",
     "input": "shared: &s CorrectHorse9!\npassword: *s",
     "gone": [
@@ -57,6 +64,7 @@
   },
   {
     "name": "ini-colon-in-section-value",
+    "tier": "best-effort",
     "why": "Generic leaf inside a credential-named section may only be covered for some value keys.",
     "input": "[credentials]\nlogin: ada\nmaterial: CorrectHorse9!",
     "gone": [
@@ -65,6 +73,7 @@
   },
   {
     "name": "xml-attribute-authvalue",
+    "tier": "best-effort",
     "why": "Credential tag scope may miss arbitrary non-listed attribute names containing the secret.",
     "input": "<credentials label=\"prod\" material=\"CorrectHorse9!\"/>",
     "gone": [
@@ -73,6 +82,7 @@
   },
   {
     "name": "html-aria-label-secret",
+    "tier": "best-effort",
     "why": "ARIA attributes can contain secrets without using value/content attribute names.",
     "input": "<input name=\"password\" aria-label=\"CorrectHorse9!\">",
     "gone": [
@@ -81,6 +91,7 @@
   },
   {
     "name": "html-textarea-default",
+    "tier": "best-effort",
     "why": "Textarea default content with credential name attribute may not be treated like value/content attributes.",
     "input": "<textarea name=\"password\">CorrectHorse9!</textarea>",
     "gone": [
@@ -89,6 +100,7 @@
   },
   {
     "name": "multipart-form-data",
+    "tier": "best-effort",
     "why": "Multipart form-data carries credential names in Content-Disposition metadata and value in the body.",
     "input": "------WebKitFormBoundaryx\nContent-Disposition: form-data; name=\"password\"\n\nCorrectHorse9!\n------WebKitFormBoundaryx--",
     "gone": [
@@ -97,6 +109,7 @@
   },
   {
     "name": "makefile-variable-assignment",
+    "tier": "best-effort",
     "why": "Makefile conditional assignment operators may not be included in separator coverage.",
     "input": "PASSWORD ?= CorrectHorse9!\nTOKEN += CorrectHorse9!",
     "gone": [
@@ -105,6 +118,7 @@
   },
   {
     "name": "clojure-map-keyword",
+    "tier": "best-effort",
     "why": "Clojure maps use keyword credential names with adjacent string values.",
     "input": "{:password \"CorrectHorse9!\" :user \"ada\"}",
     "gone": [
@@ -113,6 +127,7 @@
   },
   {
     "name": "redis-url-query-password",
+    "tier": "best-effort",
     "why": "Some connection strings put credentials in query-like options with nonstandard parameter names.",
     "input": "redis://cache.example.test/0?requirepass=CorrectHorse9!",
     "gone": [
@@ -121,6 +136,7 @@
   },
   {
     "name": "aws-shared-credentials-continuation",
+    "tier": "best-effort",
     "why": "AWS credential files can use indented continuation-like lines under profile sections.",
     "input": "[default]\naws_access_key_id = {{PREFIX akia}}\naws_secret_access_key\n    CorrectHorse9!",
     "gone": [
@@ -130,6 +146,7 @@
   },
   {
     "name": "bidi-around-separator",
+    "tier": "best-effort",
     "why": "Bidirectional isolates around separators may desynchronize folded-view span mapping.",
     "input": "password⁦=⁩CorrectHorse9!",
     "gone": [
@@ -138,6 +155,7 @@
   },
   {
     "name": "record-separator-line",
+    "tier": "best-effort",
     "why": "ASCII record separators may break line and separator handling in unusual pasted files.",
     "input": "password\u001e=\u001eCorrectHorse9!",
     "gone": [

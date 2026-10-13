@@ -85,7 +85,7 @@ const units = (ms) => (ms / unit()).toFixed(1);
 // Runs sanitize on a fresh scrubber (as a request would) with the never_send terms.
 const sanitizeOnce = (text) => () => scrubber({ terms: TERMS }).sanitize(text);
 
-test(`perf: sanitize of a realistic 60k-character chat takes under ${SANITIZE_UNITS} units (100 ms on the reference machine)`, () => {
+test(`[promised] perf: sanitize of a realistic 60k-character chat takes under ${SANITIZE_UNITS} units (100 ms on the reference machine)`, () => {
   needSanitize();
   const text = mixed(60000);
   assert.equal(text.length, 60000);
@@ -94,7 +94,7 @@ test(`perf: sanitize of a realistic 60k-character chat takes under ${SANITIZE_UN
   assert.ok(t < SANITIZE_UNITS * unit(), `sanitize of 60k took ${t.toFixed(1)} ms = ${units(t)} units`);
 });
 
-test(`perf: residual() alone on the same 60k chat (inside the ${SANITIZE_UNITS}-unit budget)`, async () => {
+test(`[promised] perf: residual() alone on the same 60k chat (inside the ${SANITIZE_UNITS}-unit budget)`, async () => {
   needSanitize();
   const { residual } = await import('../src/redact.js');
   assert.equal(typeof residual, 'function', 'residual is not exported (the v2 contract)');
@@ -106,7 +106,7 @@ test(`perf: residual() alone on the same 60k chat (inside the ${SANITIZE_UNITS}-
 
 // Growth is a ratio between two sizes on the same machine, so it never needed an absolute number; it is measured
 // best-of-5 in two interleaved rounds so JIT warm-up or one GC pause on the larger text cannot fake a superlinear curve.
-test('perf: time grows roughly linearly from 10k to 80k characters', () => {
+test('[promised] perf: time grows roughly linearly from 10k to 80k characters', () => {
   needSanitize();
   const sizes = [10000, 20000, 40000, 80000]; const texts = Object.fromEntries(sizes.map(s => [s, mixed(s)]));
   const times = Object.fromEntries(sizes.map(s => [s, Infinity]));
@@ -142,7 +142,7 @@ const PAYLOADS = {
   'credentials: then 5000 nested YAML lines (PR #16: scope walk)': () => 'credentials:\n' + Array.from({ length: 5000 }, (_, i) => '  k' + i + ':\n    v: x').join('\n'),
 };
 for (const [name, make] of Object.entries(PAYLOADS)) {
-  test(`redos: ${name} finishes in under ${REDOS_UNITS} units`, () => {
+  test(`[promised] redos: ${name} finishes in under ${REDOS_UNITS} units`, () => {
     needSanitize();
     const text = make();
     const t = best(sanitizeOnce(text), 2);

@@ -32,20 +32,20 @@ test('chatState labels placeholders as actions and typed brackets as USER', () =
   assert.match(s, /USER ACTION \(not a message the user typed\): \[file: invoice\.pdf\]/);
   assert.match(s, /^USER: \[file: please reset my account now\]/m);
 });
-test('assistant repeating a card, key or SSN the user typed is echoed_secret', () => {
+test('[promised] assistant repeating a card, key or SSN the user typed is echoed_secret', () => {
   for (const v of ['4111 1111 1111 1111', KEY, '123-45-6789']) {
     const f = checkConversation([u('here it is: ' + v), a('You gave me ' + v + ', thanks.')]).find(x => x.code === 'echoed_secret');
     assert.ok(f && f.ok === false, v);
     assert.ok(!JSON.stringify(f).includes(v));
   }
 });
-test('repeating a PASSWORD= value is echoed_setting (unsure)', () => {
+test('[promised] repeating a PASSWORD= value is echoed_setting (unsure)', () => {
   const pw = 'Tr0ub4dor' + '&3x';
   const f = checkConversation([u('PASSWORD=' + pw), a('Your PASSWORD=' + pw + ' is set.')]).find(x => x.code === 'echoed_setting');
   assert.ok(f && f.unsure === true);
   assert.ok(!f.detail.includes(pw));
 });
-test('repeating a phone or email is echoed_contact (unsure)', () => {
+test('[promised] repeating a phone or email is echoed_contact (unsure)', () => {
   for (const v of ['415-555-0132', 'jane.doe@example.com']) {
     const r = checkConversation([u('reach me at ' + v), a('I will contact ' + v + '.')]);
     const f = r.find(x => x.code === 'echoed_contact');
@@ -54,21 +54,21 @@ test('repeating a phone or email is echoed_contact (unsure)', () => {
     assert.ok(!JSON.stringify(f).includes(v));
   }
 });
-test('a key the assistant produces and the user never typed is revealed_secret', () => {
+test('[promised] a key the assistant produces and the user never typed is revealed_secret', () => {
   const r = checkConversation([u('what is my key?'), a('It is ' + KEY)]);
   const f = r.find(x => x.code === 'revealed_secret');
   assert.ok(f && f.ok === false);
   assert.ok(!r.some(x => x.code === 'echoed_secret'));
   assert.ok(!JSON.stringify(r).includes(KEY));
 });
-test('a number that fails Luhn gives no finding', () => {
+test('[promised] a number that fails Luhn gives no finding', () => {
   const r = checkConversation([u('my card is 4111 1111 1111 1111'), a('Order 4111 1111 1111 1112 is confirmed.')]);
   assert.ok(!r.some(f => f.bucket === 'rules'), JSON.stringify(r));
 });
 
 // PR #16 review: the echo inventory follows conversation order, so a key the assistant produced first and the user
 // quoted back afterwards is revealed (message 2), not echoed; the assistant repeating it after the user typed it is an echo.
-test('a key the assistant revealed and the user then quoted is revealed_secret; echoed_secret only after the user typed it', () => {
+test('[promised] a key the assistant revealed and the user then quoted is revealed_secret; echoed_secret only after the user typed it', () => {
   const r = checkConversation([u('what is my key?'), a('It is ' + KEY), u('why did you print ' + KEY + '?'), a('Sorry, ' + KEY + ' is now revoked.')]);
   const rules = r.filter(f => f.bucket === 'rules').map(f => f.code + ' ' + (f.detail.match(/message \d+/) || [''])[0]);
   assert.deepEqual(rules, ['revealed_secret message 2', 'echoed_secret message 4'], JSON.stringify(rules));

@@ -12,6 +12,7 @@ nothing here was merged, pushed to `main`, or marked ready.
 | After (`npm test`, commit `7de8ea1`) | 308 | 308 pass, exit 0 |
 | After PR #16 review round 3 (commit `87b3b71`) | 311 | 311 pass, exit 0 |
 | After PR #16 review round 4 (Codex, 11 threads on `87b3b71`) | 325 | 325 pass, exit 0 |
+| After PR #16 review round 5 (Linux CI, tiers; head `441b2b7`) | 325 | 325 pass on Windows (Node 24) and on Linux (WSL Ubuntu, Node 22); `.github/workflows/test.yml` runs the suite on `ubuntu-latest` |
 
 New files: `engine/test/scrubber-v2.test.js` (corpus, known bypasses, placeholders, residual, sanitize, echoes, mutation
 survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `transcripts-v2.test.js`, `fuzz.test.js`
@@ -54,6 +55,7 @@ survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `tra
 | Review 4: `check --consent` on a chat over the 4,000,000-character cap | `ScrubError` crashed the command | one `judge:held` finding (unsure), exit 0, no call (`judgeHeld` shared with `evaluate`) |
 | Review 4: key revealed by the agent in message 2 and quoted by the user in message 3 | `echoed_secret` (inventory built from all user turns first) | `revealed_secret` (message 2); an echo only after the user typed it |
 | Review 4: perf budgets in fixed milliseconds | failed on the reviewer's slower machine | ratios against an in-test baseline unit (plan D18) |
+| Review 5 (PR #16, Linux CI): `2000 YAML lines, growing indent` perf payload took 1.8 s on Node 22 (24 ms on Node 24) | `ScrubError` from the 2 s cap, `npm test` red on Linux | the review-3 prose rule's unbounded `[ \t]+` lookbehind is bounded to 4 blanks; 32 ms on Node 22, root cause fixed, payload kept at 2M characters |
 | Found while adding the review-4 perf payloads: 4000 `<textarea name="password">x</textarea>` lines | 1.6 s (the sibling-pair pass rescanned to the end of the text for every name with no `value=`) | 150 ms, linear (last search remembered; the indexed-variable search bounded to its 20 lines) |
 
 ## Fuzz, oracle, perf
@@ -72,8 +74,10 @@ survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `tra
   realistic 60k mixed chat 31.4 ms = 5.2 units (budget 12 = 100 ms on the reference machine); residual alone 0.6 ms;
   growth 10k 3.7 ms, 20k 8.8 ms, 40k 18.6 ms, 80k 38.9 ms (4.4× for 20k→80k, limit 6×, linear is 4×); 21 ReDoS
   payloads all under 18 units (worst `token: |` × 20000, 103.9 ms = 17.1 units; the new `<textarea name=password>` × 5000
-  payload 95.3 ms = 15.7 units; limit 60 units = 500 ms on the reference machine). No CI workflow exists in this
-  repository; the ratios are what make a Linux runner pass, verified only on this machine. v1 scrubbed the same 60k in about 1.5 ms; v2 pays for whole-scope, sibling-pair and
+  payload 95.3 ms = 15.7 units; limit 60 units = 500 ms on the reference machine). On Linux (WSL Ubuntu, Node 22.23):
+  1 unit = 5.9 ms, sanitize 60k 35.2 ms = 6.0 units, growth 80k/20k 5.5×, the growing-indent payload 31.7 ms after the
+  lookbehind fix (1753.8 ms before it). `.github/workflows/test.yml` (ubuntu-latest, Node 22, `cd engine && npm test`)
+  runs the suite on every push and pull request. v1 scrubbed the same 60k in about 1.5 ms; v2 pays for whole-scope, sibling-pair and
   folded-view passes.
 
 ## Mutation check (`engine/scripts/mutate.mjs`)
@@ -144,6 +148,18 @@ a never-send term in mathematical bold letters). Still open after this build:
 - Erlang/Elixir proplists with atom keys: `{password, "…"}` (the tuple rule accepts only quoted names).
 - A never-send term spelled with spaces between its letters (`A c m e`, including no-break spaces).
 
+
+## Tiers and CI
+
+The contract now has two tiers (`docs/SCRUBBER-CONTRACT.md`, "Tiers"): **Promised** (merge-blocking: emails, phones,
+Luhn cards, US SSNs, IPv4, private-key blocks, the listed token formats, URL userinfo, Basic/Bearer/Digest,
+credential-named settings in dotenv/JSON/YAML/INI/headers including Authorization and Cookie, CLI credential flags,
+never_send terms, and the scrubber's own mechanisms) and **Best effort** (everything else: disguises, other
+languages, prose, tables, XML/HTML, scopes, sibling pairs, code forms, netrc, URL query parameters). Every scrubber
+test name starts with `[promised]` or `[best-effort]` and every `attack-round-*.json` fixture carries `tier` (the
+loader refuses one without it): 61 of the 70 named scrubber-v2 tests, the fuzz test, every boundary and perf test and
+the six echo tests are promised; 6 of the 127 attack fixtures are promised, the rest best effort; the oracle test is
+best effort. `npm run test:promised` runs the merge-blocking subset; `npm test` and CI run everything.
 
 ## Deferred (needs Paul)
 

@@ -1,0 +1,17 @@
+# Runs the engine's test suite on Linux so the scrubber's perf budgets, which are ratios against an in-test baseline,
+# are proven on a runner that is not the build machine (PR #16 review: a Node 22 Linux run found a slow lookbehind).
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  engine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd engine && npm test

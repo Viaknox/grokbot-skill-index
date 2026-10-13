@@ -57,7 +57,7 @@ function assertClean(calls, label) {
   }
 }
 
-test('boundary: the judge path sends no seeded secret or never-send term in any request (instructions, turns, tools, replies)', async () => {
+test('[promised] boundary: the judge path sends no seeded secret or never-send term in any request (instructions, turns, tools, replies)', async () => {
   const { or, calls } = recorder();
   const scrub = scrubber({ terms: TERMS });
   const tools = { get_env: { description: `Reads Acme settings ${url()}`, parameters: {}, default: { env: dotenv(), key: pem() } } };
@@ -70,7 +70,7 @@ test('boundary: the judge path sends no seeded secret or never-send term in any 
   assert.equal(rules.unsure, 0, 'a scrubbable chat is judged, not held');
 });
 
-test('boundary: the writer path sends no seeded secret or never-send term (instructions, failures, quotes, cases, tried)', async () => {
+test('[promised] boundary: the writer path sends no seeded secret or never-send term (instructions, failures, quotes, cases, tried)', async () => {
   const { or, calls } = recorder(JSON.stringify({ revised_instructions: 'You are BookBot. Always confirm the id and never repeat settings.', changes: ['x'] }));
   const scrub = scrubber({ terms: TERMS });
   const fix = await proposeFix(or, {
@@ -82,7 +82,7 @@ test('boundary: the writer path sends no seeded secret or never-send term (instr
   assert.equal(calls.length, 1); assert.match(fix.revised_instructions, /BookBot/);
 });
 
-test('boundary: a plain string is refused with a TypeError before any call, for the judge, the chat judge and outbound', async () => {
+test('[promised] boundary: a plain string is refused with a TypeError before any call, for the judge, the chat judge and outbound', async () => {
   const { or, calls } = recorder();
   await assert.rejects(judgeCase(or, 'AGENT: hi'), TypeError);
   await assert.rejects(judgeConversation(or, chatState('', [{ role: 'user', content: 'hi' }]), { hasInstructions: false }), TypeError);
@@ -91,7 +91,7 @@ test('boundary: a plain string is refused with a TypeError before any call, for 
   assert.equal(calls.length, 0);
 });
 
-test('boundary: an object shaped like a Sanitized but not made by the scrubber is refused', async () => {
+test('[promised] boundary: an object shaped like a Sanitized but not made by the scrubber is refused', async () => {
   const { or, calls } = recorder();
   const fake = Object.freeze({ text: 'hello', held: false, reasons: [], version: '2.0.0' });
   await assert.rejects(outbound(or, 'chat', fake, (t) => ({ messages: [{ role: 'user', content: t }] })), TypeError);
@@ -100,7 +100,7 @@ test('boundary: an object shaped like a Sanitized but not made by the scrubber i
   assert.equal(calls.length, 0);
 });
 
-test('boundary: text held by the residual scan gives one judge:held finding and makes no call; the writer rejects with HeldBack', async () => {
+test('[promised] boundary: text held by the residual scan gives one judge:held finding and makes no call; the writer rejects with HeldBack', async () => {
   const { or, calls } = recorder();
   const bare = 'deploy key ' + gen.b64(rng, 48);   // no credential name, so only the residual scan can catch it
   const held = scrubber().sanitize(bare);
@@ -113,7 +113,7 @@ test('boundary: text held by the residual scan gives one judge:held finding and 
   assert.equal(calls.length, 0);
 });
 
-test('boundary: a ScrubError in evaluate marks the run unsure with judge:held and makes no judge call', async () => {
+test('[promised] boundary: a ScrubError in evaluate marks the run unsure with judge:held and makes no judge call', async () => {
   const { or, calls } = recorder();
   const real = scrubber(); const scrub = { ...real, sanitize: (t) => real.sanitize(t, { maxChars: 5 }) };
   const adapter = { name: 't', observesTools: false, turn: async () => ({ reply: 'ok', tools: null, ms: 1 }) };
@@ -126,7 +126,7 @@ test('boundary: a ScrubError in evaluate marks the run unsure with judge:held an
   assert.throws(() => real.sanitize('a'.repeat(10), { maxChars: 5 }), ScrubError);
 });
 
-test('boundary: the restore map never leaves scope: no request, Sanitized, HeldBack or TypeError serialises a secret', async () => {
+test('[promised] boundary: the restore map never leaves scope: no request, Sanitized, HeldBack or TypeError serialises a secret', async () => {
   const { or, calls } = recorder();
   const scrub = scrubber({ terms: TERMS });
   const san = scrub.sanitize(`Acme ${dotenv()}\n${pem()}\n${header()}\n${url()}`);
@@ -142,7 +142,7 @@ test('boundary: the restore map never leaves scope: no request, Sanitized, HeldB
   assert.ok(Object.isFrozen(san) && san instanceof Sanitized);
 });
 
-test('boundary: judge, writer and evaluate never call or.chat/or.decide directly; only outbound does', () => {
+test('[promised] boundary: judge, writer and evaluate never call or.chat/or.decide directly; only outbound does', () => {
   const src = (f) => readFileSync(fileURLToPath(new URL('../src/' + f, import.meta.url)), 'utf8');
   for (const f of ['judge.js', 'writer.js', 'evaluate.js']) {
     assert.ok(!/\bor\.(chat|decide)\s*\(/.test(src(f)), `${f} calls the client directly`);
@@ -155,7 +155,7 @@ test('boundary: judge, writer and evaluate never call or.chat/or.decide directly
 
 // viaknox #25 review: a never-send word inside a tool name, a JSON-schema property name or a `required` entry cannot be
 // scrubbed (the model must echo those exactly), so the run is refused before any request is built.
-test('model adapter refuses a run when a --private word sits in a tool name, a property name or a required list; nothing is sent', async () => {
+test('[promised] model adapter refuses a run when a --private word sits in a tool name, a property name or a required list; nothing is sent', async () => {
   let calls = 0; const or = { chat: async () => { calls++; return { choices: [{ message: { content: 'ok' } }] }; } };
   const mk = (tools) => modelAdapter({ model: 'm', tools }, or, { scrub: scrubber({ terms: ['Acme'] }), privateTerms: ['Acme'] });
   const base = { description: 'd', parameters: { type: 'object', properties: { to: { type: 'string' } }, required: ['to'] } };
@@ -172,7 +172,7 @@ test('model adapter refuses a run when a --private word sits in a tool name, a p
 
 // PR #16 review: identifiers in every schema-keyed map ($defs, definitions, patternProperties, dependentSchemas,
 // dependentRequired, dependencies) travel unscrubbed like property names, so a never-send word in any of them refuses the run.
-test('model adapter refuses a run when a --private word sits in a $defs, definitions or other schema-keyed map name', async () => {
+test('[promised] model adapter refuses a run when a --private word sits in a $defs, definitions or other schema-keyed map name', async () => {
   let calls = 0; const or = { chat: async () => { calls++; return { choices: [{ message: { content: 'ok' } }] }; } };
   const mk = (parameters) => modelAdapter({ model: 'm', tools: { lookup: { description: 'd', parameters } } }, or, { scrub: scrubber({ terms: ['Acme'] }), privateTerms: ['Acme'] });
   const str = { type: 'string' };
@@ -188,7 +188,7 @@ test('model adapter refuses a run when a --private word sits in a $defs, definit
 });
 
 // PR #16 review: check mode must treat the scrubber's caps like evaluate does: one held finding, no call, no crash.
-test('judgeHeld turns a ScrubError into the judge:held finding for the chat judge, and cli.js check mode goes through it', async () => {
+test('[promised] judgeHeld turns a ScrubError into the judge:held finding for the chat judge, and cli.js check mode goes through it', async () => {
   const { judgeHeld } = await import('../src/judge.js');
   assert.equal(typeof judgeHeld, 'function', 'judgeHeld is not exported');
   const { or, calls } = recorder();
@@ -203,7 +203,7 @@ test('judgeHeld turns a ScrubError into the judge:held finding for the chat judg
   assert.ok(/\bjudgeHeld\(/.test(cli) && !/scrub\.sanitize\(/.test(cli), 'cli.js check mode must sanitize through judgeHeld');
 });
 
-test('cli check --consent on a conversation over the size cap exits 0 with a judge:held finding', () => {
+test('[promised] cli check --consent on a conversation over the size cap exits 0 with a judge:held finding', () => {
   const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 'chats.txt');
   writeFileSync(f, 'User: ' + 'hello there '.repeat(340_000) + '\nBot: ok\n');   // over the 4,000,000-character cap
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8', maxBuffer: 256e6 });

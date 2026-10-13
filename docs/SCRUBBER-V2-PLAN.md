@@ -158,6 +158,13 @@ and the user never typed is reported as `revealed_secret` (same bucket, hard fai
   the 100 ms case, so fixed milliseconds measured the hardware. One unit is a fixed set of linear scans over the same
   text, measured in the same process; the brief's 100 ms and 500 ms become 12 and 60 units (about 8 ms per unit on
   the reference machine). Growth compares 80k to 20k (under 6×, linear is 4×), best of five in two interleaved rounds.
+- **D19 No unbounded lookbehind** (PR #16 CI on Linux, 2026-10-13). `(?<=\p{L}[ \t]+)` re-scans every blank of a long
+  indent at each position; Node 24 happened to hide it (24 ms), Node 22 did not (1.8 s, over the 2 s cap on a slower
+  runner). Lookbehinds are bounded (`{1,4}`), and the Linux CI workflow is the guard.
+- **D20 Two coverage tiers** (PR #16 review). Promised shapes are merge-blocking and are what the privacy page may
+  state; everything else is best effort, fixed when found. Every fixture is tagged so a reviewer can tell which tier a
+  failure belongs to; disguised spellings, other languages and prose forms are best effort even when the underlying
+  shape is promised.
 
 ## Phase 1 record: new suite against the old `redact.js`
 

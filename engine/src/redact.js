@@ -826,7 +826,9 @@ const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]
 // A credential noun, after a prose word ("use the password", "enter api key"), followed directly by its value: a quoted
 // token that carries a digit or a symbol before its last character ("use password x9k2"), so "my password yesterday."
 // is left alone (letters only, and a final full stop does not count).
-const NOUN_VALUE_RE = new RegExp('(?<=\\p{L}[ \\t]+)' + PROSE_CRED + NOT_L + '[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)[\\p{L}\\p{N}][^\\s"\']*)', 'giu');
+// The gap before the noun is bounded (1-4 blanks): an unbounded [ \t]+ lookbehind re-scanned every blank of a long
+// indent at each position and made 2000 growing-indent YAML lines take 1.8 s on Node 22 (PR #16 CI on Linux).
+const NOUN_VALUE_RE = new RegExp('(?<=\\p{L}[ \\t]{1,4})' + PROSE_CRED + NOT_L + '[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)[\\p{L}\\p{N}][^\\s"\']*)', 'giu');
 // A multi-word foreign name before a separator: "Mot de passe: X", "clé API = X".
 const PHRASE2_RE = new RegExp(NOT_L_BEHIND + '(?:mot[ \\t]+de[ \\t]+passe|cl[eé][ \\t]+(?:api|secr[eè]te)|chave[ \\t]+(?:de[ \\t]+)?api)' + NOT_L + '[ \\t]*(?:->|[:=\\u2236\\uFF1D\\uFF1A\\u2192])[ \\t]*("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]+)', 'giu');
 function scrubCopula(s, label) {
