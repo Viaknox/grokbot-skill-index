@@ -292,7 +292,7 @@ function valueEnd(s, start) {
     for (; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === q) break; }
     if (i >= s.length) return s.length;
     // A trailing "# comment" on the same line goes with the value (password: "x" # backup y; PR #16 review).
-    const cm = /^[ \t]+#[^\n]*/.exec(s.slice(i + 1, i + 1 + 4000));
+    const cm = /^[ \t]*[#;][^\n]*/.exec(s.slice(i + 1, i + 1 + 4000));   // INI ";" comments too (PR #16 review)
     return cm ? i + 1 + cm[0].length : i + 1;
   }
   let nl = s.indexOf('\n', start);
@@ -552,13 +552,17 @@ const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160}
 const KV = /("[^"\n]{0,400}"|'[^'\n]{0,400}'|\[[^\[\]\n]{1,160}\]|[\p{L}\p{N}_$][\p{L}\p{N}_$.\-]{0,160})[ \t]*[:=][ \t]*/gu;   // numeric keys too ({123: …}; PR #27 review)
 // Every scalar value between `open` ({) and `close` (its match): quoted strings whole, bare values up to , } ] or the
 // line end; a nested { or [ is simply scanned through, so nested keys are seen one by one.
+const FIELD_WORD = /^(?:user(?:[_-]?name)?|login|email|e-mail|id|name|type|kind|url|uri|endpoint|host(?:name)?|port|region|scopes?|expires?(?:[_-]?(?:at|in))?|created(?:[_-]?at)?|updated(?:[_-]?at)?|description|label|enabled|provider|account|tenant|project|audience|issuer|algorithm|format|version|value)$/i;
 function objectScalars(s, open, close, ivs) {
   KV.lastIndex = open + 1;
   for (let m; (m = KV.exec(s)) && m.index < close;) {
     const vs = m.index + m[0].length, c = s[vs];
     // A key can be the secret itself in a token-indexed map ({"api_keys":{"hunter2":{…}}}; PR #16 review): a key whose
     // value is an object or an array, or that carries a digit, goes too.
-    if ((c === '{' || c === '[' || /\d/.test(m[1])) && m[1].replace(/^["'\[]|["'\]]$/g, '').trim()) ivs.push([m.index, m.index + m[1].length, 'SECRET']);
+    // Any other key goes too unless it is a credential name or a common field word ({"api_keys":{"huntertwo":"alice"}};
+    // PR #16 review), so a record keeps its shape ({"credentials":{"username":…,"password":…}}).
+    const bareKey = m[1].replace(/^["'\[]|["'\]]$/g, '').trim();
+    if (bareKey && (c === '{' || c === '[' || /\d/.test(m[1]) || !(isCredentialName(bareKey) || FIELD_WORD.test(bareKey)))) ivs.push([m.index, m.index + m[1].length, 'SECRET']);
     // An array of plain values inside a credential object goes whole ({"credentials":{"items":["…"]}}; PR #27 review);
     // an array of objects is scanned through so each object's fields are found.
     // Any array inside a credential container goes whole, mixed ones included (["…", {…}]; PR #27 review).
@@ -647,7 +651,7 @@ function scrubScopes(s, label, resolve) {
     }
     // Flow-style maps under data:/stringData: ({username: admin, db: x}) lose every scalar too (viaknox PR #27 review).
     if (k8s) { const FM = /(?:^|[\s{,])(["']?)(?:data|stringData)\1[ \t]*:[ \t]*\{/g; for (let f; (f = FM.exec(line));) { const open = i + f.index + f[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } }
-    if (k8s && (m = /^([ \t]*)(data|stringData):[ \t]*$/.exec(line))) {
+    if (k8s && (m = /^([ \t]*)(["']?)(?:data|stringData)\2:[ \t]*$/.exec(line))) {   // quoted keys too ("stringData":; PR #16 review)
       const ind = m[1].length; let j = nl;
       while (j < s.length) {
         const ls = j + 1; let le = s.indexOf('\n', ls); if (le < 0) le = s.length;
@@ -784,7 +788,8 @@ function scrubHtmlAttrs(s, label, resolve) {
     const re = new RegExp('<(/?)' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s>/])', 'g'); re.lastIndex = from;
     let depth = 1, steps = 0, m;
     for (; (m = re.exec(lower)) && m.index - from <= 65536 && steps < 256; steps++) { if (m[1]) { if (--depth === 0) return m.index; } else depth++; }
-    if (steps >= 256 || (m && m.index - from > 65536)) return Math.min(s.length, from + 65536);
+    // Past the window the rest of the text goes, not just the window: the real closer may lie beyond it (PR #16 review).
+    if (steps >= 256 || (m && m.index - from > 65536)) return s.length;
     lastClose.set(key, { from, found: -1 }); return -1;
   };
   for (let m; (m = TAG.exec(s));) {
@@ -807,7 +812,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     // <… Name="password"><…Value>text</…Value>: the next *Value child's text is the credential; and the element's own
     // text (<textarea name="password">…</textarea>) when the tag is not self-closing.
     if (!hit && byAttr) { const c = CHILD_VALUE.exec(s.slice(m.index + tag.length, m.index + tag.length + 4200)); if (c) { const vs = m.index + tag.length + c[0].length - c[2].length - 2; ivs.push([vs, vs + c[2].length, 'SECRET']); } }
-    if (byAttr && !tag.endsWith('/>') && tagName) { const open = m.index + tag.length, close = closeOf(tagName, open); if (close > open && close - open <= 65536 && s.slice(open, close).trim()) ivs.push([open, close, 'SECRET']); }   // nested markup goes too (PR #27)
+    if (byAttr && !tag.endsWith('/>') && tagName) { const open = m.index + tag.length, close = closeOf(tagName, open); if (close > open && s.slice(open, close).trim()) ivs.push([open, close, 'SECRET']); }   // nested markup goes too (PR #27)
   }
   return applyIntervals(s, ivs, label);
 }
@@ -961,7 +966,8 @@ function scrubPathSegments(s, label, resolve) {
 // Multipart form data: a part whose Content-Disposition names a credential field; its body (after the blank line, up to
 // the next boundary line starting with "--" or the end) goes.
 // The whole quoted name is read ("api key"; PR #27 review); an unquoted one runs to a space or semicolon.
-const PART_HEADER = /Content-Disposition:[^\n]*\bname=(?:"([^"\n]{1,160})"|'([^'\n]{1,160})'|([^"'\s;\n]{1,160}))/gi;
+// Folded headers (a parameter on an indented continuation line, RFC 5322 §2.2.3) are read as one (PR #16 review).
+const PART_HEADER = /Content-Disposition:(?:[^\r\n]|\r?\n(?=[ \t]))*?\bname=(?:"([^"\n]{1,160})"|'([^'\n]{1,160})'|([^"'\s;\n]{1,160}))/gi;
 function scrubMultipart(s, label, resolve) {
   if (!/Content-Disposition/i.test(s)) return s;
   const ivs = []; PART_HEADER.lastIndex = 0;
@@ -1014,7 +1020,7 @@ function scrubXml(s, label, resolve) {
       if (--depth === 0) { close = closes[k]; break; }
     }
     // Too many nested closing tags to walk: take the rest of the 64 KB window rather than risk leaving the value (PR #27).
-    if (close < 0 && n >= 256) close = Math.min(s.length, open + 65536);
+    if (close < 0 && (n >= 256 || (k < closes.length && closes[k] - open > 65536))) close = s.length;   // the rest of the text, not just the window (PR #16 review)
     // No matching end tag (pasted or cut-off markup: <password>hunter2, <password>x</foo>; PR #27 review): the value runs
     // to the next tag or the end of its line (the next non-blank line when the tag ends its own line).
     if (close < 0 && /\/\s*>$/.test(m[0])) continue;   // <password /> is empty, not unclosed
@@ -1140,7 +1146,7 @@ function scrubPhrase(s, label) {
 // not read as a flag name.
 const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
 const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
-const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("(?:\\.|[^"\\\n])*"|'(?:[^'\n]|'')*'|(?:\\\r?\n|[^\s'"])+)/g;   // '' inside '…' is one quote (PowerShell; PR #16 review); escaped quotes stay inside a "…" value (PR #16 review)
+const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)((?:"(?:\\.|[^"\\\n])*"|'[^'\n]*'|\\\r?\n|\\.|[^\s'"\\])+)/g;   // the whole shell word: adjacent quoted, escaped and bare fragments ('foo'\''bar', PowerShell 'foo''bar'; PR #16 review)
 // SQL Server tools take the password as -P (sqlcmd -S db -U alice -P x, or -Px); only on a line naming one of them,
 // since -P is a port elsewhere (PR #27 review).
 const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
@@ -1443,7 +1449,7 @@ export function scrubber({ terms = [] } = {}) {
     // agent repeating "CorrectHorse9!" after the user's PASSWORD=CorrectHorse9! (viaknox PR #27 review).
     // A value wrapping a never-send placeholder (password=Acme-x is [PRIVATE_1]-x) still recurs as that same text, so it
     // stays eligible; the part outside the placeholder must still be at least four characters (PR #16 review).
-    const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 4; };
+    const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 3; };
     const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
@@ -1452,9 +1458,9 @@ export function scrubber({ terms = [] } = {}) {
     // password=pass does not turn "compass" into "com[SECRET_1]" (PR #16 review).
     if (known.length) {
       const kindOf = new Map(); for (const [kind, v] of known) if (!kindOf.has(v)) kindOf.set(v, kind);
-      // Candidate lengths are indexed by the value's first four characters (every value has at least four), so a
+      // Candidate lengths are indexed by the value's first three characters (every value has at least three), so a
       // position is only tried against values that can start there.
-      const byPre = new Map(); for (const v of kindOf.keys()) { const p = v.slice(0, 4); if (!byPre.has(p)) byPre.set(p, new Set()); byPre.get(p).add(v.length); }
+      const byPre = new Map(); for (const v of kindOf.keys()) { const p = v.slice(0, 3); if (!byPre.has(p)) byPre.set(p, new Set()); byPre.get(p).add(v.length); }
       for (const [p, set] of byPre) byPre.set(p, [...set].sort((a, b) => b - a));
       const firsts = new Set([...kindOf.keys()].map(v => v[0]));
       const word = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
@@ -1464,7 +1470,7 @@ export function scrubber({ terms = [] } = {}) {
         // otherwise run far past it before the check after scrubbing (PR #16 review). Past it, sanitize holds.
         if ((i & 1023) === 0 && Date.now() > deadline) throw new ScrubError('scrubbing took too long; holding back');
         if (!firsts.has(s[i])) continue;
-        const lens = byPre.get(s.substr(i, 4)); if (!lens) continue;
+        const lens = byPre.get(s.substr(i, 3)); if (!lens) continue;
         for (const L of lens) {
           const v = s.substr(i, L), kind = kindOf.get(v);
           if (kind === undefined || (word(v[0]) && word(s[i - 1])) || (word(v[L - 1]) && word(s[i + L]))) continue;
@@ -1528,7 +1534,7 @@ export function scrubber({ terms = [] } = {}) {
       const phones = (s.match(/\+?\d[\d\s().-]{6,}\d/g) || []).map(x => x.replace(/\D/g, '').slice(-10));
       const digitRuns = (s.match(/\d(?:[ \t.-]?\d){8,18}/g) || []).map(x => x.replace(/\D/g, ''));
       for (const { kind, value } of inventory) {
-        if (!value || value.length < 4) continue;
+        if (!value || value.length < 3) continue;
         // A value that begins or ends with a letter or digit counts only as a whole occurrence, so PASSWORD=pass is not
         // echoed by "compass" or "passed" (PR #27 review).
         if (kind !== 'EMAIL' && s.includes(value) && (!/^[\p{L}\p{N}]|[\p{L}\p{N}]$/u.test(value) || new RegExp((/^[\p{L}\p{N}]/u.test(value) ? '(?<![\\p{L}\\p{N}])' : '') + value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (/[\p{L}\p{N}]$/u.test(value) ? '(?![\\p{L}\\p{N}])' : ''), 'u').test(s))) kinds.add(kind);

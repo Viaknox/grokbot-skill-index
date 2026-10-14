@@ -799,3 +799,11 @@ test('[best-effort] round 30: unclosed credential elements, echo | --password-st
   assert.ok(scrubber().sanitize('echo hunter22 | docker login --password-stdin registry.example.com').text.includes('registry.example.com'));
   assert.equal(scrubber().sanitize('<password /> stays').text, '<password /> stays');
 });
+test('[best-effort] round 31: scalar token-map keys, 3-character recurrences, ";" comments, quoted Secret keys, POSIX-concatenated flags, folded multipart headers, HTML values past the window', () => {
+  const big = '<textarea name="password">' + 'a'.repeat(65537) + 'hunter22</textarea>';
+  for (const x of ['{"api_keys":{"hunter22":"alice"}}', 'password = "foo" ; backup hunter22', 'kind: Secret\n"stringData":\n  db: hunter22', "cmd --password 'foo'\\''hunter22'", 'Content-Disposition: form-data;\r\n name="password"\r\n\r\nhunter22\r\n--b--', big])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x.slice(0, 60));
+  assert.ok(scrubber().sanitize('{"credentials":{"username":"bob","password":"x"}}').text.includes('"username"'));
+  const s = scrubber(); assert.equal(s.sanitize('USER: PASSWORD=abc\nAGENT: abc').text, 'USER: PASSWORD=[SECRET_1]\nAGENT: [SECRET_1]');
+  assert.deepEqual(s.echoes('it was abc'), ['SECRET']);
+});
