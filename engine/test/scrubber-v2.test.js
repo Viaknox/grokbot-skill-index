@@ -754,3 +754,9 @@ test('[promised] viaknox PR #27 round 23: a name ending in token is a credential
   for (const x of ['ROTATION_TOKEN=hunter22', 'RESPONSE_TOKEN=hunter22']) assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
   for (const x of ['max_output_tokens=1024', 'usage_tokens=5', 'token_rotation_policy=30d', 'tokenLimit=10']) assert.equal(scrubber().sanitize(x).text, x);
 });
+test('[best-effort] viaknox PR #27 round 24: IMAP LOGIN, SSN after copula, one-time codes, punctuation-rich passwords held, public PEM not held', () => {
+  for (const x of ['C: a001 LOGIN alice hunter22', 'my SSN is 123456789', 'one_time_code=654321', 'my one-time code is 654321', 'TOTP=654321'])
+    assert.ok(!/hunter22|123456789|654321/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('N7:qP2-vL9:sR4-x').held, true);
+  assert.equal(scrubber().sanitize('-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0\n-----END PUBLIC KEY-----').held, false);
+});

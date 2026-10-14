@@ -142,8 +142,8 @@ function hasCompound(parts) {
   }
   return false;
 }
-const COMPOUND = /(seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
-const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'cvv', 'cvv2', 'cvc', 'cvc2', 'csc', 'cvn',   // card verification codes (PR #27)
+const COMPOUND = /(onetimecode|onetimepasscode|onetimepassword|otpcode|seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
+const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'cvv', 'cvv2', 'cvc', 'cvc2', 'csc', 'cvn', 'totp', 'hotp',   // card verification codes (PR #27)
   'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
   'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk', 'zugangsdaten',   // psk: WPA pre-shared key (PR #27)
@@ -1003,6 +1003,9 @@ function scrubCallArg(s, label, resolve) {
   // SMTP/IMAP "AUTH PLAIN <base64>" initial responses (RFC 4954; PR #27 review).
   s = s.replace(/^((?:[ \t]*(?:USER|AGENT|C|S|>>?|<<?):?)?[ \t]*(?:\w+[ \t]+)?AUTH(?:ENTICATE)?[ \t]+(?:PLAIN|LOGIN|XOAUTH2?|OAUTHBEARER|CRAM-MD5|DIGEST-MD5|SCRAM-SHA-\d+(?:-PLUS)?)[ \t]+)(\S+)/gim, (m, pre, v) =>
     v === '=' || isPlaceholderValue(v) ? m : pre + label('SECRET', v));
+  // IMAP "tag LOGIN user password" (RFC 9051 §6.2.3; PR #27 review): the second argument is the plaintext password.
+  s = s.replace(/^((?:[ \t]*(?:USER|AGENT|C|S):?)?[ \t]*[A-Za-z0-9.]{1,20}[ \t]+LOGIN[ \t]+(?:"[^"\n]*"|\S+)[ \t]+)("[^"\n]*"|\S+)/gim, (m, pre, v) =>
+    isPlaceholderValue(v) ? m : pre + label('SECRET', v));
   // MongoDB db.auth("user", "pw") and similar (user, password) signatures: the second quoted argument goes too
   // (PR #27 review).
   s = s.replace(/\b(?:db\.auth|auth|login|signIn|authenticate)[ \t]*\([ \t]*("[^"\n]*"|'[^'\n]*')[ \t]*,[ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, u, v) =>
@@ -1046,7 +1049,7 @@ function scrubNetrc(s, label) {
 // Credential words and phrases in prose, in English and the other languages the scrubber knows. Guards are
 // Unicode-aware lookarounds (JS \b only knows ASCII letters, so "пароль" or "密码" would never sit at a \b).
 const MULTI_CRED = 'mot[ \\t]+de[ \\t]+passe|mdp|cl[eé][ \\t]+(?:api|secr[eè]te)|cl[eé]|jeton|passw[oö]rter|passwort|kennwort|geheimnis|schl[uü]ssel|zugangsdaten|contrase[ñn]a|clave|secreto|credenciales|senha|chave|chiave|segreto|wachtwoord|sleutel|пароль|секрет|ключ|токен|パスワード|秘密鍵|トークン|密码|密钥|口令|令牌|비밀번호|암호';
-const PROSE_CRED = '(?:(?:seed|recovery|mnemonic|secret|wallet)[ _-]?phrases?|mnemonics?|cvv2?|cvc2?|passwords?|passphrases?|passwd|pwd|pw|passcodes?|pins?|otp|secrets?|creds?|credentials?|tokens?|api[ _-]?keys?|auth[ _-]?tokens?|access[ _-]?tokens?|(?:recovery|backup|verification|security|auth|2fa|mfa)[ _-]?codes?|' + MULTI_CRED + ')';
+const PROSE_CRED = '(?:one[ _-]?time[ _-]?(?:pass)?codes?|one[ _-]?time[ _-]?passwords?|totp|hotp|(?:seed|recovery|mnemonic|secret|wallet)[ _-]?phrases?|mnemonics?|cvv2?|cvc2?|passwords?|passphrases?|passwd|pwd|pw|passcodes?|pins?|otp|secrets?|creds?|credentials?|tokens?|api[ _-]?keys?|auth[ _-]?tokens?|access[ _-]?tokens?|(?:recovery|backup|verification|security|auth|2fa|mfa)[ _-]?codes?|' + MULTI_CRED + ')';
 const NOT_L = '(?![\\p{L}\\p{N}])', NOT_L_BEHIND = '(?<![\\p{L}\\p{N}])';
 // "password is X", "creds are user:pass", "pw's X", "le mot de passe est X", "das Passwort ist X", "la contraseña es X":
 // a copula (is/are/est/ist/lautet/es/é/è/это/—) or a possessive 's, then the value.
@@ -1188,6 +1191,7 @@ const PATTERNS = [
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
   ['SSN', /(?<![\p{L}\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/gu],   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
+  ['SSN', /(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
   ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
   // Compact numbers: E.164 (+14155552671) anywhere, and 10–15 digits after a phone cue (PR #27 review).
@@ -1239,17 +1243,20 @@ export function residual(text, { terms = [] } = {}) {
   // Entropy runs, looked at token by token so the whole string is never re-scanned per position. A hex run needs a
   // letter and at least 3 bits/char of entropy; a base64-class run needs at least two of {upper, lower, digit} (which keeps
   // lowercase URL paths and camelCase identifiers out) and entropy over 4 bits/char.
-  for (const run of s.match(/[A-Za-z0-9+/=_-]{20,}/g) || []) {
+  // Public keys and certificates are meant to be shared: their bodies are not entropy evidence (PR #27 review).
+  const sp = s.replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ');
+  for (const run of sp.match(/[A-Za-z0-9+/=_-]{20,}/g) || []) {
     if (UUID.test(run) || run.startsWith(OPEN)) continue;
     if (/^[0-9a-fA-F]+$/.test(run)) { if (/[a-fA-F]/.test(run) && shannon(run) >= 3.0) { reasons.push('high-entropy hex run'); break; } continue; }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }
   }
-  // A generated password full of symbols (N7!qP2@vL9#sR4$x) breaks into short runs above, so whole tokens are looked at
-  // too: upper, lower, digit and at least two symbols, 10-64 characters, not a URL or an email (PR #27 review).
-  if (!reasons.includes('high-entropy token')) for (const tok of s.match(/[^\s"'`<>()\[\]{},;\uE000\uE001]{10,64}/g) || []) {
-    if (tok.includes('://') || /^[^@]+@[\w.-]+\.[A-Za-z]{2,}$/.test(tok) || !/[a-z]/.test(tok) || !/[A-Z]/.test(tok) || !/[0-9]/.test(tok)) continue;
-    if ((tok.match(/[!@#$%^&*~?+=]/g) || []).length >= 2 && shannon(tok) >= 3.3) { reasons.push('high-entropy token'); break; }
+  // A generated password full of symbols (N7!qP2@vL9#sR4$x, N7:qP2-vL9:sR4-x) breaks into short runs above, so whole
+  // tokens are looked at too: upper, lower, digit and at least two punctuation characters of any kind, 10-64 characters,
+  // no run of four lowercase letters (a word), not a URL or an email (PR #27 review).
+  if (!reasons.includes('high-entropy token')) for (const tok of sp.match(/[^\s"'`<>()\[\]{},;\uE000\uE001]{10,64}/g) || []) {
+    if (tok.includes('://') || /^[^@]+@[\w.-]+\.[A-Za-z]{2,}$/.test(tok) || !/[a-z]/.test(tok) || !/[A-Z]/.test(tok) || !/[0-9]/.test(tok) || /[a-z]{4}/.test(tok)) continue;
+    if ((tok.match(/[^A-Za-z0-9]/g) || []).length >= 2 && shannon(tok) >= 3.3) { reasons.push('high-entropy token'); break; }
   }
   if (terms.length) {
     // The same folding as the main pass, so a term hidden with invisible characters or look-alike forms is still seen.
