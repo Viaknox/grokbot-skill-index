@@ -957,3 +957,13 @@ test('r47: leaks found on tune-up #16 are scrubbed', () => {
   }
   assert.ok(!scrubber({ terms: [] }).sanitize('passwordless = true').text.includes('['), 'passwordless stays a setting');
 });
+
+// Round 48 (viaknox PR #27 review of a801ac1).
+test('r48: TSV password columns, JSX expression attributes and leading-compressed IPv6', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x).text;
+  assert.ok(!t('username\tpassword\nalice\thunter2').includes('hunter2'));
+  assert.ok(!t('<input type="password" defaultValue={"hunter2"} />').includes('hunter2'));
+  assert.ok(!t('<input name="password" value={`hunter2`} />').includes('hunter2'));
+  assert.ok(!t('from ::ffff:c000:0280 today').includes('c000'));
+  assert.ok(t('std::max and ::1').includes('std::max'));
+});

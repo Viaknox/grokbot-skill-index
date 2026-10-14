@@ -559,7 +559,7 @@ function scrubLineForms(s, label, resolve) {
       }
     } else if (csv) {
       // A data row under a credential column (cells may be quoted and span lines): scrub those cells.
-      const row = csvRow(s, i);
+      const row = csvRow(s, i, csv.dl);
       if (row.cells.length === csv.n) {
         for (let k = 0; k < row.cells.length; k++) {
           const [a, b] = row.cells[k]; const cell = s.slice(a, b), lead = cell.length - cell.trimStart().length, core = cell.trim();
@@ -567,12 +567,13 @@ function scrubLineForms(s, label, resolve) {
         }
         nl = Math.max(nl, row.end);
       }
-    } else if (line.includes(',') && !csv) {
+    } else if ((line.includes(',') || line.includes('\t')) && !csv) {
       // Header cells may be multiword labels ("Login Name", "Password"; PR #27 review): each column is judged on its own.
-      const hdr = csvRow(s, i), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
+      // Tab-separated pastes (a spreadsheet copy) too, when the header has tabs and no commas (PR #27 review).
+      const dl = line.includes(',') ? ',' : '\t', hdr = csvRow(s, i, dl), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
       if (cells.length >= 2 && hdr.end <= nl && cells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
         const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
-        if (cols.size) csv = { n: cells.length, cols };
+        if (cols.size) csv = { n: cells.length, cols, dl };
       }
     }
     i = nl + 1;
@@ -862,8 +863,9 @@ const TAG = /<[A-Za-z](?:"[^"\n]{0,2000}"|'[^'\n]{0,2000}'|[^<>"']){0,2000}>/g;
 // data-key, title, for): when one of them names a credential, the element's other attribute values and text go.
 const CUE_ATTR = /^(?:name|id|key|http-equiv|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
 const IDENT_ATTR = /^(?:name|id|key|http-equiv|type|class|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
-const ATTR_VALUE = /\b(value|content)([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
-const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})(\s*=\s*)("[^"]*"|'[^']*'|[^\s>"']+)/g;
+const ATTR_VALUE = /\b(value|content)([ \t]*=[ \t]*)(\{(?:[^{}\n]|\{[^{}\n]{0,200}\}){0,400}\}|"[^"]*"|'[^']*'|[^\s>]+)/gi;
+// A JSX expression value ({"x"}, {`x`}, one level of nested braces) is taken whole (PR #27 review).
+const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})(\s*=\s*)(\{(?:[^{}\n]|\{[^{}\n]{0,200}\}){0,400}\}|"[^"]*"|'[^']*'|[^\s>"']+)/g;
 const CHILD_VALUE = /^[\s]*<([\w:.\-]*Value)\b[^<>]*>([^<]{1,4000})<\//i;
 function scrubHtmlAttrs(s, label, resolve) {
   if (!s.includes('<')) return s;
@@ -1391,7 +1393,7 @@ const PATTERNS = [
   ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was|are)[ \t]+)\+?\d{10,15}\b/gi],
   ['IP', /(?<![A-Za-z0-9])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9])/g],   // not \b: "host_192.168.1.1" must match (PR #16 review)
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
-  ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])/gi],
+  ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])|(?<![\w:])::(?:[0-9a-f]{1,4}:){1,6}[0-9a-f]{1,4}(?![\w:])/gi],   // ::ffff:c000:0280 (leading compression; PR #27 review)
 ];
 
 function luhn(digits) {
