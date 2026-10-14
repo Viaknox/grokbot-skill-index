@@ -186,6 +186,8 @@ function credParts(parts) {
   if (parts.length >= 2 && /^keys?$/.test(parts[parts.length - 1]) && !STRUCTURAL_KEY.has(parts[parts.length - 2])) return true;
   return parts.some((p, i) => {
     if (STRONG.test(p) || WHOLE.has(p)) return true;
+    // The unambiguous password words take any glued tail (DB_PASSWORDJWT; PR #16 review), except "passwordless".
+    if (/(?:password(?!less)|passwd|passphrase|passcode)[a-z]/.test(p)) return true;
     // The letter/digit split cuts "dbpasswordb64" into "dbpasswordb" + "64"; glue a number back on so the b64 suffix is
     // still seen (viaknox PR #27 review).
     if (/^\d+$/.test(parts[i + 1] || '') && STRONG.test(p + parts[i + 1])) return true;
@@ -325,7 +327,8 @@ function valueEnd(s, start) {
   // Block-scalar headers allow the indent and chomping indicators in either order (|-2 and |2-), PR #16 review.
   // A comment-only first line (password: # prod) and a bare scheme word (Authorization: Bearer, folded onto the next
   // line) are empty values too: the deeper-indented lines below hold the credential (PR #16 review).
-  const emptyish = trimmed === '' || /^#/.test(trimmed) || /^(?:basic|bearer|digest)$/i.test(trimmed);
+  // A YAML tag or anchor alone (password: !!str / &a, the scalar on the next indented line) is empty too (PR #16 review).
+  const emptyish = trimmed === '' || /^#/.test(trimmed) || /^(?:basic|bearer|digest)$/i.test(trimmed) || /^(?:(?:![^\s|>]*|&[^\s|>]+)[ \t]*)+(?:#.*)?$/.test(trimmed);
   if (emptyish || /^(?:!\S*[ \t]+)?[|>](?:[+-]?\d*|\d+[+-])(?:[ \t]+#.*)?$/.test(trimmed)) {
     // The key's own indent, read from its line start (a lastIndexOf, not a slice-and-match over the whole prefix, which
     // made thousands of empty "password:" lines quadratic).
@@ -356,6 +359,19 @@ function valueEnd(s, start) {
     const from = nl + 1;
     nl = s.indexOf('\n', from); if (nl < 0) nl = s.length;
     line = s.slice(from, nl);
+  }
+  // A header or YAML plain scalar folds onto more-indented lines (Cookie: a=1;\n b=2, Authorization: Custom\n x,
+  // password: abc\n  def; RFC 9112 obs-fold, YAML 1.2 plain scalars; PR #16 review). Only after a bare "name:" key, so
+  // JSON and code are untouched; the walk stops at the first blank or not-deeper line.
+  const ls0 = s.lastIndexOf('\n', start - 1) + 1;
+  if (nl < s.length && /^[ \t]*[A-Za-z][\w.-]{0,80}[ \t]*:[ \t]*$/.test(s.slice(ls0, start))) {
+    let ind = 0; while (s[ls0 + ind] === ' ' || s[ls0 + ind] === '\t') ind++;
+    while (nl < s.length) {
+      const from = nl + 1; let e = s.indexOf('\n', from); if (e < 0) e = s.length;
+      let k = 0; while (s[from + k] === ' ' || s[from + k] === '\t') k++;
+      if (k <= ind || from + k >= e || s[from + k] === '\r') break;
+      nl = e;
+    }
   }
   return nl;
 }
@@ -397,7 +413,7 @@ const ASSIGN_START = new RegExp(
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
   // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review).
-  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*\\n]|\\*(?!/)){0,80}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*\\n]|\\*(?!/)){0,80}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?(?:(?<=["\'])[ \\t\\r\\n]{0,40}|[ \\t]*)\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -574,7 +590,8 @@ function scrubLineForms(s, label, resolve) {
 // [section], [[table]], and git-config's [section "subsection"]: the section name before the quoted part decides.
 // A quoted TOML table name may hold spaces (["database credentials"]; PR #27 review): groups 2-4 are the name.
 const INI_HEADER = /^[ \t]*\[\[?[ \t]*(?:"([^"\n]{1,120})"|'([^'\n]{1,120})'|([^\]"'\n\s]{1,120}))(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*(?:[#;].*)?$/;   // a trailing comment after the header too ([credentials] # prod; PR #16 review)
-const INI_ASSIGN = /^[ \t]*(["']?)([A-Za-z_][\w.\-]{0,60})\1[ \t]*[=:][ \t]*/;
+// Quoted and numeric keys too ("login name" = x inside [credentials]; PR #16 review).
+const INI_ASSIGN = /^[ \t]*(?:"[^"\n]{1,160}"|'[^'\n]{1,160}'|[A-Za-z0-9_][\w.\-]{0,60})[ \t]*[=:][ \t]*/;
 // An HCL block type may carry string labels before its brace (credentials "prod" { … }; HCL spec, PR #27 review):
 // group 2 is the type, group 3 the labels.
 const BLOCK_NAME = /(["']?)([\p{L}_][\p{L}\p{N}_.\-]{0,80})\1((?:[ \t]+"[^"\n]{0,80}")*)[ \t]*$/u;
@@ -627,6 +644,9 @@ function braceEnd(s, open) {
   for (; i < lim; i++) {
     const c = s[i];
     if (c === '"' || c === "'") { for (i++; i < lim && s[i] !== c; i++) if (s[i] === '\\') i++; continue; }
+    // A brace inside an HCL/HOCON/JS comment is not structure (# }, // }, /* } */; PR #16 review).
+    if (c === '#' || (c === '/' && s[i + 1] === '/')) { while (i < lim && s[i] !== '\n') i++; continue; }
+    if (c === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i + 2); i = e < 0 || e >= lim ? lim : e + 1; continue; }
     if (c === '{') d++; else if (c === '}' && --d === 0) break;
   }
   if ((braceBudget -= i - open + 1) < 0) throw new ScrubError('scrubbing took too long; holding back');
@@ -1077,7 +1097,14 @@ function scrubXml(s, label, resolve) {
   if (!s.includes('<')) return s;
   // Every "</" position once, so each opening tag finds its closing tag by binary search instead of an indexOf that,
   // for a tag never closed, would scan to the end of the text (20000 unclosed tags made that quadratic).
-  const closes = []; for (let k = s.indexOf('</'); k >= 0; k = s.indexOf('</', k + 2)) closes.push(k);
+  // An end tag inside a comment or CDATA section is text, not markup (<password><!-- </password> -->x</password>; PR #16
+  // review): those spans are found once, left to right, and their "</" are skipped. An unterminated one runs to the end.
+  const skip = []; for (let k = 0; k < s.length;) {
+    const c = s.indexOf('<!--', k), d = s.indexOf('<![CDATA[', k); if (c < 0 && d < 0) break;
+    const a = c < 0 ? d : d < 0 ? c : Math.min(c, d), cd = a === d, e = s.indexOf(cd ? ']]>' : '-->', a + (cd ? 9 : 4));
+    const b = e < 0 ? s.length : e + 3; skip.push([a, b]); k = b;
+  }
+  const closes = []; for (let k = s.indexOf('</'), si = 0; k >= 0; k = s.indexOf('</', k + 2)) { while (si < skip.length && skip[si][1] <= k) si++; if (si < skip.length && skip[si][0] <= k) { k = skip[si][1] - 2; continue; } closes.push(k); }
   const nextClose = (from) => { let lo = 0, hi = closes.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (closes[mid] < from) lo = mid + 1; else hi = mid; } return lo < closes.length ? closes[lo] : -1; };
   let out = '', at = 0; XML_OPEN.lastIndex = 0;
   for (let m; (m = XML_OPEN.exec(s));) {
@@ -1501,6 +1528,8 @@ export function scrubber({ terms = [] } = {}) {
         // A quoted value followed by a comment ("hunter2" # backup) inventories the text inside the quotes (PR #16 review).
         let core = value.trim(); const qm = /^(["'])((?:\\.|(?!\1)[^\n])*)\1[ \t]*(?:[#;][^\n]*)?$/.exec(core);
         core = qm ? qm[2] : core.replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
+        // The decoded spelling too ("hunter\u0074wo" is echoed as huntertwo; PR #16 review).
+        if (/[\\%&]/.test(core)) { const dec = decodeName(core); if (dec !== core && dec.trim().length >= 3) inventory.push({ kind, value: dec }); }
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
         // Only when a comment or a sibling setting really follows: spaces alone may be part of the credential

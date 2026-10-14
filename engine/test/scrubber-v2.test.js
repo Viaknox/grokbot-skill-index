@@ -931,3 +931,29 @@ test('r46: a literal inside an assignment wrapper is inventoried, so a bare repe
     assert.ok(!sc.sanitize(t).text.includes('hunter2'), t);
   }
 });
+
+// Round 47 (tune-up PR #16 review threads from 08:29-08:42).
+test('r47: leaks found on tune-up #16 are scrubbed', () => {
+  const cases = {
+    json_nl: '{"password"\n:"huntertwo"}',
+    strong_suffix: 'DB_PASSWORDJWT = huntertwo',
+    tag_long: '<input data-x="' + 'a'.repeat(300) + '" name="password">huntertwo</input>',
+    tag_cue: '<input title=">" name="password">huntertwo</input>',
+    yaml_tag: 'password: !!str\n  huntertwo',
+    yaml_anchor: 'password: &pw\n  huntertwo',
+    json_esc: 'USER: {"password":"hunter\\u0074wo"}\nAGENT: huntertwo',
+    toml_quoted: '[credentials]\n"login name" = huntertwo',
+    hcl_hash: 'credentials {\n  # } not the closer\n  user = huntertwo\n}',
+    hcl_slash: 'credentials {\n  // }\n  user = huntertwo\n}',
+    hcl_block: 'credentials {\n  /* } */\n  user = huntertwo\n}',
+    xml_comment: '<password><!-- </password> -->huntertwo</password>',
+    xml_cdata: '<password><![CDATA[</password>]]>huntertwo</password>',
+    cookie_fold: 'Cookie: sid=abc;\n foo=huntertwo',
+    auth_fold: 'Authorization: Custom\n huntertwo',
+  };
+  for (const [k, t] of Object.entries(cases)) {
+    const r = scrubber({ terms: [] }).sanitize(t);
+    assert.ok(r.held || !r.text.includes('huntertwo'), k + ': ' + r.text);
+  }
+  assert.ok(!scrubber({ terms: [] }).sanitize('passwordless = true').text.includes('['), 'passwordless stays a setting');
+});

@@ -136,3 +136,8 @@ test('r45: an echoed password does not make a brand-new key look repeated', () =
   assert.ok(echoed.some(x => x.code === 'echoed_secret'), JSON.stringify(echoed));
   assert.ok(!echoed.some(x => x.code === 'revealed_secret'), JSON.stringify(echoed));
 });
+
+test('r47: an echoed contact does not hide a newly shared one', () => {
+  const r = checkConversation([u('mail alice@example.com'), a('alice@example.com, or call 415-555-2671')]).map(f => f.code);
+  assert.ok(r.includes('echoed_contact') && r.includes('revealed_contact'), JSON.stringify(r));
+});
