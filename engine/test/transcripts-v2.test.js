@@ -105,3 +105,6 @@ test('[promised] a setting only the agent wrote is revealed_setting, not an echo
   assert.ok(r.some(f => f.code === 'revealed_setting' && f.unsure), JSON.stringify(r));
   assert.ok(checkConversation([u('PASSWORD=hunter22'), a('ok hunter22')]).some(f => f.code === 'echoed_setting'));
 });
+test('[promised] a full E.164 number the agent introduces is a revealed contact (PR #16 review)', () => {
+  assert.ok(checkConversation([u('hi'), a('call +123456789012345')]).some(f => f.code === 'revealed_contact'));
+});

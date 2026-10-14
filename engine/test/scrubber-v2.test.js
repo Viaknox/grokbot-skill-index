@@ -764,3 +764,10 @@ test('[promised] auth-scheme prose is not held by the residual scan (viaknox PR 
   for (const x of ['Use Basic authentication for this endpoint', 'The API uses Bearer authentication']) assert.equal(scrubber().sanitize(x).held, false, x);
   assert.equal(scrubber().sanitize('x Bearer abcdefghijklmnopQRS12').held || !scrubber().sanitize('x Bearer abcdefghijklmnopQRS12').text.includes('QRS12'), true);
 });
+test('[promised] round 26: key shapes after _, hyphenated PEM labels, JSON non-string values after a newline, CRLF scopes, comments after quoted values; RFC local parts; labelled commit hashes not held', () => {
+  for (const x of ['id_sk-' + 'x'.repeat(40), '-----BEGIN ACME-HSM PRIVATE KEY-----\nhuntertwo\n-----END ACME-HSM PRIVATE KEY-----', '{"password":\n["huntertwo"]}',
+    '{"pin":\n654321}', '[credentials]\r\nuser = huntertwo', 'credentials:\r\n  user: huntertwo', 'password: "foo" # backup huntertwo',
+    '<password><password>in</password>huntertwo</password>', "mail o'huntertwo@example.com"])
+    assert.ok(!/huntertwo|654321|xxxxxxxxxx/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('merged commit e79bc9f0d7039e11a1e0258fd217cb109c397329 today').held, false);
+});

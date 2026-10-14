@@ -197,10 +197,10 @@ const HEADER_CRED = /^(?:set-cookie|cookie|authorization|proxy-authorization)$/i
 // header is followed on the same line by the two characters backslash-n) ends at the closing quote instead, so the
 // surrounding JSON survives. Public keys and certificates are meant to be shared, so only PRIVATE KEY blocks go. Extra
 // spaces or tabs between the header words still count.
-const PEM_HEAD = new RegExp('-----BEGIN[ \\t]+((?:[A-Z0-9]+[ \\t]+){0,32})PRIVATE[ \\t]+KEY-----', 'g');
+const PEM_HEAD = new RegExp('-----BEGIN[ \\t]+((?:[A-Z0-9][A-Z0-9_.-]*[ \\t]+){0,32})PRIVATE[ \\t]+KEY-----', 'g');
 // The footer that closes a block must carry the header's type words (an RSA block ends at an RSA footer, not at an EC
 // one); a mismatched footer is treated like no footer and the block runs to the end of the input (PR #16 review).
-const pemFootFor = (label) => new RegExp('-----END[ \\t]+' + label.trim().split(/[ \t]+/).filter(Boolean).map(w => w + '[ \\t]+').join('') + 'PRIVATE[ \\t]+KEY-----', 'g');
+const pemFootFor = (label) => new RegExp('-----END[ \\t]+' + label.trim().split(/[ \t]+/).filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[ \\t]+').join('') + 'PRIVATE[ \\t]+KEY-----', 'g');
 function scrubPem(s, label) {
   let out = '', at = 0; PEM_HEAD.lastIndex = 0;
   for (let h; (h = PEM_HEAD.exec(s));) {
@@ -281,12 +281,19 @@ function valueEnd(s, start) {
   if ((s[start] === '\n' || s[start] === '\r') && /["']\s*:\s*$/.test(s.slice(Math.max(0, start - 200), start))) {
     let p = start; while (p < s.length && /\s/.test(s[p])) p++;
     if (s[p] === '"') { for (let i = p + 1; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === '"') return i + 1; } return s.length; }
+    // Arrays, objects and bare scalars after the line break go too ({"password":\n["x"]}, {"pin":\n123456}; PR #16 review).
+    if (s[p] === '[') return bracketEnd(s, p);
+    if (s[p] === '{') return Math.min(s.length, braceEnd(s, p) + 1);
+    if (p < s.length) { let e = p; while (e < s.length && !',}]\n'.includes(s[e])) e++; return e; }
   }
   const q = s[start];
   if (q === '"' || q === "'") {
     let i = start + 1;
-    for (; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === q) return i + 1; }
-    return s.length;
+    for (; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === q) break; }
+    if (i >= s.length) return s.length;
+    // A trailing "# comment" on the same line goes with the value (password: "x" # backup y; PR #16 review).
+    const cm = /^[ \t]+#[^\n]*/.exec(s.slice(i + 1, i + 1 + 4000));
+    return cm ? i + 1 + cm[0].length : i + 1;
   }
   let nl = s.indexOf('\n', start);
   if (nl < 0) nl = s.length;
@@ -598,7 +605,7 @@ function scrubScopes(s, label, resolve) {
   let i = 0, ini = false;
   while (i < s.length) {
     let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
-    const line = s.slice(i, nl); let m;
+    const line = s.slice(i, nl).replace(/\r$/, ''); let m;   // CRLF behaves like LF (PR #16 review)
     while (di + 1 < docs.length && docs[di + 1][0] <= i) k8s = docs[++di][1];
     if ((m = INI_HEADER.exec(line))) ini = isCredentialName(resolve(m[2]));
     else if (ini && (m = INI_ASSIGN.exec(line))) { const vs = i + m[0].length; ivs.push([vs, valueEnd(s, vs), 'SECRET']); }
@@ -986,7 +993,15 @@ function scrubXml(s, label, resolve) {
     let close = -1; const want = '</' + m[1], isEnd = (at) => s.slice(at, at + want.length).toLowerCase() === want.toLowerCase() &&   // HTML tag names ignore case (<Password>…</PASSWORD>; PR #16 review)
        /^[ \t\r\n]*>/.test(s.slice(at + want.length, at + want.length + 40));
     let k = ci, n = 0;
-    for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) if (isEnd(closes[k])) { close = closes[k]; break; }
+    // Same-name elements nested inside count too (<password><password>a</password>b</password>; PR #16 review).
+    const openRe = new RegExp('<' + m[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s>/])', 'gi');
+    let depth = 1, from = open;
+    for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) {
+      if (!isEnd(closes[k])) continue;
+      openRe.lastIndex = from; for (let o; (o = openRe.exec(s)) && o.index < closes[k];) depth++;
+      from = closes[k];
+      if (--depth === 0) { close = closes[k]; break; }
+    }
     // Too many nested closing tags to walk: take the rest of the 64 KB window rather than risk leaving the value (PR #27).
     if (close < 0 && n >= 256) close = Math.min(s.length, open + 65536);
     if (close < 0) continue;
@@ -1181,13 +1196,14 @@ const KEY_SHAPES = [
   '[A-Za-z0-9_~.]{3}\\dQ~[A-Za-z0-9_~.-]{31,34}', 'api\\.softlayer\\.com/soap/v3(?:\\.1)?/[a-z0-9]{64}',
   '(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}', 'whsec_[A-Za-z0-9]{10,}', 'npm_[A-Za-z0-9]{20,}', 'ya29\\.[A-Za-z0-9_-]{20,}', 'pypi-[A-Za-z0-9_-]{20,}',
 ];
-const KEY_SHAPE_RE = new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')', 'g');
+const KEY_SHAPE_RE = new RegExp('(?<![A-Za-z0-9])(?:' + KEY_SHAPES.join('|') + ')', 'g');   // not \\b: id_sk-… must match (PR #16 review)
 
 const PATTERNS = [
   // Internationalised addresses too (usér@exämple.com, δοκιμή@παράδειγμα.δοκιμή): letters of any script, bounded classes.
   ['EMAIL', /"[^"\n]{1,64}"@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],   // quoted local part ("john doe"@x.com; PR #27)
   // Combining marks count as letters, so a decomposed exa\u0301mple.com is still one address (PR #16 review).
-  ['EMAIL', /(?<![\p{L}\p{M}\p{N}])[\p{L}\p{M}\p{N}._%+-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
+  // The whole RFC 5322 atext alphabet in the local part (o'connor@…, alice!@…; PR #27 review).
+  ['EMAIL', /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
   ['SSN', /(?<![\p{L}\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/gu],   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
@@ -1218,8 +1234,8 @@ function luhn(digits) {
 // secret the main pass missed is still caught and the whole text is held back. Pure function; returns only the reason,
 // never the value.
 const PREFIX_SHAPES = [
-  ['known key shape', new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')')],
-  ['pem private key', new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9]+[ \\t]+){0,32}PRIVATE[ \\t]+KEY')],
+  ['known key shape', new RegExp('(?<![A-Za-z0-9])(?:' + KEY_SHAPES.join('|') + ')')],
+  ['pem private key', new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9][A-Z0-9_.-]*[ \\t]+){0,32}PRIVATE[ \\t]+KEY')],
   ['http auth header', /\b(?:Authorization|Proxy-Authorization)[ \t]*:[ \t]*(?![\-\uE000])[^\s"'()\[\]{},;\uE000]{6,}/i],
   // A plain lowercase word after the scheme is prose ("Basic authentication"), as in the main pass (PR #27 review).
   ['auth scheme token', /\b(?:Basic|Bearer)[ \t]+(?![a-z]+(?![A-Za-z0-9._~+/\-]))[A-Za-z0-9._~+/\-]{12,}/],
@@ -1246,8 +1262,12 @@ export function residual(text, { terms = [] } = {}) {
   // lowercase URL paths and camelCase identifiers out) and entropy over 4 bits/char.
   // Public keys and certificates are meant to be shared: their bodies are not entropy evidence (PR #27 review).
   const sp = s.replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ');
-  for (const run of sp.match(/[A-Za-z0-9+/=_-]{20,}/g) || []) {
+  for (const mm of sp.matchAll(/[A-Za-z0-9+/=_-]{20,}/g)) {
+    const run = mm[0];
     if (UUID.test(run) || run.startsWith(OPEN)) continue;
+    // A lowercase 40/64-hex run labelled as a git commit/revision is a public identifier, not a secret (PR #27 review).
+    // A bare "sha"/"hash" label is not enough: those still hold (a password hash is not public).
+    if (/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(run) && /\b(?:commit|commits|committed|revision|merge|merged|cherry-pick|cherry-picked|revert|reverted|blob|tree|git)\b[^\n]{0,40}$/i.test(sp.slice(Math.max(0, mm.index - 60), mm.index))) continue;
     if (/^[0-9a-fA-F]+$/.test(run)) { if (/[a-fA-F]/.test(run) && shannon(run) >= 3.0) { reasons.push('high-entropy hex run'); break; } continue; }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }

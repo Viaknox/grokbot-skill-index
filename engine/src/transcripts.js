@@ -109,7 +109,7 @@ export function checkConversation(msgs) {
     }
     // Contacts the agent brings up itself (the user never gave them) are flagged as unsure too (PR #16 review).
     // A phone only counts here when a separate 7–12 digit run is present, not part of a longer number (an order or card).
-    const phoneRun = (m.content.match(/\+?\d[\d\s().-]{6,}\d/g) || []).some(x => { const d = x.replace(/\D/g, '').length; return d >= 7 && d <= 12; });
+    const phoneRun = (m.content.match(/\+?\d[\d\s().-]{6,}\d/g) || []).some(x => { const d = x.replace(/\D/g, '').length; return d >= 7 && (d <= 12 || (/^\s*\+/.test(x) && d <= 15)); });   // full E.164 with a leading + (PR #16 review)
     const newSoft = ['PHONE', 'EMAIL'].filter(x => k[x] && !soft.includes(x) && (x !== 'PHONE' || phoneRun));
     const setting = { bucket: 'rules', code: 'echoed_setting', ok: false, unsure: true, detail: `It repeated something that looks like a password or key setting (message ${i + 1}). Check it wasn't a real one.` };
     // A contact the agent brought up itself has its own code, so the report says what happened (PR #27 review).
