@@ -187,7 +187,7 @@ function credParts(parts) {
   return parts.some((p, i) => {
     if (STRONG.test(p) || WHOLE.has(p)) return true;
     // The unambiguous password words take any glued tail (DB_PASSWORDJWT; PR #16 review), except "passwordless".
-    if (/(?:password(?!less)|passwd|passphrase|passcode)[a-z]/.test(p)) return true;
+    if (/(?:password(?!less)|passwd|pwd|passphrase|passcode)[a-z]/.test(p)) return true;
     // The same for secret/credential/bearer stems (SECRETJWT, CREDENTIALJSON; PR #27 review), except ordinary words that
     // start with them (secretary, secretion, secrete, secretive).
     if (/^(?:\w*?)(?:secret(?!ar|e|ion|iv)|credential|bearer)[a-z]/.test(p)) return true;
@@ -465,7 +465,8 @@ function scrubAssignments(s, view, label, resolve) {
 
 // A quoted key that is not identifier-shaped ("api key": …, 'password field': …) is read whole and judged like any
 // other setting name (PR #27 review). Identifier-shaped keys are left to scrubAssignments.
-const QUOTED_KEY = /(["'])([^"'\n]{1,80})\1[ \t]*[:=][ \t]*/gu;
+// JSON allows a line break before the colon too ({"api key"\n:"x"}; PR #16 review).
+const QUOTED_KEY = /(["'])([^"'\n]{1,80})\1[ \t\r\n]{0,40}[:=][ \t]*/gu;
 function scrubQuotedKeys(s, label, resolve) {
   let out = '', at = 0; QUOTED_KEY.lastIndex = 0;
   for (let m; (m = QUOTED_KEY.exec(s));) {
@@ -638,7 +639,7 @@ const YAML_MAP_KEY = /^([ \t]*)(-[ \t]+)?(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,16
 // the scalar. A map head (`nested:` with nothing after it) matches too and is told apart by having no value.
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
 // A transcript role label may sit before the manifest's first line ("USER: kind: Secret"; PR #27 review).
-const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?(?:-[ \t]+)?(["']?)kind\1[ \t]*:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\2[ \t]*(?:#.*)?$/m;   // a quoted "kind" key too (PR #16 review)   // quoted, tagged or commented kinds too (PR #27 review)
+const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?(?:-[ \t]+)?(["']?)kind\1[ \t]*:[ \t]*(?:[!&]\S+[ \t]+){0,4}(["']?)Secret\2[ \t]*(?:#.*)?$/m;   // a quoted "kind" key too (PR #16 review)   // quoted, tagged or commented kinds too (PR #27 review)
 // braceEnd work is budgeted per scrub (PR #27 review): many unclosed openers would otherwise each scan a 64 KB window.
 // Past the budget the scrub throws, and sanitize() holds the text back (fail closed) rather than spending seconds on it.
 let braceBudget = Infinity;
@@ -695,7 +696,12 @@ function scrubScopes(s, label, resolve) {
     const line = s.slice(i, nl).replace(/\r$/, ''); let m;   // CRLF behaves like LF (PR #16 review)
     while (di + 1 < docs.length && docs[di + 1][0] <= i) k8s = docs[++di][1];
     if ((m = INI_HEADER.exec(line))) ini = isCredentialName(resolve(m[1] ?? m[2] ?? m[3]));
-    else if (ini && (m = INI_ASSIGN.exec(line))) { const vs = i + m[0].length; ivs.push([vs, valueEnd(s, vs), 'SECRET']); }
+    else if (ini && (m = INI_ASSIGN.exec(line))) {
+      // More-indented lines below continue the value (Python configparser; PR #16 review).
+      const vs = i + m[0].length; let ve = valueEnd(s, vs); const ind = (line.match(/^[ \t]*/) || [''])[0].length;
+      while (ve < s.length) { const f = ve + 1; let e = s.indexOf('\n', f); if (e < 0) e = s.length; let k = 0; while (s[f + k] === ' ' || s[f + k] === '\t') k++; if (k <= ind || f + k >= e || s[f + k] === '\r') break; ve = e; }
+      ivs.push([vs, ve, 'SECRET']);
+    }
     // HCL / HOCON block "name { … }" (no separator before the brace): every assignment inside goes. Each brace on the
     // line is tried, since the block name may follow an outer brace.
     // Linear per line (PR #27 review): a brace not preceded (past spaces) by a name or label character is skipped at once,
@@ -1342,7 +1348,7 @@ function scrubQuery(s, label, resolve) {
 // URL userinfo scheme://user:pass@host — the whole user:pass is replaced (a token-as-user form too). No length ceiling:
 // a 300-character generated password must go too, and the classes exclude whitespace, slash and @, so the scan stays
 // linear without one (PR #16 review).
-const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,30}:\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
+const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,128}:\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
 
 const SCHEME_PROSE = /^(?:authentication|authorization|authorisation|credentials|tokens?|headers?|scheme|schemes|access|support|supported|login|logins)$/i;
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.

@@ -141,3 +141,8 @@ test('r47: an echoed contact does not hide a newly shared one', () => {
   const r = checkConversation([u('mail alice@example.com'), a('alice@example.com, or call 415-555-2671')]).map(f => f.code);
   assert.ok(r.includes('echoed_contact') && r.includes('revealed_contact'), JSON.stringify(r));
 });
+
+test('r50: a contact shared alongside a hard-secret echo is still reported', () => {
+  const r = checkConversation([u('card 4111 1111 1111 1111'), a('Your card 4111 1111 1111 1111 is set; call 415-555-2671')]).map(f => f.code);
+  assert.ok(r.includes('echoed_secret') && r.includes('revealed_contact'), JSON.stringify(r));
+});

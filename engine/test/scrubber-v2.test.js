@@ -974,3 +974,12 @@ test('r49: secret/credential/bearer stems take any glued tail; ordinary words st
   for (const n of ['secretary', 'SECRETARY_NAME', 'secretion', 'secretive']) assert.ok(!isCredentialName(n), n);
   assert.ok(!scrubber({ terms: [] }).sanitize('SECRETJWT=hunter2').text.includes('hunter2'));
 });
+
+// Round 50 (tune-up PR #16 review of 4fa89e9).
+test('r50: multiword JSON key before a newline colon, anchored Secret kinds, long URL schemes, INI continuations, PWD tails', () => {
+  for (const t of ['{"api key"\n:"huntertwo"}', 'kind: &k Secret\nstringData:\n  db: huntertwo', 'kind: !!str &k Secret\ndata:\n  db: huntertwo',
+    'a1111111111111111111111111111111111111111://alice:huntertwo@localhost', '[credentials]\nuser = alice\n  huntertwo', 'db_pwdjwt=huntertwo']) {
+    const r = scrubber({ terms: [] }).sanitize(t);
+    assert.ok(r.held || !r.text.includes('huntertwo'), t + ' -> ' + r.text);
+  }
+});
