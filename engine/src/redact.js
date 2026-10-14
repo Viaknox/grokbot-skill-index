@@ -395,8 +395,9 @@ const ASSIGN_START = new RegExp(
   '(?<![\\p{L}\\p{N}_$.\\-])' +
   '(["\']?)((?:\\\\u\\{[0-9A-Fa-f]{1,6}\\}|\\\\u[0-9A-Fa-f]{4}|\\\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF])(?:\\\\u\\{[0-9A-Fa-f]{1,6}\\}|[\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]){0,160})\\1' +
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
-  // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review).
-  '(?:[ \\t]*(?:/\\*(?:[^*\\n]|\\*(?!/)){0,80}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
+  // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review).
+  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*\\n]|\\*(?!/)){0,80}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -1385,7 +1386,11 @@ export function residual(text, { terms = [] } = {}) {
   // letter and at least 3 bits/char of entropy; a base64-class run needs at least two of {upper, lower, digit} (which keeps
   // lowercase URL paths and camelCase identifiers out) and entropy over 4 bits/char.
   // Public keys and certificates are meant to be shared: their bodies are not entropy evidence (PR #27 review).
-  const sp = s.replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ');
+  const sp = s.replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ')
+    // One-line OpenSSH public keys (authorized_keys, known_hosts) too, only when the base64 body really encodes the named
+    // key type, so an arbitrary token after "ssh-rsa " still counts (PR #27 review).
+    .replace(/(?<![A-Za-z0-9-])((?:ssh-(?:rsa|dss|ed25519|ed448)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)(?:-cert-v01@openssh\.com)?)[ \t]+(AAAA[A-Za-z0-9+/]{16,16384}={0,3})(?![A-Za-z0-9+/=])/g,
+      (m, type, b64) => { let b; try { b = atob(b64.slice(0, Math.min(80, b64.length - (b64.length % 4)))); } catch { return m; } const n = b.length >= 4 ? ((b.charCodeAt(0) << 24) | (b.charCodeAt(1) << 16) | (b.charCodeAt(2) << 8) | b.charCodeAt(3)) : 0; return n === type.length && b.slice(4, 4 + n) === type ? ' ' : m; });
   for (const mm of sp.matchAll(/[A-Za-z0-9+/=_-]{20,}/g)) {
     const run = mm[0];
     if (UUID.test(run) || run.startsWith(OPEN)) continue;

@@ -873,3 +873,31 @@ test('[best-effort] round 43: \\u{…} identifier escapes, C++ brace initializer
     assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
   assert.equal(scrubber().sanitize('<entry key="color">blue</entry>').text, '<entry key="color">blue</entry>');
 });
+
+// Round 44 (viaknox PR #27 review of b0af78e).
+const r44s = scrubber({ terms: [] });
+const sshKey = (type) => type + ' ' + Buffer.concat([
+  Buffer.from([0, 0, 0, type.length]), Buffer.from(type), Buffer.from([0, 0, 0, 32]),
+  Buffer.alloc(32).map((_, i) => (i * 37) % 251),
+]).toString('base64');
+
+test('r44: a line comment between the name and the operator on the next line does not leak the value', () => {
+  for (const t of ['const password // production\n= "hunter2";', 'let api_key // rotated monthly\n  = "hunter2"']) {
+    const r = r44s.sanitize(t);
+    assert.ok(!r.text.includes('hunter2'), r.text);
+  }
+});
+
+test('r44: genuine OpenSSH public keys are not held as high-entropy tokens', () => {
+  for (const type of ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'sk-ssh-ed25519@openssh.com', 'ssh-ed25519-cert-v01@openssh.com']) {
+    const r = r44s.sanitize('authorized_keys: ' + sshKey(type) + ' user@host');
+    assert.equal(r.held, false, type + ' ' + JSON.stringify(r));
+  }
+});
+
+test('r44: a random token after an ssh key-type word still counts (body must encode the named type)', () => {
+  const r = r44s.sanitize('key: ssh-rsa AAAAx9Qk3sXcXc1wRk2b0m1vQ4mYt8X9ZpQ2r3s4t5u6');
+  assert.equal(r.held, true);
+  const mismatch = r44s.sanitize('key: ' + sshKey('ssh-ed25519').replace(/^ssh-ed25519/, 'ssh-rsa'));
+  assert.equal(mismatch.held, true);
+});
