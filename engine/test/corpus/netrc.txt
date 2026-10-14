@@ -1,0 +1,5 @@
+machine api.example.com login jo password {{SECRET 20}}
+machine github.com
+  login jo
+  password {{PREFIX ghp}}
+default login anonymous password {{SECRET 16}}

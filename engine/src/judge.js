@@ -1,4 +1,6 @@
 import { isPlaceholder } from './transcripts.js';
+import { outbound, HeldBack } from './openrouter.js';
+import { ScrubError } from './redact.js';
 // Model judge: Jev (a decisions model) answers yes/no questions with a probability. It never writes text,
 // so findings quote the transcript instead. Answers between 0.35 and 0.65 are reported as "unsure", not guessed.
 export const JUDGE_MODEL = 'typesafe/jev-1.13';
@@ -43,19 +45,38 @@ export function chatState(instructions, msgs) {
     ...msgs.map(m => isPlaceholder(m) ? `USER ACTION (not a message the user typed): ${m.content}` : `${m.role === 'user' ? 'USER' : 'AGENT'}: ${m.content}`)].join('\n');
 }
 
-export async function judgeConversation(or, state, { hasInstructions }) {
+// `sanitized` is a Sanitized from the scrubber (never a string): the boundary refuses anything else.
+export async function judgeConversation(or, sanitized, { hasInstructions }) {
   const qs = Object.fromEntries(Object.entries(CHAT_QUESTIONS).filter(([k]) => hasInstructions || k !== 'followed_rules'));
-  return ask(or, state, qs);
+  return ask(or, sanitized, qs);
 }
 
-export async function judgeCase(or, state) { return ask(or, state, QUESTIONS); }
+export async function judgeCase(or, sanitized) { return ask(or, sanitized, QUESTIONS); }
+
+// The one local finding a run gets when nothing could be sent: the residual scan held the text, or the scrubber hit its
+// cap. It is "unsure" (never a pass, never a confident fail), and it sits in the rules bucket because a secret is at stake.
+export const heldFinding = () => ({ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' });
+
+// Scrubs `text` and hands the Sanitized to `ask`. The scrubber's size or time cap (a ScrubError) becomes the held
+// finding instead of an exception, so one oversized or slow chat marks its own run unsure and never crashes a whole
+// `run` or `check` (PR #16 review: check mode used to exit without a report). Every caller that judges goes through here.
+export async function judgeHeld(scrub, text, ask) {
+  let sanitized;
+  try { sanitized = scrub.sanitize(text); }
+  catch (e) { if (e instanceof ScrubError) return [heldFinding()]; throw e; }
+  return ask(sanitized);
+}
 
 // The judge varies between calls (calibration v1: 3 of 50 verdicts flipped on a re-run), so each question
 // is asked VOTES times and the probabilities are averaged. Jev costs ~$0.0001 per conversation, so 3x is cheap.
 export const VOTES = 3;
-async function ask(or, state, QS) {
+// Every vote goes through `outbound`, which refuses anything but a Sanitized and makes no call when the text was held;
+// in that case the run gets the single held finding instead of a verdict.
+async function ask(or, sanitized, QS) {
   const questions = Object.fromEntries(Object.entries(QS).map(([k, q]) => [k, { type: 'noul', instructions: q.text }]));
-  const rs = await Promise.all(Array.from({ length: VOTES }, () => or.decide({ model: JUDGE_MODEL, state, questions })));
+  let rs;
+  try { rs = await Promise.all(Array.from({ length: VOTES }, () => outbound(or, 'decide', sanitized, (state) => ({ model: JUDGE_MODEL, state, questions })))); }
+  catch (e) { if (e instanceof HeldBack) return [heldFinding()]; throw e; }
   return Object.entries(QS).map(([k, q]) => {
     const p = rs.reduce((a, r) => a + r.answers[k].noul, 0) / rs.length;
     const yes = p >= 0.5, unsure = p > 0.35 && p < 0.65;

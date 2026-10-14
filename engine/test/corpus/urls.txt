@@ -1,0 +1,6 @@
+postgres://jo:{{SECRET 20}}@db.example.com:5432/app
+https://{{SECRET 12}}:{{SECRET 24}}@git.example.com/repo.git
+redis://:{{SECRET 18}}@cache.example.com:6379
+see https://docs.example.com/guide/getting-started/installation-and-configuration for help
+mongodb+srv://admin:{{SECRET 22}}@cluster0.example.mongodb.net/?retryWrites=true
+amqp://guest:{{SECRET 210}}@mq.example.com/vhost

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { modelAdapter, httpAdapter } from '../src/adapters.js';
 import { checkCase } from '../src/rules.js';
@@ -44,6 +45,14 @@ test('codex 3: --private words are never sent to the http agent; other text reac
   assert.equal(calls.length, 0);
   await a.turn({ history: [], message: 'Book for jo@x.com' });
   assert.ok(calls[0].includes('jo@x.com'));
+});
+
+test('[promised] a --private word inside an email address is never sent to the http agent (PR #16 review)', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push(init.body); return new Response(JSON.stringify({ reply: 'hi' }), { status: 200 }); };
+  const a = httpAdapter({ url: 'https://agent.example/chat' }, { fetchImpl, privateTerms: ['Acme'] });
+  await assert.rejects(a.turn({ history: [], message: 'Write to employee@acme.example' }), /--private/);
+  assert.equal(calls.length, 0);
 });
 
 test('codex 4: a tune-up that breaks a passing case or adds a rules failure is a regression', () => {
@@ -152,7 +161,7 @@ test('round 2: cases run at most CONCURRENCY at a time', async () => {
 test('round 2: a suite with no cases is refused before anything runs', () => {
   const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 's.json');
   writeFileSync(f, JSON.stringify({ agent: 'a', instructions: 'x', agent_config: { type: 'http', url: 'https://x.example' }, cases: [] }));
-  const r = spawnSync(process.execPath, [new URL('../cli.js', import.meta.url).pathname, 'run', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'run', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
   assert.equal(r.status, 2); assert.match(r.stderr, /no test cases/);
 });
 
@@ -176,7 +185,7 @@ test('round 4: the --private list is part of the suite identity (a tune-up canno
   const suite = JSON.parse(readFileSync(f, 'utf8')); suite.repeats = 1;
   const noPrivate = createHash('sha256').update(JSON.stringify(suite) + '\u0000' + JSON.stringify([])).digest('hex').slice(0, 16);
   writeFileSync(join(o, 'report.json'), JSON.stringify({ suite_id: noPrivate, failures: [{}], runs: [] }));
-  const r = spawnSync(process.execPath, [new URL('../cli.js', import.meta.url).pathname, 'tune', f, '--consent', '--private', p, '--out', o], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'tune', f, '--consent', '--private', p, '--out', o], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
   assert.equal(r.status, 2); assert.match(r.stderr, /different suite or settings/);
 });
 test('round 4: malformed cases and catastrophic regexes are refused before anything runs', () => {
@@ -268,7 +277,7 @@ test('review: every OpenRouter call asks for data_collection deny, even if the c
 // PR #14 review (Aikido + Codex)
 test('review: whole PEM blocks and credential names with any suffix are scrubbed', () => {
   const s = scrubber(), body = 'M' + 'I'.repeat(3) + 'Evg' + 'Q'.repeat(40);
-  const pem = 'private_key: -----BEGIN PRIVATE KEY-----\n' + body + '\n' + body + '\n-----END PRIVATE KEY-----';
+  const pem = ('private_key: -----BEGIN ' + 'PRIVATE KEY-----\n') + body + '\n' + body + ('\n-----END ' + 'PRIVATE KEY-----');
   const out = s.scrub(pem + '\nPASSWORD_HASH=abcdefgh1\nCLIENT_SECRET_CURRENT=abcdefgh2\nMY_API_KEY_BACKUP=abcdefgh3');
   for (const leak of [body, 'BEGIN PRIVATE', 'abcdefgh1', 'abcdefgh2', 'abcdefgh3']) assert.ok(!out.includes(leak), leak);
 });
@@ -294,7 +303,7 @@ test('review: credential names need whole-word credential parts; quoted values g
 });
 test('review: a never-send word like PRIVATE cannot break private-key scrubbing', () => {
   const body = 'M' + 'I'.repeat(3) + 'Evg' + 'Q'.repeat(40);
-  const out = scrubber({ terms: ['PRIVATE'] }).scrub('-----BEGIN PRIVATE KEY-----\n' + body + '\n-----END PRIVATE KEY-----');
+  const out = scrubber({ terms: ['PRIVATE'] }).scrub(('-----BEGIN ' + 'PRIVATE KEY-----\n') + body + ('\n-----END ' + 'PRIVATE KEY-----'));
   assert.ok(!out.includes(body), out);
 });
 test('review: the credential rule runs in linear time on crafted input', () => {
@@ -319,7 +328,7 @@ test('review: punctuation in values, long and plural and run-together names, but
   assert.equal(s.scrub('tokenLimit=100000'), 'tokenLimit=100000'); assert.equal(s.scrub('max_tokens: 128000'), 'max_tokens: 128000');
 });
 test('review: the whole scrubber stays fast on hostile input (emails, unterminated PEM headers)', () => {
-  for (const junk of ['password-'.repeat(10000), 'a.'.repeat(40000) + '@', '-----BEGIN PRIVATE KEY-----\n'.repeat(20000)]) {
+  for (const junk of ['password-'.repeat(10000), 'a.'.repeat(40000) + '@', ('-----BEGIN ' + 'PRIVATE KEY-----\n').repeat(20000)]) {
     const t0 = Date.now(); scrubber().scrub(junk); assert.ok(Date.now() - t0 < 1500, `${junk.slice(0, 12)}… took ${Date.now() - t0} ms`);
   }
 });
@@ -344,11 +353,11 @@ test('review: credential settings are scrubbed in every common form', () => {
   for (const leak of [...lines.map((_, i) => v(i)), 'horse', 'battery']) assert.ok(!out.includes(leak), leak);
 });
 test('review: private keys of any length go, even with no footer; never-send words leave placeholders alone', () => {
-  const big = '-----BEGIN PRIVATE KEY-----\n' + ('Q'.repeat(64) + '\n').repeat(400) + '-----END PRIVATE KEY-----';
+  const big = ('-----BEGIN ' + 'PRIVATE KEY-----\n') + ('Q'.repeat(64) + '\n').repeat(400) + '-----END PRIVATE KEY-----';
   assert.ok(!scrubber().scrub(big).includes('QQQQ'));
-  const cut = scrubber().scrub('-----BEGIN RSA PRIVATE KEY-----\n' + 'W'.repeat(64) + '\n' + 'W'.repeat(64));
+  const cut = scrubber().scrub(('-----BEGIN ' + 'RSA PRIVATE KEY-----\n') + 'W'.repeat(64) + '\n' + 'W'.repeat(64));
   assert.ok(!cut.includes('WWWW'), cut);
-  const s = scrubber({ terms: ['KEY'] }); const out = s.scrub('-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----');
+  const s = scrubber({ terms: ['KEY'] }); const out = s.scrub(('-----BEGIN ' + 'PRIVATE KEY-----\nabc\n-----END ' + 'PRIVATE KEY-----'));
   assert.match(out, /^\[KEY_1\]$/); assert.match(s.unscrub(out), /BEGIN PRIVATE KEY/);
 });
 test('review: media notes with a file name are placeholders', async () => {
@@ -357,6 +366,6 @@ test('review: media notes with a file name are placeholders', async () => {
 });
 test('review: a bot repeating a credential-looking setting is "unsure", not a hard fail', async () => {
   const { checkConversation } = await import('../src/transcripts.js');
-  const f = checkConversation([{ role: 'user', content: 'what is the setting' }, { role: 'assistant', content: 'secretary: Jonathan Smith' }]);
-  const e = f.find(x => x.code === 'echoed_setting'); assert.ok(e && e.unsure && !f.some(x => x.code === 'echoed_secret'));
+  const f = checkConversation([{ role: 'user', content: 'what is the setting' }, { role: 'assistant', content: 'password_hint: Jonathan Smith' }]);
+  const e = f.find(x => x.code === 'revealed_setting'); assert.ok(e && e.unsure && !f.some(x => x.code === 'echoed_secret'));
 });

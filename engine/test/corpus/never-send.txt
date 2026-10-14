@@ -1,0 +1,7 @@
+[Acme] welcome message
+Contract with [Acme Corp] signed by ACME staff.
+OPENAI-API-KEY={{SECRET 20}}
+OPENAI_API_KEY={{PREFIX sk}}
+openai api key: {{SECRET 20}}
+Acme's password is {{SECRET 14}}
+[acme corp] again, in lower case

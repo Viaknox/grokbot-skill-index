@@ -1,0 +1,317 @@
+[
+  {
+    "name": "unicode-ratio-password",
+    "tier": "best-effort",
+    "why": "Credential name is obvious to humans but uses a ratio symbol instead of a covered separator.",
+    "input": "password ∶ CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "unicode-fullwidth-equals",
+    "tier": "best-effort",
+    "why": "Fullwidth equals may not be treated as a credential separator.",
+    "input": "api_key ＝ CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "unicode-small-colon",
+    "tier": "best-effort",
+    "why": "Small colon separator can evade ASCII colon matching.",
+    "input": "token ﹕ CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "unicode-math-colon",
+    "tier": "best-effort",
+    "why": "Mathematical colon separator can evade the listed separator set.",
+    "input": "secret ꞉ CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "arrow-assignment",
+    "tier": "best-effort",
+    "why": "Arrow assignment is common in notes but not listed as a credential separator.",
+    "input": "auth_token -> CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "unicode-arrow-assignment",
+    "tier": "best-effort",
+    "why": "Unicode arrow assignment can leave the value outside separator-based detection.",
+    "input": "access_token → CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "tilde-assignment",
+    "tier": "best-effort",
+    "why": "Tilde assignment is not in the promised separator list.",
+    "input": "password ~= CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "ini-space-only",
+    "tier": "best-effort",
+    "why": "Some INI-like files allow whitespace assignment with no covered separator.",
+    "input": "password CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "yaml-question-key",
+    "tier": "best-effort",
+    "why": "Explicit YAML mapping key syntax can split credential name from value in an uncommon way.",
+    "input": "? password\n: CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "json-escaped-key",
+    "tier": "best-effort",
+    "why": "Escaped characters in the credential key can prevent matching the key name.",
+    "input": "{\"pass\\u0077ord\":\"CorrectHorse9!\"}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "json-zero-width-key",
+    "tier": "best-effort",
+    "why": "Zero-width character in JSON key may survive if folding is not applied before JSON-name matching.",
+    "input": "{\"pass\\u200dword\":\"CorrectHorse9!\"}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "url-encoded-param-name",
+    "tier": "best-effort",
+    "why": "Percent-encoding in the credential parameter name can hide it from name matching.",
+    "input": "https://example.test/login?pass%77ord=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "set-cookie-html-meta",
+    "tier": "best-effort",
+    "why": "Set-Cookie content inside HTML attributes may not match header-line rules.",
+    "input": "<meta http-equiv=\"Set-Cookie\" content=\"session=CorrectHorse9!\">",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "command-long-flag-space-equals",
+    "tier": "promised",
+    "why": "A separated equals after a flag can dodge both --password x and --password=x forms.",
+    "input": "deploy --password = CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "powershell-backtick-flag",
+    "tier": "best-effort",
+    "why": "PowerShell backtick can split a credential flag name before matching.",
+    "input": "Invoke-Thing -Client`Secret CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "env-export-space",
+    "tier": "best-effort",
+    "why": "Shell export with spaces around name and value can avoid simple name=value residual detection.",
+    "input": "export PASSWORD CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "bash-read-command",
+    "tier": "best-effort",
+    "why": "Secret is provided to a command via here-string without a credential assignment.",
+    "input": "read -s password <<< CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "python-dict-concat-key",
+    "tier": "best-effort",
+    "why": "Credential key is constructed by string concatenation, hiding the key from static matching.",
+    "input": "config = {\"pass\" + \"word\": \"CorrectHorse9!\"}",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "js-computed-property",
+    "tier": "best-effort",
+    "why": "JavaScript computed credential property name can evade literal credential-name rules.",
+    "input": "const cfg = { ['pass' + 'word']: 'CorrectHorse9!' };",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "java-system-property-colon",
+    "tier": "best-effort",
+    "why": "Java -D property with colon instead of equals may evade command-line flag handling.",
+    "input": "java -Dpassword:CorrectHorse9! -jar app.jar",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "pem-header-spaced",
+    "tier": "promised",
+    "why": "(was held only) Spaces inserted into PEM boundary words can leave a still-recoverable private key block.",
+    "input": "-----BEGIN RSA PRIVATE  KEY-----\n{{PEM_BODY 3}}\n-----END RSA PRIVATE  KEY-----",
+    "gone": [
+      "-----BEGIN RSA PRIVATE  KEY-----\n{{PEM_BODY 3}}\n-----END RSA PRIVATE  KEY-----"
+    ]
+  },
+  {
+    "name": "github-prefix-soft-hyphen",
+    "tier": "best-effort",
+    "why": "Soft hyphen inside a known token prefix can bypass prefix-shape matching.",
+    "input": "github token is ghp­_ExampleExampleExampleExample",
+    "gone": [
+      "ghp­_ExampleExampleExampleExample"
+    ]
+  },
+  {
+    "name": "hex-spaced-groups",
+    "tier": "best-effort",
+    "why": "Hex secret split into small groups avoids residual long-run entropy detection.",
+    "input": "recovery code: abcd ef12 3456 7890 abcd ef12 3456 7890",
+    "gone": [
+      "abcd ef12 3456 7890 abcd ef12 3456 7890"
+    ]
+  },
+  {
+    "name": "private-zero-width",
+    "tier": "best-effort",
+    "why": "(was held only) Never-send term split with zero-width joiner may evade whole-word term matching.",
+    "input": "Project A‍cme roadmap",
+    "terms": [
+      "Acme"
+    ],
+    "gone": [
+      "A‍cme"
+    ]
+  },
+  {
+    "name": "private-soft-hyphen",
+    "tier": "best-effort",
+    "why": "Never-send term split with soft hyphen may survive normalization gaps.",
+    "input": "Customer Ac­me contract notes",
+    "terms": [
+      "Acme"
+    ],
+    "gone": [
+      "Ac­me"
+    ]
+  },
+  {
+    "name": "private-combining-mark",
+    "tier": "best-effort",
+    "why": "Combining mark inside a never-send term can defeat exact whole-word matching.",
+    "input": "Customer Ac̸me renewal",
+    "terms": [
+      "Acme"
+    ],
+    "gone": [
+      "Ac̸me"
+    ]
+  },
+  {
+    "name": "private-fullwidth",
+    "tier": "best-effort",
+    "why": "(was held only) Fullwidth never-send term may survive if private term matching lacks width folding.",
+    "input": "Customer Ａｃｍｅ renewal",
+    "terms": [
+      "Acme"
+    ],
+    "gone": [
+      "Ａｃｍｅ"
+    ]
+  },
+  {
+    "name": "private-turkish-dotless",
+    "tier": "best-effort",
+    "why": "Locale-sensitive case folding can miss Turkish dotless or dotted I variants.",
+    "input": "The client is ıstanbul Labs.",
+    "terms": [
+      "Istanbul"
+    ],
+    "gone": [
+      "ıstanbul"
+    ]
+  },
+  {
+    "name": "private-normalization-decomposed",
+    "tier": "best-effort",
+    "why": "(was held only) Decomposed Unicode form can bypass term matching if NFC normalization is absent.",
+    "input": "The private client is Café Analytics.",
+    "terms": [
+      "Café"
+    ],
+    "gone": [
+      "Café"
+    ]
+  },
+  {
+    "name": "csv-header-password",
+    "tier": "best-effort",
+    "why": "CSV credential column values can survive because the credential name is in a previous line.",
+    "input": "user,password\napp,CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "csv-quoted-multiline",
+    "tier": "best-effort",
+    "why": "CSV quoted field can carry a credential value across lines without a credential separator on the value line.",
+    "input": "field,value\npassword,\"Correct\nHorse9!\"",
+    "gone": [
+      "Correct\nHorse9!"
+    ]
+  },
+  {
+    "name": "dotenv-export-quoted-name",
+    "tier": "promised",
+    "why": "(was held only) Quoted environment variable name can hide the credential name from dotenv-style detection.",
+    "input": "export 'PASSWORD'=CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  },
+  {
+    "name": "npmrc-colon-scope",
+    "tier": "best-effort",
+    "why": "Scoped registry auth line may not match generic credential names if token key is path-prefixed.",
+    "input": "//registry.example.test/:_authToken CorrectHorse9!",
+    "gone": [
+      "CorrectHorse9!"
+    ]
+  }
+]

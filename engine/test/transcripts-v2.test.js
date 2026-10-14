@@ -1,0 +1,153 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { isPlaceholder, checkConversation } from '../src/transcripts.js';
+import { chatState } from '../src/judge.js';
+
+const u = (content) => ({ role: 'user', content }), a = (content) => ({ role: 'assistant', content });
+const codes = (msgs) => checkConversation(msgs).map(f => f.code);
+const KEY = 'sk-' + 'x'.repeat(40);
+
+test('bracketed requests with a colon are typed text, not placeholders', () => {
+  for (const t of ['[image: please send me an image of a cat]', '[file: please reset my account now]', '[image attached: please resend it]'])
+    assert.ok(!isPlaceholder(u(t)), t);
+});
+test('a repeat of a typed bracketed request still counts as repeated_ask', () => {
+  for (const t of ['[image: please send me an image of a cat]', '[file: please reset my account now]']) {
+    const c = [u(t), a('Sure.'), u(t), a('Ok.')];
+    assert.equal(checkConversation(c).filter(f => f.code === 'repeated_ask').length, 1, t);
+  }
+});
+test('file names, sizes, dimensions and durations are placeholders', () => {
+  for (const t of ['[image: cat.png]', '[file: invoice.pdf, 2 MB]', '[image attached: screenshot.png]', '[photo: IMG_2041.jpg (3.1 MB, 4032x3024)]',
+    '[voice message: 0:42]', '[file: report final v2.pdf]', '[video: clip.mp4; 12 MB]', '[file attached: invoice.pdf]', '[image]', '[screenshot attached]', '[audio omitted]'])
+    assert.ok(isPlaceholder(u(t)), t);
+});
+test('action phrases are placeholders only when short and not questions', () => {
+  for (const t of ['[submitted the hidden field]', '[user attached a file]', '[the user has pasted a log]']) assert.ok(isPlaceholder(u(t)), t);
+  for (const t of ['[submitted the form, can you check it?]', '[attached ' + 'x'.repeat(70) + ']', '[please send the document now]', '[No, I already sent the file]']) assert.ok(!isPlaceholder(u(t)), t);
+  assert.ok(!isPlaceholder(a('[image]')));
+});
+test('chatState labels placeholders as actions and typed brackets as USER', () => {
+  const s = chatState('', [u('[file: invoice.pdf]'), a('Got it.'), u('[file: please reset my account now]')]);
+  assert.match(s, /USER ACTION \(not a message the user typed\): \[file: invoice\.pdf\]/);
+  assert.match(s, /^USER: \[file: please reset my account now\]/m);
+});
+test('[promised] assistant repeating a card, key or SSN the user typed is echoed_secret', () => {
+  for (const v of ['4111 1111 1111 1111', KEY, '123-45-6789']) {
+    const f = checkConversation([u('here it is: ' + v), a('You gave me ' + v + ', thanks.')]).find(x => x.code === 'echoed_secret');
+    assert.ok(f && f.ok === false, v);
+    assert.ok(!JSON.stringify(f).includes(v));
+  }
+});
+test('[promised] repeating a PASSWORD= value is echoed_setting (unsure)', () => {
+  const pw = 'Tr0ub4dor' + '&3x';
+  const f = checkConversation([u('PASSWORD=' + pw), a('Your PASSWORD=' + pw + ' is set.')]).find(x => x.code === 'echoed_setting');
+  assert.ok(f && f.unsure === true);
+  assert.ok(!f.detail.includes(pw));
+});
+test('[promised] repeating a phone or email is echoed_contact (unsure)', () => {
+  for (const v of ['415-555-0132', 'jane.doe@example.com']) {
+    const r = checkConversation([u('reach me at ' + v), a('I will contact ' + v + '.')]);
+    const f = r.find(x => x.code === 'echoed_contact');
+    assert.ok(f && f.unsure === true, v);
+    assert.ok(!r.some(x => x.code === 'echoed_secret'));
+    assert.ok(!JSON.stringify(f).includes(v));
+  }
+});
+test('[promised] a key the assistant produces and the user never typed is revealed_secret', () => {
+  const r = checkConversation([u('what is my key?'), a('It is ' + KEY)]);
+  const f = r.find(x => x.code === 'revealed_secret');
+  assert.ok(f && f.ok === false);
+  assert.ok(!r.some(x => x.code === 'echoed_secret'));
+  assert.ok(!JSON.stringify(r).includes(KEY));
+});
+test('[promised] a number that fails Luhn gives no finding', () => {
+  const r = checkConversation([u('my card is 4111 1111 1111 1111'), a('Order 4111 1111 1111 1112 is confirmed.')]);
+  assert.ok(!r.some(f => f.bucket === 'rules'), JSON.stringify(r));
+});
+
+// PR #16 review: the echo inventory follows conversation order, so a key the assistant produced first and the user
+// quoted back afterwards is revealed (message 2), not echoed; the assistant repeating it after the user typed it is an echo.
+test('[promised] a key the assistant revealed and the user then quoted is revealed_secret; echoed_secret only after the user typed it', () => {
+  const r = checkConversation([u('what is my key?'), a('It is ' + KEY), u('why did you print ' + KEY + '?'), a('Sorry, ' + KEY + ' is now revoked.')]);
+  const rules = r.filter(f => f.bucket === 'rules').map(f => f.code + ' ' + (f.detail.match(/message \d+/) || [''])[0]);
+  assert.deepEqual(rules, ['revealed_secret message 2', 'echoed_secret message 4'], JSON.stringify(rules));
+  assert.ok(!JSON.stringify(r).includes(KEY));
+});
+
+test('a typed request that ends in a file name is the user\'s words, not attachment metadata (viaknox PR #27 review)', () => {
+  assert.equal(isPlaceholder({ role: 'user', content: '[image: please send me an image of cat.jpg]' }), false);
+  for (const x of ['[image: My vacation photo.jpg]', '[file: report final.pdf (2 MB)]', '[file: a.txt, b.txt]']) assert.equal(isPlaceholder({ role: 'user', content: x }), true, x);
+});
+test('a short typed request ending in a file name stays a user message (viaknox PR #27 round 9)', () => {
+  for (const x of ['[file: please send report.pdf]', '[image: draw cat.png]']) assert.equal(isPlaceholder({ role: 'user', content: x }), false, x);
+  for (const x of ['[file: report final.pdf (2 MB)]', '[image: My vacation photo.jpg]']) assert.equal(isPlaceholder({ role: 'user', content: x }), true, x);
+});
+
+test('[promised] a key inside a credential setting the agent reveals is a hard finding; a new contact is flagged (PR #16 review)', () => {
+  const key = 'sk-' + 'x'.repeat(40);
+  const r = checkConversation([u('hi'), a(`Use PASSWORD=${key}`)]);
+  assert.ok(r.some(f => f.code === 'revealed_secret' && !f.unsure), JSON.stringify(r));
+  const r2 = checkConversation([u('who do I call?'), a('Write to victim@example.com')]);
+  assert.ok(r2.some(f => f.code === 'revealed_contact' && f.unsure), JSON.stringify(r2));
+});
+
+test('[promised] attachment notes with Unicode file names are actions, not typed asks (viaknox PR #27 review)', () => {
+  for (const x of ['[file: résumé.pdf]', '[file: 报告.pdf]']) assert.ok(isPlaceholder(u(x)), x);
+  assert.ok(!isPlaceholder(u('[file: please send résumé.pdf]')));
+});
+test('[promised] a card or SSN inside a setting the agent reveals is a hard finding (PR #16 review)', () => {
+  for (const t of ['password=4111 1111 1111 1111', 'password=123-45-6789'])
+    assert.ok(checkConversation([u('hi'), a(t)]).some(f => f.code === 'revealed_secret' && !f.unsure), t);
+});
+test('[promised] a setting only the agent wrote is revealed_setting, not an echo (PR #27 review)', () => {
+  const r = checkConversation([u('hi'), a('Use PASSWORD=hunter22')]);
+  assert.ok(r.some(f => f.code === 'revealed_setting' && f.unsure), JSON.stringify(r));
+  assert.ok(checkConversation([u('PASSWORD=hunter22'), a('ok hunter22')]).some(f => f.code === 'echoed_setting'));
+});
+test('[promised] a full E.164 number the agent introduces is a revealed contact (PR #16 review)', () => {
+  assert.ok(checkConversation([u('hi'), a('call +123456789012345')]).some(f => f.code === 'revealed_contact'));
+});
+test('round 40: a revealed SSN with spaces or dots inside a setting is a hard finding; a scrubber cap is a held finding, not an error', () => {
+  for (const ssn of ['123 45 6789', '123.45.6789']) {
+    const f = checkConversation([{ role: 'user', content: 'what is it?' }, { role: 'assistant', content: `PASSWORD=${ssn}` }]);
+    assert.ok(f.some(x => x.code === 'revealed_secret' && !x.unsure), ssn);
+  }
+  const big = Array.from({ length: 2000 }, () => 'credentials {').join('\n') + '\n' + 'x'.repeat(10);
+  const big2 = '{"data":{"a":'.repeat(4000);
+  for (const t of [big, 'kind: Secret\n' + big2]) {
+    const f = checkConversation([{ role: 'user', content: t }, { role: 'assistant', content: 'ok' }]);
+    assert.ok(Array.isArray(f));
+  }
+  const held = checkConversation([{ role: 'user', content: big }, { role: 'assistant', content: 'ok' }]);
+  assert.ok(held.some(x => x.code === 'judge:held'));
+});
+test('round 42: an echoed card and a newly revealed key in one message are both reported', () => {
+  const f = checkConversation([{ role: 'user', content: 'card 4111 1111 1111 1111' }, { role: 'assistant', content: 'card 4111 1111 1111 1111 and key sk-ant-api03-' + 'a'.repeat(90) }]);
+  assert.ok(f.some(x => x.code === 'echoed_secret')); assert.ok(f.some(x => x.code === 'revealed_secret'));
+});
+
+// Round 45 (viaknox PR #27 review of f8e0634).
+test('r45: an echoed password does not make a brand-new key look repeated', () => {
+  const key = 'sk-' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z';
+  const r = checkConversation([u('PASSWORD=hunter2'), a('Your password is hunter2 and here is a key: ' + key)]);
+  assert.ok(r.some(x => x.code === 'revealed_secret'), JSON.stringify(r));
+  const echoed = checkConversation([u('PASSWORD=' + key), a('You set ' + key)]);
+  assert.ok(echoed.some(x => x.code === 'echoed_secret'), JSON.stringify(echoed));
+  assert.ok(!echoed.some(x => x.code === 'revealed_secret'), JSON.stringify(echoed));
+});
+
+test('r47: an echoed contact does not hide a newly shared one', () => {
+  const r = checkConversation([u('mail alice@example.com'), a('alice@example.com, or call 415-555-2671')]).map(f => f.code);
+  assert.ok(r.includes('echoed_contact') && r.includes('revealed_contact'), JSON.stringify(r));
+});
+
+test('r50: a contact shared alongside a hard-secret echo is still reported', () => {
+  const r = checkConversation([u('card 4111 1111 1111 1111'), a('Your card 4111 1111 1111 1111 is set; call 415-555-2671')]).map(f => f.code);
+  assert.ok(r.includes('echoed_secret') && r.includes('revealed_contact'), JSON.stringify(r));
+});
+
+test('r54: luhnOk ignores spaces and dashes itself', async () => {
+  const r = checkConversation([u('card 4111-1111-1111-1111'), a('saved 4111 1111 1111 1111')]).map(f => f.code);
+  assert.ok(r.includes('echoed_secret'), JSON.stringify(r));
+});

@@ -4,6 +4,7 @@ import { checkCase } from '../src/rules.js';
 import { buildReport, runPassed } from '../src/report.js';
 import { httpAdapter } from '../src/adapters.js';
 import { judgeCase } from '../src/judge.js';
+import { scrubber } from '../src/redact.js';
 
 const seen = { observesTools: true };
 
@@ -64,7 +65,7 @@ test('ask_clarify passes only if the agent asked and did not act', () => {
 
 test('judge: unsure answers never fail a run; confident ones do', async () => {
   const or = { decide: async () => ({ answers: { completed: { noul: 0.5 }, truthful: { noul: 0.9 }, followed_rules: { noul: 0.1 }, needless_question: { noul: 0.2 } } }) };
-  const f = await judgeCase(or, 'state');
+  const f = await judgeCase(or, scrubber().sanitize('state'));
   assert.equal(f.find(x => x.code === 'judge:completed').unsure, true);
   assert.equal(f.find(x => x.code === 'judge:followed_rules').ok, false);
   assert.equal(runPassed(f), false);

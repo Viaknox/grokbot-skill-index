@@ -1,0 +1,8 @@
+registry=https://registry.npmjs.org/
+//registry.npmjs.org/:_authToken={{B64 36}}
+//npm.pkg.github.com/:_authToken={{PREFIX ghp}}
+//custom.example.com/:_password={{B64 24}}
+//custom.example.com/:username=jo
+//custom.example.com/:_auth={{B64 32}}
+//big.example.com/:_authToken={{B64 220}}
+save-exact=true

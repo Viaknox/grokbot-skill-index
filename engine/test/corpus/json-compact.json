@@ -1,0 +1,1 @@
+{"user":"jo","password":"{{SECRET 24}}","api_key":"{{SECRET 30}}","settings":{"tokenLimit":100000,"client_secret":"{{SECRET 18}}\"with\\\"escaped"},"note":"the secretary will call","authorization":"Bearer {{B64 40}}","cookie":"session={{HEX 32}}; theme=dark","private_key":"{{PEM_HEAD}}\n{{B64 64}}\n{{B64 64}}\n{{PEM_FOOT}}\n","after":"still here"}

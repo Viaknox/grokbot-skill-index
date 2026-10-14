@@ -19,9 +19,9 @@ import { evaluate, pool, CONCURRENCY } from './src/evaluate.js';
 import { validateSuite } from './src/rules.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
 import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
-import { scrubber } from './src/redact.js';
+import { scrubber, ScrubError } from './src/redact.js';
 import { parseTranscripts, checkConversation } from './src/transcripts.js';
-import { judgeConversation, chatState, JUDGE_MODEL } from './src/judge.js';
+import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judge.js';
 
 const [cmd, file, ...rest] = process.argv.slice(2);
 const opt = (name, dflt) => { const i = rest.indexOf('--' + name); return i < 0 ? dflt : (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[i + 1] : true); };
@@ -41,9 +41,14 @@ if (cmd === 'check') {
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
   // At most CONCURRENCY conversations at once (each asks the judge three times).
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
-    const findings = [...checkConversation(msgs), ...(or ? await judgeConversation(or, scrub.scrub(chatState(instructions, msgs)), { hasInstructions: !!instructions }) : [])];
-    return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && scrub.scrub(f.quote) })),
-      turns: msgs.map(m => ({ role: m.role, reply: scrub.scrub(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
+    // A chat over the scrubber's size or time cap gets the held finding (unsure), like a run in evaluate: never a crash.
+    const findings = [...checkConversation(msgs), ...(or ? await judgeHeld(scrub, chatState(instructions, msgs), (san) => judgeConversation(or, san, { hasInstructions: !!instructions })) : [])];
+    // Report text is scrubbed again for display; past the scrubber's cap it is withheld rather than crashing the command
+    // (PR #16 review).
+    // The report goes through the same fail-closed check as the judge: residual-only secrets are held, not written out (PR #16 review).
+    const shown = (t) => { try { const z = scrub.sanitize(t); return z.held ? '[held back: secret-like content]' : z.text; } catch (e) { if (e instanceof ScrubError) return '[held back: too large to scrub safely]'; throw e; } };
+    return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
+      turns: msgs.map(m => ({ role: m.role, reply: shown(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });
   const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
   rep.scrubbed = scrub.counts();
@@ -65,7 +70,7 @@ const suiteId = createHash('sha256').update(JSON.stringify(suite) + '\u0000' + J
 const or = client(loadKey(opt('keyfile')));
 const scrub = scrubber({ terms });
 let adapter;
-try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub }); }
+try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub, privateTerms: terms }); }
 catch (e) { console.error(e.message); process.exit(2); }
 if (suite.agent_config.type === 'http') {
   const vars = headerVars(suite.agent_config);

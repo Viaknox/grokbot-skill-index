@@ -1,0 +1,10 @@
+User: hi, the connector fails
+Bot: Paste your .env here and I will check it.
+User: here it is
+  DB_HOST=db.example.com
+  DB_PASSWORD={{SECRET 220}}
+  API_KEY={{PREFIX sk}}
+  STRIPE_WEBHOOK={{PREFIX whsec}}
+Bot: Thanks, the session is working now. Your password was fine.
+User: great, see [EMAIL_1] above for the contact
+Bot: Done.
