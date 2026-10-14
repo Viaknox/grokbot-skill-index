@@ -540,7 +540,9 @@ function scrubLineForms(s, label, resolve) {
 // [section], [[table]], and git-config's [section "subsection"]: the section name before the quoted part decides.
 const INI_HEADER = /^[ \t]*\[\[?[ \t]*(["']?)([^\]"'\n\s]{1,120})\1(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*$/;
 const INI_ASSIGN = /^[ \t]*(["']?)([A-Za-z_][\w.\-]{0,60})\1[ \t]*[=:][ \t]*/;
-const BLOCK_NAME = /(["']?)([\p{L}_][\p{L}\p{N}_.\-]{0,80})\1[ \t]*$/u;
+// An HCL block type may carry string labels before its brace (credentials "prod" { … }; HCL spec, PR #27 review):
+// group 2 is the type, group 3 the labels.
+const BLOCK_NAME = /(["']?)([\p{L}_][\p{L}\p{N}_.\-]{0,80})\1((?:[ \t]+"[^"\n]{0,80}")*)[ \t]*$/u;
 const GENERIC_ASSIGN = /(^|[\s{,;])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,60})\2[ \t]*[=:][ \t]*/gu;
 // A credential-named object or flow map: "credentials": { … }, credentials: { … }, "secret": { "metadata": { … } }.
 const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*[:=][ \t]*\{/gu;
@@ -622,7 +624,7 @@ function scrubScopes(s, label, resolve) {
     // line is tried, since the block name may follow an outer brace.
     for (let bo = line.indexOf('{'); bo >= 0; bo = line.indexOf('{', bo + 1)) {
       const head = line.slice(0, bo);
-      if (/[:=][ \t]*$/.test(head) || !(m = BLOCK_NAME.exec(head)) || !isCredentialName(resolve(m[2]))) continue;
+      if (/[:=][ \t]*$/.test(head) || !(m = BLOCK_NAME.exec(head)) || ![m[2], ...(m[3].match(/"[^"\n]*"/g) || []).map(l => l.slice(1, -1))].some(n => n && isCredentialName(resolve(n)))) continue;
       const open = i + bo, close = braceEnd(s, open), body = s.slice(open + 1, close); GENERIC_ASSIGN.lastIndex = 0;
       for (let g; (g = GENERIC_ASSIGN.exec(body));) { const vs = open + 1 + g.index + g[0].length; if (s[vs] !== '{') ivs.push([vs, Math.min(valueEnd(s, vs), close), 'SECRET']); }
       break;
@@ -985,7 +987,7 @@ function scrubMultipart(s, label, resolve) {
 // content is bounded at 64 KB so a tag never opened is not a quadratic scan.
 const XML_OPEN = /<([\p{L}_\uE000][\p{L}\p{N}_.\-:\uE000\uE001]{0,80})(?:\s[^<>\n]{0,200})?>/gu;   // Unicode names too (<пароль>; PR #27 review)
 function scrubXml(s, label, resolve) {
-  if (!s.includes('</')) return s;
+  if (!s.includes('<')) return s;
   // Every "</" position once, so each opening tag finds its closing tag by binary search instead of an indexOf that,
   // for a tag never closed, would scan to the end of the text (20000 unclosed tags made that quadratic).
   const closes = []; for (let k = s.indexOf('</'); k >= 0; k = s.indexOf('</', k + 2)) closes.push(k);
@@ -1013,7 +1015,10 @@ function scrubXml(s, label, resolve) {
     }
     // Too many nested closing tags to walk: take the rest of the 64 KB window rather than risk leaving the value (PR #27).
     if (close < 0 && n >= 256) close = Math.min(s.length, open + 65536);
-    if (close < 0) continue;
+    // No matching end tag (pasted or cut-off markup: <password>hunter2, <password>x</foo>; PR #27 review): the value runs
+    // to the next tag or the end of its line (the next non-blank line when the tag ends its own line).
+    if (close < 0 && /\/\s*>$/.test(m[0])) continue;   // <password /> is empty, not unclosed
+    if (close < 0) { const lead = /^[ \t]*(?:\r?\n[ \t\r\n]*)?/.exec(s.slice(open, open + 4096))[0].length; const R = /[<\n]|$/g; R.lastIndex = open + lead; close = Math.min(R.exec(s).index, open + 65536); }
     const content = s.slice(open, close);
     if (content.trim() && !isPlaceholderValue(content)) { out += s.slice(at, open) + label('SECRET', content); at = close; }
     XML_OPEN.lastIndex = close;
@@ -1150,7 +1155,10 @@ function scrubFlags(s, label, V) {
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
-  return applyOnView(s, V(s), FLAG_ANY, label, (m) => isCredentialName(m[3]) ? { from: m.index + m[0].length - m[5].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
+  // --password-stdin (docker login, helm registry login, …) takes no argument; the password is the output of an echo or
+  // printf piped into the command on the same line (docs.docker.com docker login; PR #27 review).
+  s = s.replace(/^.*--[\w-]*pass(?:word)?-stdin\b.*$/gim, (line) => line.replace(/(\b(?:echo|printf)(?:[ \t]+-[a-zA-Z]+)*(?:[ \t]+(?:'%s\\?n?'|"%s\\?n?"))?[ \t]+)([^|\n]*?)([ \t]*\|)/g, (m, pre, v, pipe) => !v.trim() || isPlaceholderValue(v) ? m : pre + label('SECRET', v) + pipe));
+  return applyOnView(s, V(s), FLAG_ANY, label, (m) => isCredentialName(m[3]) && !/-stdin$/i.test(m[3]) ? { from: m.index + m[0].length - m[5].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
 }
 
 // Command forms: Windows `net use … /user:DOMAIN\\alice <pass>` (the token after the /user: token) and PowerShell

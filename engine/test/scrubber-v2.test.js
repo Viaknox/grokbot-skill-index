@@ -793,3 +793,9 @@ test('[best-effort] round 29: Redis AUTH [user] password, Oracle JDBC user/passw
   assert.equal(scrubber().sanitize('auth is hard to get right').text, 'auth is hard to get right');
   assert.equal(scrubber().sanitize('jdbc:oracle:thin:@//db.example:1521/orcl').text, 'jdbc:oracle:thin:@//db.example:1521/orcl');
 });
+test('[best-effort] round 30: unclosed credential elements, echo | --password-stdin, labelled HCL credential blocks', () => {
+  for (const x of ['<password>hunter22', '<password>hunter22</foo>', '<password>\n  hunter22', 'echo hunter22 | docker login --username alice --password-stdin registry.example.com', 'credentials "prod" { value = "hunter22" }'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+  assert.ok(scrubber().sanitize('echo hunter22 | docker login --password-stdin registry.example.com').text.includes('registry.example.com'));
+  assert.equal(scrubber().sanitize('<password /> stays').text, '<password /> stays');
+});
