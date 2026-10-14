@@ -506,7 +506,7 @@ function scrubLineForms(s, label, resolve) {
       }
     } else if (line.includes(',') && !csv) {
       // Header cells may be multiword labels ("Login Name", "Password"; PR #27 review): each column is judged on its own.
-      const hdr = csvRow(s, i), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, ''));
+      const hdr = csvRow(s, i), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
       if (cells.length >= 2 && hdr.end <= nl && cells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
         const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: cells.length, cols };
@@ -580,6 +580,9 @@ function scrubScopes(s, label, resolve) {
   const docs = []; { let d0 = 0; const SEP = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || /"kind"[ \t]*:[ \t]*"Secret"/.test(t)]); };
     for (let m; (m = SEP.exec(s));) { add(d0, m.index); d0 = m.index + m[0].length; } add(d0, s.length); }
   let di = 0, k8s = docs[0][1];
+  // In a JSON Secret, data/stringData may sit across lines from its colon and brace ({"data"\n:\n{…}}; PR #27 review).
+  docs.forEach(([a, sec], d) => { if (!sec) return; const b = d + 1 < docs.length ? docs[d + 1][0] : s.length; const JD = /(["'])(?:data|stringData)\1\s*:\s*\{/g; JD.lastIndex = a;
+    for (let j; (j = JD.exec(s)) && j.index < b;) { const open = j.index + j[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } });
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
   // on a line: every scalar inside goes, nested objects included.
   if (s.includes('{')) { OBJ_KEY.lastIndex = 0; for (let m; (m = OBJ_KEY.exec(s));) if (isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
@@ -991,6 +994,13 @@ function scrubXml(s, label, resolve) {
 // A credential passed as a quoted call argument in code: std::string secret("…"), setPassword('…'). The name before the
 // parenthesis is checked like a setting name; only the quoted literal goes.
 function scrubCallArg(s, label, resolve) {
+  // SMTP/IMAP "AUTH PLAIN <base64>" initial responses (RFC 4954; PR #27 review).
+  s = s.replace(/^((?:[ \t]*(?:USER|AGENT|C|S|>>?|<<?):?)?[ \t]*(?:\w+[ \t]+)?AUTH(?:ENTICATE)?[ \t]+(?:PLAIN|LOGIN|XOAUTH2?|OAUTHBEARER|CRAM-MD5|DIGEST-MD5|SCRAM-SHA-\d+(?:-PLUS)?)[ \t]+)(\S+)/gim, (m, pre, v) =>
+    v === '=' || isPlaceholderValue(v) ? m : pre + label('SECRET', v));
+  // MongoDB db.auth("user", "pw") and similar (user, password) signatures: the second quoted argument goes too
+  // (PR #27 review).
+  s = s.replace(/\b(?:db\.auth|auth|login|signIn|authenticate)[ \t]*\([ \t]*("[^"\n]*"|'[^'\n]*')[ \t]*,[ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, u, v) =>
+    isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   return s.replace(/\b([\p{L}_$\uE000][\p{L}\p{N}_$.\uE000\uE001]{0,60})[ \t]*\([ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, name, v) =>
     (!isCredentialName(resolve(name)) || isPlaceholderValue(v)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
 }
@@ -1176,6 +1186,8 @@ const PATTERNS = [
   // Compact numbers: E.164 (+14155552671) anywhere, and 10–15 digits after a phone cue (PR #27 review).
   ['PHONE', /(?<![\w+])\+\d{10,15}\b/g],
   ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]*[:#=]?[ \t]*)\d{10,15}\b/gi],
+  // …and after "phone (number) is/was" (my phone is 4155552671; PR #27 review).
+  ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was|are)[ \t]+)\+?\d{10,15}\b/gi],
   ['IP', /\b(?:\d{1,3}\.){3}\d{1,3}\b/g],
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])/gi],
@@ -1449,7 +1461,9 @@ export function scrubber({ terms = [] } = {}) {
       const phones = (s.match(/\+?\d[\d\s().-]{6,}\d/g) || []).map(x => x.replace(/\D/g, '').slice(-10));
       for (const { kind, value } of inventory) {
         if (!value || value.length < 4) continue;
-        if (kind !== 'EMAIL' && s.includes(value)) kinds.add(kind);
+        // A value that begins or ends with a letter or digit counts only as a whole occurrence, so PASSWORD=pass is not
+        // echoed by "compass" or "passed" (PR #27 review).
+        if (kind !== 'EMAIL' && s.includes(value) && (!/^[\p{L}\p{N}]|[\p{L}\p{N}]$/u.test(value) || new RegExp((/^[\p{L}\p{N}]/u.test(value) ? '(?<![\\p{L}\\p{N}])' : '') + value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (/[\p{L}\p{N}]$/u.test(value) ? '(?![\\p{L}\\p{N}])' : ''), 'u').test(s))) kinds.add(kind);
         else if (kind === 'EMAIL' && new RegExp(`(?<![\\p{L}\\p{M}\\p{N}._%+-])${value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`, 'u').test(lower)) kinds.add(kind);   // the whole address, not a suffix of data@… (PR #16 review)
         else if (kind === 'PHONE') { const d = value.replace(/\D/g, '').slice(-10); if (d.length >= 7 && phones.includes(d)) kinds.add(kind); }
       }

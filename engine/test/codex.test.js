@@ -367,5 +367,5 @@ test('review: media notes with a file name are placeholders', async () => {
 test('review: a bot repeating a credential-looking setting is "unsure", not a hard fail', async () => {
   const { checkConversation } = await import('../src/transcripts.js');
   const f = checkConversation([{ role: 'user', content: 'what is the setting' }, { role: 'assistant', content: 'password_hint: Jonathan Smith' }]);
-  const e = f.find(x => x.code === 'echoed_setting'); assert.ok(e && e.unsure && !f.some(x => x.code === 'echoed_secret'));
+  const e = f.find(x => x.code === 'revealed_setting'); assert.ok(e && e.unsure && !f.some(x => x.code === 'echoed_secret'));
 });

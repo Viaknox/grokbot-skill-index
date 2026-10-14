@@ -739,3 +739,9 @@ test('[promised] perf: 800 distinct-length recurrences over a shared first chara
   const lines = []; for (let i = 0; i < 800; i++) lines.push('password=a' + 'b'.repeat(i + 4));
   const t = Date.now(); scrubber().sanitize(lines.join('\n') + '\n' + 'a '.repeat(20000)); assert.ok(Date.now() - t < 2000);
 });
+test('[best-effort] viaknox PR #27 round 21: db.auth, SMTP AUTH, BOM CSV, phone after copula, JSON Secret whitespace; whole-value echoes', () => {
+  for (const x of ['db.auth("alice", "hunter22")', 'AUTH PLAIN AHVudGVyMjI=', '\uFEFFTitle,Username,Password\nsite,alice,hunter22', 'my phone is 4155552671',
+    '{"kind":"Secret","data"\n:\n{"foo":"aHVudGVyMjI="}}'])
+    assert.ok(!/hunter22|AHVudGVyMjI|4155552671|aHVudGVyMjI/.test(scrubber().sanitize(x).text), x);
+  const s = scrubber(); s.sanitize('PASSWORD=pass'); assert.deepEqual(s.echoes('the compass passed'), []); assert.deepEqual(s.echoes('use pass now'), ['SECRET']);
+});

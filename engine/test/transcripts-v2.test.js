@@ -100,3 +100,8 @@ test('[promised] a card or SSN inside a setting the agent reveals is a hard find
   for (const t of ['password=4111 1111 1111 1111', 'password=123-45-6789'])
     assert.ok(checkConversation([u('hi'), a(t)]).some(f => f.code === 'revealed_secret' && !f.unsure), t);
 });
+test('[promised] a setting only the agent wrote is revealed_setting, not an echo (PR #27 review)', () => {
+  const r = checkConversation([u('hi'), a('Use PASSWORD=hunter22')]);
+  assert.ok(r.some(f => f.code === 'revealed_setting' && f.unsure), JSON.stringify(r));
+  assert.ok(checkConversation([u('PASSWORD=hunter22'), a('ok hunter22')]).some(f => f.code === 'echoed_setting'));
+});

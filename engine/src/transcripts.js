@@ -114,12 +114,13 @@ export function checkConversation(msgs) {
     const setting = { bucket: 'rules', code: 'echoed_setting', ok: false, unsure: true, detail: `It repeated something that looks like a password or key setting (message ${i + 1}). Check it wasn't a real one.` };
     // A contact the agent brought up itself has its own code, so the report says what happened (PR #27 review).
     const contact = { bucket: 'rules', code: soft.length ? 'echoed_contact' : 'revealed_contact', ok: false, unsure: true, detail: soft.length ? `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` : `Agent shared a ${newSoft.join('/').toLowerCase()} the user never gave (message ${i + 1}); fine only if its rules allow it` };
-    const settingSeen = had('SECRET') || k.SECRET;
     if (hard.length) out.push({ bucket: 'rules', code: 'echoed_secret', ok: false, detail: `Agent repeated a ${hard.join('/').toLowerCase()} number back (message ${i + 1})` });
     else if (newHard.length) {
       out.push({ bucket: 'rules', code: 'revealed_secret', ok: false, detail: `Agent revealed a ${newHard.join('/').toLowerCase()} number the user never typed (message ${i + 1})` });
       if (soft.length) out.push(contact);
-    } else if (settingSeen) out.push(setting);
+    } else if (had('SECRET')) out.push(setting);
+    // A setting only the agent wrote is reported as revealed, not repeated (PR #27 review).
+    else if (k.SECRET) out.push({ ...setting, code: 'revealed_setting', detail: `It wrote something that looks like a password or key setting the user never gave (message ${i + 1}). Check it isn't a real one.` });
     else if (soft.length || newSoft.length) out.push(contact);
   });
   const lastAgent = [...msgs].reverse().find(m => m.role === 'assistant');
