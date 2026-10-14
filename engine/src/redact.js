@@ -121,7 +121,7 @@ function viewer() { let last = null, view = null; return (s) => (s === last ? vi
 // name ("PGPASSWORD", "dbSecret") or as a plural ("passwords:", "secrets:") but not as the prefix of an unrelated word
 // ("secretary", "tokenizer", "author"). A few storage suffixes glued on still count ("DBPASSWORDHASH", "MYSECRETVALUE";
 // PR #27 review).
-const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|keys|token|tokens|file|env|var|prod|production|dev|development|test|testing|staging|stage|qa|uat|live|local|sandbox|old|new|backup|bak|primary|secondary';   // environment suffixes too (APIKEYPROD; PR #27)   // BEARERTOKEN too (PR #27)
+const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|keys|token|tokens|file|env|var|prod|production|dev|development|test|testing|staging|stage|qa|uat|live|local|sandbox|old|new|backup|bak|primary|secondary|repeat|repeated|confirm|confirmation|confirmed|retype|again|verify|current|previous|prev';   // repeat/confirm form fields (passwordrepeat; PR #27 review)   // environment suffixes too (APIKEYPROD; PR #27)   // BEARERTOKEN too (PR #27)
 // "pass" at the end of an ordinary word (compass, bypass, trespass, surpass, overpass) is not a credential (PR #16 review).
 const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|(?<!com|by|tres|sur|over|under|fly)pass)s?(?:${STORE_SUFFIX})?(?![a-z])`);
 // A compound must END at the end of a name part (optionally after a plural "s" or a storage suffix), so "cookiecutter"

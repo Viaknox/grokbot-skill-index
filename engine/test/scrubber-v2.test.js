@@ -821,3 +821,7 @@ test('[best-effort] round 36: PAT fields, HTML attributes with line breaks aroun
     assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
   assert.equal(scrubber().sanitize('a pat on the back').text, 'a pat on the back');
 });
+test('[best-effort] round 37: glued repeat/confirm password fields', () => {
+  for (const x of ['passwordrepeat=letmein22', 'passwordconfirm=letmein22', 'PASSWORDCURRENT=letmein22'])
+    assert.ok(!/letmein22/.test(scrubber().sanitize(x).text), x);
+});
