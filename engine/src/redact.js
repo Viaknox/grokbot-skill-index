@@ -1221,7 +1221,8 @@ const PREFIX_SHAPES = [
   ['known key shape', new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')')],
   ['pem private key', new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9]+[ \\t]+){0,32}PRIVATE[ \\t]+KEY')],
   ['http auth header', /\b(?:Authorization|Proxy-Authorization)[ \t]*:[ \t]*(?![\-\uE000])[^\s"'()\[\]{},;\uE000]{6,}/i],
-  ['auth scheme token', /\b(?:Basic|Bearer)[ \t]+[A-Za-z0-9._~+/\-]{12,}/],
+  // A plain lowercase word after the scheme is prose ("Basic authentication"), as in the main pass (PR #27 review).
+  ['auth scheme token', /\b(?:Basic|Bearer)[ \t]+(?![a-z]+(?![A-Za-z0-9._~+/\-]))[A-Za-z0-9._~+/\-]{12,}/],
   ['credential assignment', new RegExp('(?<![\\p{L}\\p{N}])(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|mot de passe|mdp|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|пароль|パスワード|密码|비밀번호)(?![\\p{L}\\p{N}])[ \\t]*["\']?[ \\t]*[:=][ \\t]*["\']?(?![\\-\\uE000])[^\\s"\'()\\[\\]{},;\\uE000]{3,}', 'iu')],
   ['spaced hex groups', /\b(?:[0-9a-f]{4}[ -]){5,}[0-9a-f]{4}\b/i],   // recovery codes written as groups of four
 ];

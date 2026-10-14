@@ -760,3 +760,7 @@ test('[best-effort] viaknox PR #27 round 24: IMAP LOGIN, SSN after copula, one-t
   assert.equal(scrubber().sanitize('N7:qP2-vL9:sR4-x').held, true);
   assert.equal(scrubber().sanitize('-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVTLw7onLRnrq0\n-----END PUBLIC KEY-----').held, false);
 });
+test('[promised] auth-scheme prose is not held by the residual scan (viaknox PR #27 round 25)', () => {
+  for (const x of ['Use Basic authentication for this endpoint', 'The API uses Bearer authentication']) assert.equal(scrubber().sanitize(x).held, false, x);
+  assert.equal(scrubber().sanitize('x Bearer abcdefghijklmnopQRS12').held || !scrubber().sanitize('x Bearer abcdefghijklmnopQRS12').text.includes('QRS12'), true);
+});
