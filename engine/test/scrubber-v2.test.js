@@ -606,3 +606,7 @@ test('[best-effort] flow-style Kubernetes Secret maps, value-before-name records
   for (const x of ['kind: Secret\nstringData: {username: admin, db: hunter2}', '{"value":"hunter2","name":"password"}', '- value: hunter2\n  name: password', 'user | password\n--- | ---\nalice | hunter2'])
     assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
 });
+test('[promised] compound names with a digit suffix (APIKEYB64) and mixed arrays in credential objects', () => {
+  assert.ok(!scrubber().sanitize('APIKEYB64: "aHVudGVyMg=="').text.includes('aHVudGVyMg'));
+  assert.ok(!scrubber().sanitize('{"credentials":{"items":["hunter2",{"note":"legacy"}]}}').text.includes('hunter2'));
+});

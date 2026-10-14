@@ -146,7 +146,9 @@ function nameParts(name) {
 export function isCredentialName(name) {
   const parts = nameParts(name);
   if (!parts.length) return false;
-  if (hasCompound(parts)) return true;
+  // Numbers split off by the letter/digit cut are glued back for the compound check too ("APIKEYB64"; PR #27 review).
+  const glued = parts.reduce((a, p) => (/^\d+$/.test(p) && a.length ? (a[a.length - 1] += p, a) : (a.push(p), a)), []);
+  if (hasCompound(parts) || hasCompound(glued)) return true;
   if (parts.length >= 2 && /^keys?$/.test(parts[parts.length - 1]) && !STRUCTURAL_KEY.has(parts[parts.length - 2])) return true;
   return parts.some((p, i) => {
     if (STRONG.test(p) || WHOLE.has(p)) return true;
@@ -470,7 +472,8 @@ function objectScalars(s, open, close, ivs) {
     const vs = m.index + m[0].length, c = s[vs];
     // An array of plain values inside a credential object goes whole ({"credentials":{"items":["…"]}}; PR #27 review);
     // an array of objects is scanned through so each object's fields are found.
-    if (c === '[') { const ae = Math.min(bracketEnd(s, vs), close); if (!s.slice(vs, ae).includes('{')) { if (s.slice(vs + 1, ae - 1).trim()) ivs.push([vs, ae, 'SECRET']); KV.lastIndex = ae; } continue; }
+    // Any array inside a credential container goes whole, mixed ones included (["…", {…}]; PR #27 review).
+    if (c === '[') { const ae = Math.min(bracketEnd(s, vs), close); if (s.slice(vs + 1, ae - 1).trim()) ivs.push([vs, ae, 'SECRET']); KV.lastIndex = ae; continue; }
     if (c === '{') continue;
     let ve;
     if (c === '"' || c === "'") { ve = vs + 1; while (ve < close && s[ve] !== c) { if (s[ve] === '\\') ve++; ve++; } ve = Math.min(ve + 1, close); }
@@ -760,11 +763,12 @@ function scrubNameValuePairs(s, label, resolve) {
     const end = entryEnd(s, from, nameIndent);
     // A value field may come BEFORE the name in the same entry ({"value": …, "name": "password"}, or a YAML list item
     // "- value: …" then "  name: password"); find the entry start and scrub those too (viaknox PR #27 review).
+    // Looked up inside a bounded window behind the name, so thousands of names on one line stay linear.
     let start = -1;
-    const ob = s.lastIndexOf('{', m.index);
-    if (ob >= 0 && m.index - ob < 4000 && !s.slice(ob, m.index).includes('}')) start = ob;
-    else {
-      let ls = s.lastIndexOf('\n', m.index - 1) + 1;
+    const win = Math.max(0, m.index - 4000), back = s.slice(win, m.index), obr = back.lastIndexOf('{'), ob = obr < 0 ? -1 : win + obr;
+    if (ob >= 0 && !s.slice(ob, m.index).includes('}')) start = ob;
+    else if (back.includes('\n')) {
+      let ls = win + back.lastIndexOf('\n') + 1;
       for (let k = 0; k < 20 && ls > 0; k++) {
         const ps = s.lastIndexOf('\n', ls - 2) + 1, pl = s.slice(ps, ls - 1); if (!pl.trim()) break;
         const ind = (pl.match(/^[ \t]*/) || [''])[0].length;
