@@ -1,4 +1,4 @@
-import { scrubber, residual } from './redact.js';
+import { scrubber, residual, ScrubError } from './redact.js';
 // Paste-in adapter: turns chats people copy or export into conversations of {role, content} messages.
 // Accepts JSON exports ([{role, content}], {messages: [...]}, an array of those, or {conversations: [...]})
 // and plain text with speaker labels ("User:", "Bot:", …). Conversations in text are separated by a line of --- or ===.
@@ -87,7 +87,9 @@ export function checkConversation(msgs) {
   // The inventory grows in conversation order, so only a value the user typed in an EARLIER turn counts as an echo; a
   // value the assistant produced first is revealed_secret even when the user quotes it back in a following turn (PR #16 review).
   const s = scrubber();
-  msgs.forEach((m, i) => {
+  // The local checks scrub too; past the scrubber's work cap the chat is held (the same finding judgeHeld gives), not an
+  // error that ends the whole check (PR #27 review).
+  try { msgs.forEach((m, i) => {
     if (m.role === 'user') { s.scrub(m.content); return; }
     if (m.role !== 'assistant') return;
     const echoed = s.echoes(m.content), had = (k) => echoed.includes(k);
@@ -102,7 +104,7 @@ export function checkConversation(msgs) {
     // The same for card and SSN shapes inside a setting (password=4111 1111 1111 1111; PR #16 review).
     const raw = String(m.content);
     const cardRaw = (raw.match(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g) || []).some(x => luhnOk(x.replace(/\D/g, '')));
-    const ssnRaw = /(?<![\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/u.test(raw);
+    const ssnRaw = /(?<![\p{N}.-])\d{3}([-. ])\d{2}\1\d{4}(?![\p{N}.-])/u.test(raw);   // the main SSN separators (PR #27 review)
     for (const [kind, hit] of [['CARD', cardRaw], ['SSN', ssnRaw]]) {
       if (!hit || hard.includes(kind) || newHard.includes(kind)) continue;
       if (had('SECRET')) hard.push(kind); else newHard.push(kind);
@@ -122,7 +124,7 @@ export function checkConversation(msgs) {
     // A setting only the agent wrote is reported as revealed, not repeated (PR #27 review).
     else if (k.SECRET) out.push({ ...setting, code: 'revealed_setting', detail: `It wrote something that looks like a password or key setting the user never gave (message ${i + 1}). Check it isn't a real one.` });
     else if (soft.length || newSoft.length) out.push(contact);
-  });
+  }); } catch (e) { if (!(e instanceof ScrubError)) throw e; out.push({ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' }); }
   const lastAgent = [...msgs].reverse().find(m => m.role === 'assistant');
   if (!lastAgent || lastAgent.content.length < 2) out.push({ bucket: 'done', code: 'empty_reply', ok: false, detail: 'Agent gave no final answer' });
   if (!out.some(f => f.bucket === 'happy')) out.push({ bucket: 'happy', code: 'no_friction', ok: true, detail: 'No repeated asks or corrections' });

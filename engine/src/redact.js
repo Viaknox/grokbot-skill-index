@@ -371,7 +371,7 @@ function applyOnView(s, view, re, label, pick) {
 // already turned into a placeholder is resolved back). Bounded classes only, so hostile input stays linear.
 const ASSIGN_START = new RegExp(
   '(?<![\\p{L}\\p{N}_$.\\-])' +
-  '(["\']?)([\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF][\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
+  '(["\']?)((?:\\\\u[0-9A-Fa-f]{4}|\\\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF])[\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review).
   '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
@@ -1204,6 +1204,8 @@ function scrubFlags(s, label, V) {
   // docker/podman/buildah/nerdctl/helm … login -p x: -p is --password there (docs.docker.com docker login; PR #27 review).
   s = s.replace(/^.*\b(?:docker|podman|buildah|nerdctl|skopeo|helm|oras)\b.*\blogin\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));
   s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
+  // mosquitto_pub/_sub/_rr -P <password> (mosquitto.org mosquitto_pub(1); PR #27 review).
+  s = s.replace(/^.*\bmosquitto_\w+\b.*$/gim, (line) => line.replace(/(^|\s)-P(?:[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
@@ -1537,6 +1539,13 @@ export function scrubber({ terms = [] } = {}) {
     return s.replace(SENT, (m, kind, n) => `[${kind}_${n}]`);
   }
 
+  // True when `value` occurs in `s` not glued to a letter or digit on a side where the value itself starts or ends with one.
+  const wordCh = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+  const wholeIn = (s, value) => {
+    const L = wordCh(value[0]), R = wordCh(value[value.length - 1]);
+    for (let i = s.indexOf(value); i >= 0; i = s.indexOf(value, i + 1)) if (!(L && wordCh(s[i - 1])) && !(R && wordCh(s[i + value.length]))) return true;
+    return false;
+  };
   return {
     scrub(text) { return scrubOnce(text); },
     // Puts the real values back into text returned by a model, locally. One pass in REVERSE insertion order: a
@@ -1584,7 +1593,9 @@ export function scrubber({ terms = [] } = {}) {
         if (!value || value.length < 3) continue;
         // A value that begins or ends with a letter or digit counts only as a whole occurrence, so PASSWORD=pass is not
         // echoed by "compass" or "passed" (PR #27 review).
-        if (kind !== 'EMAIL' && s.includes(value) && (!/^[\p{L}\p{N}]|[\p{L}\p{N}]$/u.test(value) || new RegExp((/^[\p{L}\p{N}]/u.test(value) ? '(?<![\\p{L}\\p{N}])' : '') + value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (/[\p{L}\p{N}]$/u.test(value) ? '(?![\\p{L}\\p{N}])' : ''), 'u').test(s))) kinds.add(kind);
+        // Whole occurrences checked by index, not a RegExp built from the value: a 50 KB value made "regular expression
+        // too large" (PR #27 review).
+        if (kind !== 'EMAIL' && s.includes(value) && wholeIn(s, value)) kinds.add(kind);
         else if (kind === 'EMAIL' && new RegExp(`(?<![\\p{L}\\p{M}\\p{N}._%+-])${value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`, 'u').test(lower)) kinds.add(kind);   // the whole address, not a suffix of data@… (PR #16 review)
         else if (kind === 'PHONE') { const d = value.replace(/\D/g, '').slice(-10); if (d.length >= 7 && phones.includes(d)) kinds.add(kind); }
         // Cards and SSNs are compared by their digits, so 123-45-6789 echoed as 123 45 6789 still counts (PR #27 review).

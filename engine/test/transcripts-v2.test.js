@@ -108,3 +108,17 @@ test('[promised] a setting only the agent wrote is revealed_setting, not an echo
 test('[promised] a full E.164 number the agent introduces is a revealed contact (PR #16 review)', () => {
   assert.ok(checkConversation([u('hi'), a('call +123456789012345')]).some(f => f.code === 'revealed_contact'));
 });
+test('round 40: a revealed SSN with spaces or dots inside a setting is a hard finding; a scrubber cap is a held finding, not an error', () => {
+  for (const ssn of ['123 45 6789', '123.45.6789']) {
+    const f = checkConversation([{ role: 'user', content: 'what is it?' }, { role: 'assistant', content: `PASSWORD=${ssn}` }]);
+    assert.ok(f.some(x => x.code === 'revealed_secret' && !x.unsure), ssn);
+  }
+  const big = Array.from({ length: 2000 }, () => 'credentials {').join('\n') + '\n' + 'x'.repeat(10);
+  const big2 = '{"data":{"a":'.repeat(4000);
+  for (const t of [big, 'kind: Secret\n' + big2]) {
+    const f = checkConversation([{ role: 'user', content: t }, { role: 'assistant', content: 'ok' }]);
+    assert.ok(Array.isArray(f));
+  }
+  const held = checkConversation([{ role: 'user', content: big }, { role: 'assistant', content: 'ok' }]);
+  assert.ok(held.some(x => x.code === 'judge:held'));
+});

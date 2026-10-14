@@ -842,3 +842,11 @@ test('[best-effort] round 39: vault login without a hyphen, rabbitmqctl password
   for (const x of ['SSN: 123 45 6789', 'SSN = 123.45.6789']) assert.ok(!/6789/.test(scrubber().sanitize(x).text), x);
   assert.equal(scrubber().sanitize('the password for production is ready.').text, 'the password for production is ready.');
 });
+test('[best-effort] round 40: mosquitto -P, credential names starting with an escape', () => {
+  for (const x of ['mosquitto_pub -u alice -P hunter22 -t alerts -m hi', '{"\\u0070assword":"hunter22"}', '{"\\u0074oken":"hunter22"}'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+});
+test('[best-effort] round 40: echoes() of a very long value does not build an oversized RegExp', () => {
+  const s = scrubber(); const v = '{"data":{"a":'.repeat(4000); s.sanitize('kind: Secret\n' + v);
+  assert.doesNotThrow(() => s.echoes('kind: Secret\n' + v));
+});
