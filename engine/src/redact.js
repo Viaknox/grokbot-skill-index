@@ -1027,6 +1027,11 @@ function scrubCallArg(s, label, resolve) {
   // SMTP/IMAP "AUTH PLAIN <base64>" initial responses (RFC 4954; PR #27 review).
   s = s.replace(/^((?:[ \t]*(?:USER|AGENT|C|S|>>?|<<?):?)?[ \t]*(?:\w+[ \t]+)?AUTH(?:ENTICATE)?[ \t]+(?:PLAIN|LOGIN|XOAUTH2?|OAUTHBEARER|CRAM-MD5|DIGEST-MD5|SCRAM-SHA-\d+(?:-PLUS)?)[ \t]+)(\S+)/gim, (m, pre, v) =>
     v === '=' || isPlaceholderValue(v) ? m : pre + label('SECRET', v));
+  // Redis "AUTH [username] password" (redis.io/docs/latest/commands/auth; PR #27 review): the last argument is the
+  // password. On a redis-cli line, after a redis prompt (host:port>), or as an uppercase AUTH command at line start;
+  // a SASL mechanism after AUTH is the SMTP/IMAP form above, not this one.
+  const REDIS_AUTH = /^((?:[ \t]*(?:USER|AGENT|C|S):?)?(?:.*\bredis-cli\b.*?[ \t]|[ \t]*[\w.\-]+(?::\d+)?(?:\[\d+\])?>[ \t]*|[ \t]*)(?:AUTH|auth)[ \t]+(?!(?:PLAIN|LOGIN|XOAUTH2?|OAUTHBEARER|CRAM-MD5|DIGEST-MD5|SCRAM-SHA-\d+(?:-PLUS)?)\b)(?:(?:"[^"\n]*"|'[^'\n]*'|\S+)[ \t]+)?)("[^"\n]*"|'[^'\n]*'|\S+)[ \t]*$/gm;
+  s = s.replace(REDIS_AUTH, (m, pre, v) => /^[a-z]/.test(pre.trimStart()) && !/\bredis-cli\b|>/.test(pre) && /^[ \t]*auth\b/.test(pre) ? m : (isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
   // IMAP "tag LOGIN user password" (RFC 9051 §6.2.3; PR #27 review): the second argument is the plaintext password.
   s = s.replace(/^((?:[ \t]*(?:USER|AGENT|C|S):?)?[ \t]*[A-Za-z0-9.]{1,20}[ \t]+LOGIN[ \t]+(?:"[^"\n]*"|\S+)[ \t]+)("[^"\n]*"|\S+)/gim, (m, pre, v) =>
     isPlaceholderValue(v) ? m : pre + label('SECRET', v));
@@ -1390,6 +1395,9 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubFlags(s, label, V);
     s = scrubCommands(s, label);
     s = s.replace(URL_USERINFO, (m, scheme, userinfo) => scheme + label('KEY', userinfo) + '@');
+    // Oracle JDBC thin/oci URLs carry user/password before "@" with no "//" (jdbc:oracle:thin:scott/tiger@//db:1521/x;
+    // docs.oracle.com JDBC "Data Sources and URLs"; PR #27 review).
+    s = s.replace(/(jdbc:oracle:[a-z0-9]+:)([^\s\/@:"']+\/(?:"[^"\n]*"|[^\s@"']+))@/gi, (m, pre, userinfo) => pre + label('KEY', userinfo) + '@');
     s = scrubQuery(s, label, resolve);
     s = scrubXml(s, label, resolve);
     s = scrubHtmlAttrs(s, label, resolve);

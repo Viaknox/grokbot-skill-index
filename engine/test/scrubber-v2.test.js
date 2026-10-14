@@ -787,3 +787,9 @@ test('[best-effort] round 28: recurrences wrapping a private term, escaped JSON 
     assert.equal(residual(x, { terms: ['Acme Corp'] }).held, true, x);
   }
 });
+test('[best-effort] round 29: Redis AUTH [user] password, Oracle JDBC user/password URLs', () => {
+  for (const x of ['redis-cli AUTH alice hunter22', '127.0.0.1:6379> AUTH alice hunter22', 'AUTH hunter22', 'jdbc:oracle:thin:scott/hunter22@//db.example:1521/orcl'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('auth is hard to get right').text, 'auth is hard to get right');
+  assert.equal(scrubber().sanitize('jdbc:oracle:thin:@//db.example:1521/orcl').text, 'jdbc:oracle:thin:@//db.example:1521/orcl');
+});
