@@ -745,3 +745,8 @@ test('[best-effort] viaknox PR #27 round 21: db.auth, SMTP AUTH, BOM CSV, phone 
     assert.ok(!/hunter22|AHVudGVyMjI|4155552671|aHVudGVyMjI/.test(scrubber().sanitize(x).text), x);
   const s = scrubber(); s.sanitize('PASSWORD=pass'); assert.deepEqual(s.echoes('the compass passed'), []); assert.deepEqual(s.echoes('use pass now'), ['SECRET']);
 });
+test('[best-effort] viaknox PR #27 round 22: vault login token, cc-csc fields; token-usage settings stay', () => {
+  for (const x of ['vault login dev-only-token', '<input autocomplete="cc-csc" value="922">', 'API_TOKEN=hunter22'])
+    assert.ok(!/dev-only-token|922|hunter22/.test(scrubber().sanitize(x).text), x);
+  for (const x of ['max_output_tokens=1024', 'max_completion_tokens=1024', 'cached_input_tokens=500']) assert.equal(scrubber().sanitize(x).text, x);
+});

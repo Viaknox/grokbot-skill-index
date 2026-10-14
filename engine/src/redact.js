@@ -152,7 +152,7 @@ const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', '
 // "key"/"keys" as the LAST part of a multi-part name is a credential (ssh_key, signing-key, iam-key) unless the part
 // before it says the key is structural, not secret (public_key, primary_key, cache_key…). A bare "key:" stays plain.
 const STRUCTURAL_KEY = new Set(['public', 'foreign', 'primary', 'sort', 'partition', 'hash', 'cache', 'row', 'index', 'composite', 'idempotency', 'dedup', 'translation', 'i18n', 'shortcut', 'hot', 'map', 'dict', 'object', 'array', 'lookup']);
-const USAGE = new Set(['limit', 'limits', 'budget', 'count', 'counts', 'usage', 'size', 'max', 'min', 'window', 'rate', 'length', 'cost', 'costs', 'price', 'per', 'requirements', 'policy', 'rotation', 'economy']);
+const USAGE = new Set(['output', 'input', 'completion', 'completions', 'cached', 'prompt', 'context', 'reasoning', 'generation', 'response', 'total', 'used', 'remaining', 'limit', 'limits', 'budget', 'count', 'counts', 'usage', 'size', 'max', 'min', 'window', 'rate', 'length', 'cost', 'costs', 'price', 'per', 'requirements', 'policy', 'rotation', 'economy']);
 function nameParts(name) {
   // Split on separators, camelCase, AND letter/digit boundaries, so "PASSWORD2" and "api_key_v2" break into whole
   // words ("password", "2") while "secretary" and "tokenizer" stay single parts and are not credentials.
@@ -179,7 +179,8 @@ function credParts(parts) {
     // The letter/digit split cuts "dbpasswordb64" into "dbpasswordb" + "64"; glue a number back on so the b64 suffix is
     // still seen (viaknox PR #27 review).
     if (/^\d+$/.test(parts[i + 1] || '') && STRONG.test(p + parts[i + 1])) return true;
-    if (/^tokens?$/.test(p)) return !USAGE.has(parts[i + 1] || '') && !USAGE.has(parts[i - 1] || '');
+    // A usage word anywhere in the name keeps it a setting (max_output_tokens, cached_input_tokens; PR #27 review).
+    if (/^tokens?$/.test(p)) return !parts.some(q => USAGE.has(q));
     return false;
   });
 }
@@ -767,7 +768,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     const tag = m[0], tagName = (tag.match(/^<([\w:.\-]+)/) || ['', ''])[1];
     let byAttr = false; ATTR_ANY.lastIndex = 0;
     // type="password" marks a password field on its own (PR #27 review).
-    for (let a; (a = ATTR_ANY.exec(tag));) { if ((/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) || (/^autocomplete$/i.test(a[1]) && /^["']?(?:current-password|new-password|one-time-code)["']?$/i.test(a[3]))) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(decodeName(a[3].replace(/^["']|["']$/g, ''))); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
+    for (let a; (a = ATTR_ANY.exec(tag));) { if ((/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) || (/^autocomplete$/i.test(a[1]) && /^["']?(?:current-password|new-password|one-time-code|cc-csc)["']?$/i.test(a[3]))) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(decodeName(a[3].replace(/^["']|["']$/g, ''))); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
     const byTag = isCredentialName(resolve(tagName));
     if (!byAttr && !byTag) continue;
     // Every attribute value goes except the ones that identify the element (name, id, http-equiv, type, class).
@@ -1105,6 +1106,7 @@ function scrubFlags(s, label, V) {
   if (!s.includes('-')) return s;
   s = s.replace(/^.*\bsshpass\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));   // sshpass -p x (PR #27)
   s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
+  s = s.replace(/^.*\bvault[ \t]+login\b.*$/gim, (line) => line.replace(/(\bvault[ \t]+login(?:[ \t]+-\S+)*[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"'=-][^\s"'=]*)(?=[ \t]*$)/i, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));   // vault login <token> (PR #27)
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
