@@ -153,9 +153,11 @@ function scrubPem(s, label) {
     const afterHead = h.index + h[0].length;
     let stop;
     if (s[afterHead] === '\\' && s[afterHead + 1] === 'n') {
-      // A JSON-escaped key ends at the first unescaped quote, even if real newlines occur before it (bounded at 64 KB).
-      let q = afterHead; const lim = Math.min(s.length, afterHead + 65536);
-      while (q < lim) { if (s[q] === '"' && s[q - 1] !== '\\') break; q++; }
+      // A JSON-escaped key ends at the first unescaped quote, even if real newlines occur before it. No local bound: a
+      // block with no closing quote takes the rest of the input (the overall size cap still applies), so a long key is
+      // never cut short (PR #16 review). The scan stays linear because the next header search resumes at `stop`.
+      let q = afterHead;
+      while (q < s.length) { if (s[q] === '"' && s[q - 1] !== '\\') break; q++; }
       stop = q;
     } else {
       const PEM_FOOT = pemFootFor(h[1]); PEM_FOOT.lastIndex = afterHead;
@@ -217,7 +219,8 @@ function valueEnd(s, start) {
   if (nl < 0) nl = s.length;
   const firstLine = s.slice(start, nl);
   const trimmed = firstLine.trim();
-  if (trimmed === '' || /^(?:!\S*[ \t]+)?[|>][+-]?\d*$/.test(trimmed)) {
+  // Block-scalar headers allow the indent and chomping indicators in either order (|-2 and |2-), PR #16 review.
+  if (trimmed === '' || /^(?:!\S*[ \t]+)?[|>](?:[+-]?\d*|\d+[+-])$/.test(trimmed)) {
     // The key's own indent, read from its line start (a lastIndexOf, not a slice-and-match over the whole prefix, which
     // made thousands of empty "password:" lines quadratic).
     const lineStart0 = s.lastIndexOf('\n', start - 1) + 1;
@@ -233,7 +236,13 @@ function valueEnd(s, start) {
     return i;
   }
   // A trailing backslash continues the value on the next line; the line may end in \r before the \n (CRLF input).
-  if (/\\\r?$/.test(firstLine) && nl < s.length) return valueEnd(s, nl + 1);
+  // Walked in a loop, not by recursion, so thousands of continued lines cannot overflow the stack (PR #16 review).
+  let line = firstLine;
+  while (/\\\r?$/.test(line) && nl < s.length) {
+    const from = nl + 1;
+    nl = s.indexOf('\n', from); if (nl < 0) nl = s.length;
+    line = s.slice(from, nl);
+  }
   return nl;
 }
 
@@ -856,7 +865,7 @@ function scrubPhrase(s, label) {
 // around them: --password = x, Java -Dpassword:x) or a space (-Password x). A bare value may continue on the next line
 // after a backslash. curl's -u / --user take the whole user:pass. mysql's glued -pVALUE is handled first so its "p" is
 // not read as a flag name.
-const FLAG_P = /(^|\s)(-p)([^\s'"]{3,})/g;
+const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
 const FLAG_USER = /(^|\s)(-u|--user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
 const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("[^"\n]*"|'[^'\n]*'|(?:\\\r?\n|[^\s'"])+)/g;
 function scrubFlags(s, label, V) {
@@ -981,9 +990,12 @@ export function residual(text, { terms = [] } = {}) {
 // A sanitized value: the only thing allowed past the outbound boundary. Frozen and brand-checked (a plain object with
 // the same keys is NOT a Sanitized), so a caller cannot hand the judge un-scrubbed text. It carries only safe fields and
 // never the real values (the scrubber keeps the restore map; a Sanitized never does).
+// Only this module holds MINT, so only sanitize() can make one; `new Sanitized(...)` elsewhere throws (PR #16 review).
+const MINT = Symbol('sanitized');
 export class Sanitized {
   #brand = true;
-  constructor({ text, held, reasons, version }) {
+  constructor({ text, held, reasons, version }, mint) {
+    if (mint !== MINT) throw new TypeError('Sanitized values are made only by scrubber().sanitize()');
     this.text = text; this.held = held; this.reasons = reasons; this.version = version;
     Object.freeze(this);
   }
@@ -1012,6 +1024,7 @@ export function scrubber({ terms = [] } = {}) {
   const next = {};                   // last placeholder number handed out, per kind
   const reserved = new Map();        // kind -> numbers that already appeared as literal [KIND_n] text in some input
   const inventory = [];              // { kind, value } of every value scrubbed, for echoes()
+  const ambiguous = new Set();       // public [KIND_n] we minted that later also arrived as literal text: never restored
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
   // indistinguishable. counts() still reports distinct values only; numbering just skips the reserved ones.
@@ -1035,7 +1048,9 @@ export function scrubber({ terms = [] } = {}) {
     let s = String(text ?? '').replace(/[\uE000\uE001]/g, '');
     // Protect placeholders that were ALREADY in the input: wrap them so no rule re-matches them, and reserve their
     // numbers so a placeholder this scrubber makes can never equal them. They reveal back unchanged and are not counted.
-    s = s.replace(PUB, (m, kind, n) => { if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
+    // A literal that equals a placeholder we already minted can no longer be told apart from it, so unscrub leaves that
+    // placeholder as text from now on rather than risk turning a literal into the real value (PR #16 review).
+    s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
@@ -1085,20 +1100,29 @@ export function scrubber({ terms = [] } = {}) {
     // (a loop could run forever if a value ever contained its own placeholder).
     unscrub(text) {
       let s = String(text ?? '');
-      for (const [ph, v] of [...real].reverse()) s = s.split(ph).join(v);
+      for (const [ph, v] of [...real].reverse()) if (!ambiguous.has(ph)) s = s.split(ph).join(v);
       return s;
     },
     counts: () => ({ ...counts }),
+    // True if the raw text holds a never-send term anywhere, even inside a value another rule replaced first (an email
+    // like employee@acme.example becomes [EMAIL_1] before the term sweep, so counts().PRIVATE alone misses it).
+    mentionsTerm(text) {
+      if (!ownAtRe) return false;
+      const view = foldStr(String(text ?? '').replace(/[\uE000\uE001]/g, ''));
+      ownAtRe.lastIndex = 0; const hit = ownAtRe.test(view); ownAtRe.lastIndex = 0; return hit;
+    },
     // scrub + the independent residual scan, returned as a frozen Sanitized. Throws ScrubError past the caps so a stuck
     // or enormous input means "no call", never a silent partial scrub.
     sanitize(text, { maxMs = 2000, maxChars = 4_000_000 } = {}) {
       const s = String(text ?? '');
       if (s.length > maxChars) throw new ScrubError(`input of ${s.length} characters is over the ${maxChars} cap; holding back`);
       const t0 = Date.now();
-      const scrubbed = scrubOnce(s);
+      // Any unexpected failure inside the scrubber is a ScrubError, so callers hold the text back instead of crashing.
+      let scrubbed;
+      try { scrubbed = scrubOnce(s); } catch (e) { throw new ScrubError(`scrubber failed (${e && e.name}); holding back`); }
       if (Date.now() - t0 > maxMs) throw new ScrubError(`scrubbing took longer than ${maxMs} ms; holding back`);
       const r = residual(scrubbed, { terms: own });
-      return new Sanitized({ text: scrubbed, held: r.held, reasons: r.reasons, version: SCRUBBER_VERSION });
+      return new Sanitized({ text: scrubbed, held: r.held, reasons: r.reasons, version: SCRUBBER_VERSION }, MINT);
     },
     // Kinds whose inventoried user-side values appear verbatim in `text` (brief item 9: an exact echo, not a re-scan).
     // Values shorter than 4 characters are ignored. Never returns the values themselves.

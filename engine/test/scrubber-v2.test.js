@@ -3,7 +3,7 @@
 // placeholder appeared. Fixtures are templates expanded at run time, so no secret shape sits in the repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubber } from '../src/redact.js';
+import { scrubber, Sanitized } from '../src/redact.js';
 import { fixture, expand, gen, makeRng, seedOf, attackRounds } from './corpus/expand.js';
 
 const V2 = () => import('../src/redact.js');   // new exports are reached dynamically so a missing one fails one test, not the file
@@ -518,3 +518,32 @@ for (const { file, cases } of attackRounds()) {
     });
   }
 }
+
+// PR #16 review, round on d96c996.
+test('[promised] glued -p passwords of any length are scrubbed', () => {
+  for (const x of ['mysql -pX', 'mysql -pab']) { const r = scrubber().sanitize(x); assert.ok(!/-p(?:X|ab)$/.test(r.text), r.text); }
+});
+test('[promised] YAML block scalars accept indicators in either order', () => {
+  for (const h of ['|2-', '|2+', '>2-', '>2+', '|-2']) { const r = scrubber().sanitize(`password: ${h}\n  hunter2\n`); assert.ok(!r.text.includes('hunter2'), h + ' ' + r.text); }
+});
+test('[promised] a JSON-escaped private key longer than 64 KB is scrubbed whole', () => {
+  const big = '{"k":"-----BEGIN PRIVATE KEY-----\\n' + 'A'.repeat(66000) + 'stillsecret\\n-----END PRIVATE KEY-----"}';
+  const r = scrubber().sanitize(big); assert.ok(!r.text.includes('stillsecret'));
+});
+test('[promised] thousands of backslash-continued lines do not overflow the stack', () => {
+  const r = scrubber().sanitize('password=a\\\n' + 'b\\\n'.repeat(6000) + 'end\nnext=ok');
+  assert.ok(r.text.endsWith('next=ok') && !r.text.includes('end'), r.text.slice(-40));
+});
+test('[promised] only sanitize() can make a Sanitized', () => {
+  assert.throws(() => new Sanitized({ text: 'raw', held: false, reasons: [], version: 'x' }), TypeError);
+  assert.ok(Sanitized.is(scrubber().sanitize('hi')));
+});
+test('[promised] a literal placeholder equal to one already minted is never restored to the real value', () => {
+  const s = scrubber(); const out = s.scrub('password=hunter2'); assert.equal(s.unscrub(out), 'password=hunter2');
+  s.scrub('the user typed [SECRET_1] literally'); assert.ok(!s.unscrub('echo [SECRET_1]').includes('hunter2'));
+});
+test('[promised] a never-send term inside an email address is still detected', () => {
+  const s = scrubber({ terms: ['Acme'] }); s.scrub('mail employee@acme.example');
+  assert.ok(s.mentionsTerm('mail employee@acme.example'));
+  assert.ok(!scrubber({ terms: ['Acme'] }).mentionsTerm('mail jo@x.example'));
+});

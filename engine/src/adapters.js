@@ -31,7 +31,8 @@ export function httpAdapter(cfg, { fetchImpl = fetch, privateTerms = [] } = {}) 
     : v;
   const pick = (obj, path) => path.split('.').reduce((o, k) => (o == null ? o : o[/^\d+$/.test(k) ? Number(k) : k]), obj);
   const headers = Object.fromEntries(Object.entries(cfg.headers || {}).map(([k, v]) => [k, String(v).replace(/\$\{(\w+)\}/g, (_, n) => process.env[n] || '')]));
-  const hasPrivate = (text) => { const s = scrubber({ terms: privateTerms }); s.scrub(text); return (s.counts().PRIVATE || 0) > 0; };
+  // mentionsTerm also catches a term inside a value another rule replaced first (employee@acme.example), PR #16 review.
+  const hasPrivate = (text) => { const s = scrubber({ terms: privateTerms }); s.scrub(text); return (s.counts().PRIVATE || 0) > 0 || s.mentionsTerm(text); };
   return {
     name: 'http', observesTools: false,
     // Tuning needs a way to hand the agent new instructions; without {{instructions}} in the body there is none.
@@ -68,7 +69,7 @@ const SCHEMA_MAPS = new Set(['properties', '$defs', 'definitions', 'patternPrope
 function namesWithPrivate(cfg, privateTerms) {
   if (!privateTerms.length) return [];
   // Names are split at camelCase and separators first, so "acmeId" and "ACME_LOOKUP" count as containing "Acme".
-  const has = (text) => { const s = scrubber({ terms: privateTerms }); s.scrub(String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_\-.]+/g, ' ')); return (s.counts().PRIVATE || 0) > 0; };
+  const has = (text) => { const s = scrubber({ terms: privateTerms }); const t = String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_\-.]+/g, ' '); s.scrub(t); return (s.counts().PRIVATE || 0) > 0 || s.mentionsTerm(t); };
   const hits = [];
   const walk = (v, where) => {
     if (!v || typeof v !== 'object') return;

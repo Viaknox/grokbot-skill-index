@@ -47,6 +47,14 @@ test('codex 3: --private words are never sent to the http agent; other text reac
   assert.ok(calls[0].includes('jo@x.com'));
 });
 
+test('[promised] a --private word inside an email address is never sent to the http agent (PR #16 review)', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => { calls.push(init.body); return new Response(JSON.stringify({ reply: 'hi' }), { status: 200 }); };
+  const a = httpAdapter({ url: 'https://agent.example/chat' }, { fetchImpl, privateTerms: ['Acme'] });
+  await assert.rejects(a.turn({ history: [], message: 'Write to employee@acme.example' }), /--private/);
+  assert.equal(calls.length, 0);
+});
+
 test('codex 4: a tune-up that breaks a passing case or adds a rules failure is a regression', () => {
   const rep = (runs, failures = []) => ({ runs, failures });
   const before = rep([{ case: 'a', passed: true }, { case: 'b', passed: false }], [{ case: 'b', bucket: 'done', code: 'x' }]);
