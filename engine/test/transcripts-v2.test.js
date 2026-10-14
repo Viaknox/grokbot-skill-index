@@ -74,3 +74,8 @@ test('[promised] a key the assistant revealed and the user then quoted is reveal
   assert.deepEqual(rules, ['revealed_secret message 2', 'echoed_secret message 4'], JSON.stringify(rules));
   assert.ok(!JSON.stringify(r).includes(KEY));
 });
+
+test('a typed request that ends in a file name is the user\'s words, not attachment metadata (viaknox PR #27 review)', () => {
+  assert.equal(isPlaceholder({ role: 'user', content: '[image: please send me an image of cat.jpg]' }), false);
+  for (const x of ['[image: My vacation photo.jpg]', '[file: report final.pdf (2 MB)]', '[file: a.txt, b.txt]']) assert.equal(isPlaceholder({ role: 'user', content: x }), true, x);
+});

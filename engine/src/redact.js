@@ -104,8 +104,9 @@ function viewer() { let last = null, view = null; return (s) => (s === last ? vi
 // credential unless it sits next to a usage word (tokenLimit, max_tokens, token_count), which are model-size settings.
 // A credential word counts when it is not immediately followed by another letter, so it matches at the end of a longer
 // name ("PGPASSWORD", "dbSecret") or as a plural ("passwords:", "secrets:") but not as the prefix of an unrelated word
-// ("secretary", "tokenizer", "author").
-const STRONG = /(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?![a-z])/;
+// ("secretary", "tokenizer", "author"). A few storage suffixes glued on still count ("DBPASSWORDHASH", "MYSECRETVALUE";
+// PR #27 review).
+const STRONG = /(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?:hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|file|env|var)?(?![a-z])/;
 const COMPOUND = /(apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
 const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid',   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
@@ -300,7 +301,9 @@ function scrubAssignments(s, view, label, resolve) {
     // ("api_keys": ["…", "…"]) is a list of secrets and goes whole, to its closing bracket.
     if (isCredentialName(name) && s[sepEnd] !== '{') {
       let end;
-      if (s[sepEnd] === '[') { end = bracketEnd(s, sepEnd); if (s.slice(sepEnd, end).includes('{')) { ASSIGN_START.lastIndex = sepEndF; continue; } }
+      // An array under a credential name goes whole even when it holds objects: the fields inside (`value`, `key`) are
+      // often not credential names themselves, so descending would leave them (PR #27 review).
+      if (s[sepEnd] === '[') { end = bracketEnd(s, sepEnd); }
       else {
         // An empty value whose indented block is itself a YAML map ("creds:" then "  token: …") is structural too:
         // descend into it so each child key is judged on its own, instead of blanking the whole map.
@@ -616,7 +619,8 @@ function scrubHtmlAttrs(s, label, resolve) {
   for (let m; (m = TAG.exec(s));) {
     const tag = m[0], tagName = (tag.match(/^<([\w:.\-]+)/) || ['', ''])[1];
     let byAttr = false; ATTR_ANY.lastIndex = 0;
-    for (let a; (a = ATTR_ANY.exec(tag));) { if (!CUE_ATTR.test(a[1])) continue; const n = resolve(a[3].replace(/^["']|["']$/g, '')); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
+    // type="password" marks a password field on its own (PR #27 review).
+    for (let a; (a = ATTR_ANY.exec(tag));) { if (/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(a[3].replace(/^["']|["']$/g, '')); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
     const byTag = isCredentialName(resolve(tagName));
     if (!byAttr && !byTag) continue;
     // Every attribute value goes except the ones that identify the element (name, id, http-equiv, type, class).
@@ -901,14 +905,17 @@ function scrubQuery(s, label, resolve) {
 // linear without one (PR #16 review).
 const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,30}:\/\/)([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // a scheme may be one letter (x://) (PR #16 review)
 
+const SCHEME_PROSE = /^(?:authentication|authorization|authorisation|credentials|tokens?|headers?|scheme|schemes|access|support|supported|login|logins)$/i;
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.
 // Named header lines (Authorization:, Cookie:) are removed by scrubAssignments to the end of the line first; this is the
 // safety net for a scheme token that is not introduced by a header name.
 function scrubBareAuth(s, label) {
   // No minimum length (`Basic YTpi` is a:b in base64; PR #16 review); a short plain lowercase word ("Bearer token",
   // "Basic auth") is prose about the scheme, not a token, and stays.
-  let out = s.replace(/\b(Basic|Bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/g, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v))) ? m : `${sch} ${label('KEY', v)}`);
-  return out.replace(/\b(Digest)[ \t]+([^\n]*)/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
+  // Words that name the scheme in prose ("Basic authentication", "Bearer tokens") stay too, at any length; a Digest
+  // credential always carries name=value parameters, so Digest without an "=" is prose (PR #27 review).
+  let out = s.replace(/\b(Basic|Bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/g, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
+  return out.replace(/\b(Digest)[ \t]+([^\n]*=[^\n]*)/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
 }
 
 // Known token shapes, shared by the main pass (KEY, matched on the folded view) and the residual scan. Assembled from

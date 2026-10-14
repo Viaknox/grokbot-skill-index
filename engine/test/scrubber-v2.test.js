@@ -3,7 +3,7 @@
 // placeholder appeared. Fixtures are templates expanded at run time, so no secret shape sits in the repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubber, Sanitized } from '../src/redact.js';
+import { scrubber, Sanitized, isCredentialName } from '../src/redact.js';
 import { fixture, expand, gen, makeRng, seedOf, attackRounds } from './corpus/expand.js';
 
 const V2 = () => import('../src/redact.js');   // new exports are reached dynamically so a missing one fails one test, not the file
@@ -546,4 +546,22 @@ test('[promised] a never-send term inside an email address is still detected', (
   const s = scrubber({ terms: ['Acme'] }); s.scrub('mail employee@acme.example');
   assert.ok(s.mentionsTerm('mail employee@acme.example'));
   assert.ok(!scrubber({ terms: ['Acme'] }).mentionsTerm('mail jo@x.example'));
+});
+
+// viaknox PR #27 review, on the engine vendored at d96c996.
+test('[promised] compact names with a storage suffix are credentials (DBPASSWORDHASH, MYSECRETVALUE)', () => {
+  for (const x of ['DBPASSWORDHASH=CorrectHorse9!', 'MYSECRETVALUE=CorrectHorse9!']) assert.ok(!scrubber().sanitize(x).text.includes('CorrectHorse'), x);
+  for (const n of ['secretary', 'passage', 'author', 'tokenizer']) assert.equal(isCredentialName(n), false, n);
+});
+test('[promised] a credential-named array of objects goes whole', () => {
+  for (const x of ['credentials: [{value: hunter2}]', 'api_keys: [{key: hunter2}]', 'credentials: [\n  {value: hunter2}\n]', '{"credentials": [{"user":"a","value":"hunter2"}]}'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
+});
+test('[best-effort] type="password" marks an HTML field as a credential', () => {
+  assert.ok(!scrubber().sanitize('<input type="password" value="hunter2">').text.includes('hunter2'));
+});
+test('[promised] prose about auth schemes stays; real Basic and Digest credentials go', () => {
+  for (const x of ['Does Basic authentication work here?', 'Digest authentication is supported by the server.', 'We accept Bearer tokens.']) assert.equal(scrubber().scrub(x), x);
+  assert.ok(!scrubber().scrub('use Basic YWxhZGRpbjpvcGVuc2VzYW1l').includes('YWxhZGRp'));
+  assert.ok(!scrubber().scrub('Authorization: Digest username="a", response="zz9secret"').includes('zz9secret'));
 });
