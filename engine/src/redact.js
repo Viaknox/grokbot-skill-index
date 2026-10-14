@@ -188,6 +188,9 @@ function credParts(parts) {
     if (STRONG.test(p) || WHOLE.has(p)) return true;
     // The unambiguous password words take any glued tail (DB_PASSWORDJWT; PR #16 review), except "passwordless".
     if (/(?:password(?!less)|passwd|passphrase|passcode)[a-z]/.test(p)) return true;
+    // The same for secret/credential/bearer stems (SECRETJWT, CREDENTIALJSON; PR #27 review), except ordinary words that
+    // start with them (secretary, secretion, secrete, secretive).
+    if (/^(?:\w*?)(?:secret(?!ar|e|ion|iv)|credential|bearer)[a-z]/.test(p)) return true;
     // The letter/digit split cuts "dbpasswordb64" into "dbpasswordb" + "64"; glue a number back on so the b64 suffix is
     // still seen (viaknox PR #27 review).
     if (/^\d+$/.test(parts[i + 1] || '') && STRONG.test(p + parts[i + 1])) return true;

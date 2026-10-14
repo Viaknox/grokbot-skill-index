@@ -967,3 +967,10 @@ test('r48: TSV password columns, JSX expression attributes and leading-compresse
   assert.ok(!t('from ::ffff:c000:0280 today').includes('c000'));
   assert.ok(t('std::max and ::1').includes('std::max'));
 });
+
+// Round 49 (viaknox PR #27 security review of f9d2491).
+test('r49: secret/credential/bearer stems take any glued tail; ordinary words stay', () => {
+  for (const n of ['SECRETJWT', 'CREDENTIALJSON', 'BEARERJWT']) assert.ok(isCredentialName(n), n);
+  for (const n of ['secretary', 'SECRETARY_NAME', 'secretion', 'secretive']) assert.ok(!isCredentialName(n), n);
+  assert.ok(!scrubber({ terms: [] }).sanitize('SECRETJWT=hunter2').text.includes('hunter2'));
+});
