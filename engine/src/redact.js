@@ -38,6 +38,9 @@ function foldName(name) {
 // A name may arrive escaped: JSON "pass\u0077ord" or a URL parameter pass%77ord. Decode before the credential check.
 function decodeName(name) {
   // HTML character references too (p&#97;ssword, p&#x61;ssword; PR #27 review).
+  // Named references: the basic five plus accented Latin letters (p&aacute;ssword), which the name check then folds.
+  name = name.replace(/&(amp|lt|gt|quot|apos|nbsp);/gi, (m, n) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' })[n.toLowerCase()])
+    .replace(/&([A-Za-z])(acute|grave|circ|uml|tilde|ring|cedil|caron);/g, (m, c, k) => (c + { acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', ring: '\u030A', cedil: '\u0327', caron: '\u030C' }[k]).normalize('NFC'));
   name = name.replace(/&#(\d{1,7});/g, (m, d) => String.fromCodePoint(Math.min(Number(d), 0x10FFFF))).replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)));
   return name.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16))).replace(/%([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
 }
@@ -131,7 +134,7 @@ function hasCompound(parts) {
 const COMPOUND = /(seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
 const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid', 'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
-  'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'zugangsdaten',
+  'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk',   // psk: WPA pre-shared key (PR #27) 'zugangsdaten',
   'contraseña', 'contrasena', 'clave', 'secreto', 'credenciales', 'senha', 'chave', 'chiave', 'segreto', 'wachtwoord', 'sleutel',
   'пароль', 'секрет', 'ключ', 'токен', 'パスワード', '秘密鍵', 'トークン', '密码', '密钥', '口令', '令牌', '비밀번호', '암호']);
 // "key"/"keys" as the LAST part of a multi-part name is a credential (ssh_key, signing-key, iam-key) unless the part
@@ -141,7 +144,8 @@ const USAGE = new Set(['limit', 'limits', 'budget', 'count', 'counts', 'usage', 
 function nameParts(name) {
   // Split on separators, camelCase, AND letter/digit boundaries, so "PASSWORD2" and "api_key_v2" break into whole
   // words ("password", "2") while "secretary" and "tokenizer" stay single parts and are not credentials.
-  const flat = foldName(name).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2');
+  // Accents on Latin letters are dropped for the name check (pássword, contraseña -> contrasena); other scripts keep theirs.
+  const flat = foldName(name).normalize('NFD').replace(/([A-Za-z])\p{M}+/gu, '$1').normalize('NFC').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2');
   return flat.split(/[\s_\-.:]+/).map(p => p.toLowerCase()).filter(Boolean);
 }
 // Why exported: transcripts.js and tests reuse the exact same "is this a credential setting" decision.
@@ -932,11 +936,12 @@ function scrubCallArg(s, label, resolve) {
 // SQL account statements: MySQL "IDENTIFIED [WITH plugin] BY [PASSWORD] 'x'", PostgreSQL "[WITH] [ENCRYPTED] PASSWORD 'x'"
 // after CREATE/ALTER USER or ROLE, SQL Server "WITH PASSWORD = 'x'" (PR #27 review).
 const SQL_IDENTIFIED = /\bIDENTIFIED[ \t]+(?:WITH[ \t]+\S+[ \t]+)?BY[ \t]+(?:PASSWORD[ \t]+)?('(?:''|[^'\n])*'|"[^"\n]*"|[^\s;,)]+)/gi;
+const SQL_SET_PASSWORD = /\bSET[ \t]+PASSWORD\b[^;\n]{0,200}?=[ \t]*(?:PASSWORD[ \t]*\([ \t]*)?('(?:''|[^'\n])*'|"[^"\n]*")/gi;   // MySQL SET PASSWORD [FOR u] = '…' (PR #27)
 const SQL_PASSWORD = /\b(?:CREATE|ALTER)[ \t]+(?:USER|ROLE|LOGIN)\b[^;\n]{0,200}?\bPASSWORD[ \t]*=?[ \t]*('(?:''|[^'\n])*'|"[^"\n]*")/gi;
 function scrubSqlAuth(s, label) {
   if (!/IDENTIFIED|PASSWORD/i.test(s)) return s;
   const f = (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v);
-  return s.replace(SQL_IDENTIFIED, f).replace(SQL_PASSWORD, f);
+  return s.replace(SQL_IDENTIFIED, f).replace(SQL_PASSWORD, f).replace(SQL_SET_PASSWORD, f);
 }
 
 // PostgreSQL password file lines: hostname:port:database:username:password, fields may hold \: escapes; the fifth field

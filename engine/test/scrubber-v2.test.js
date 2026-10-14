@@ -659,3 +659,8 @@ test('[promised] viaknox PR #27 round 11: sshpass -p, HTML-entity cue names, SQL
 test('[promised] computed keys inside a credential container lose their values (viaknox PR #27 round 12)', () => {
   assert.ok(!scrubber().sanitize('const credentials = { [provider]: "hunter22" }').text.includes('hunter22'));
 });
+test('[promised] viaknox PR #27 round 13: named HTML references, WPA psk, MySQL SET PASSWORD; non-Latin names still work', () => {
+  for (const x of ['<input name="p&aacute;ssword" value="hunter22">', 'psk="hunter22"', 'WIFI_PSK="hunter22"', "SET PASSWORD FOR 'alice'@'localhost' = 'hunter22';",
+    'contraseña: hunter22', '비밀번호: hunter22', 'パスワード: hunter22', 'Schlüssel: hunter22'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+});
