@@ -836,3 +836,9 @@ test('[best-effort] round 38: distinctive compounds with any tail, multiline val
   assert.equal(isCredentialName('cookiecutter'), false);
   assert.equal(scrubber().sanitize('items[]=apple').text, 'items[]=apple');
 });
+test('[best-effort] round 39: vault login without a hyphen, rabbitmqctl passwords, spaced/dotted SSNs, logical-assignment operators, qualified prose values ending in a digit', () => {
+  for (const x of ['vault login hunter22', 'rabbitmqctl add_user alice hunter22', 'rabbitmqctl change_password alice hunter22', 'password ??= "hunter22"', 'token ||= "hunter22"', 'my password here is hunter22'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+  for (const x of ['SSN: 123 45 6789', 'SSN = 123.45.6789']) assert.ok(!/6789/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('the password for production is ready.').text, 'the password for production is ready.');
+});

@@ -127,6 +127,7 @@ const PAYLOADS = {
   'a{ x29500 on one line': () => 'AGENT: ' + 'a{'.repeat(29500),
   'credentials:{ x4000 unclosed (PR #27 review)': () => 'AGENT: ' + 'credentials:{a:'.repeat(4000),
   'JSON Secret data:{ x4000 unclosed': () => 'kind: Secret\n' + '{"data":{"a":'.repeat(4000),
+  'unclosed <table><th>password x1500 (PR #27 review)': () => '<table><tr><th>password</th></tr>'.repeat(1500),
   'double quote x50000': () => '"'.repeat(50000),
   'backslash x50000': () => '\\'.repeat(50000),
   'open bracket x50000': () => '['.repeat(50000),

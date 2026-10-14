@@ -374,7 +374,7 @@ const ASSIGN_START = new RegExp(
   '(["\']?)([\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF][\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review).
-  '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -771,8 +771,13 @@ function scrubTables(s, label, resolve) {
     const CELL = /<t([hd])\b[^<>]*>((?:[^<]|<(?!\/?t[hdr]\b|\/table))*)<\/t[hd]>/gi;
     // Tag names are case-insensitive (<TR>, </Table>; PR #16 review): searched on an ASCII-lower-cased copy, same length.
     const lc = s.replace(/[A-Z]+/g, (c) => c.toLowerCase());
+    // Each table range is parsed once (PR #27 review): an opener inside a range already walked is skipped, and the next
+    // "</table>" is searched again only after passing the last one found (none found means none later either).
+    let covered = -1, nextClose = -2;
     for (let t = lc.indexOf('<table'); t >= 0; t = lc.indexOf('<table', t + 6)) {
-      let end = lc.indexOf('</table>', t); if (end < 0) end = s.length; end = Math.min(end, t + 65536);
+      if (t < covered) continue;
+      if (nextClose !== -1 && nextClose < t) nextClose = lc.indexOf('</table>', t);
+      let end = nextClose < 0 ? s.length : nextClose; end = Math.min(end, t + 65536); covered = end;
       let cols = null; const ROW = /<tr\b[^<>]*>/gi; ROW.lastIndex = t;
       for (let r; (r = ROW.exec(s)) && r.index < end;) {
         let rowEnd = lc.indexOf('</tr>', r.index); if (rowEnd < 0 || rowEnd > end) rowEnd = end;
@@ -1140,7 +1145,7 @@ const CONFIG_SET_RE = /\b(?:configure|config)[ \t]+set[ \t]+(["']?)([\w.\-:\/]{1
 // Past and changed forms ("was", "will be", "changed to") take a value only when it is quoted or token-like (has a digit,
 // punctuation or symbol), so "the password was reset yesterday" keeps its words (PR #27 review).
 const PAST_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '[ \\t]+(?:was|were|will[ \\t]+be|(?:has|had|have)[ \\t]+been|(?:is|was)[ \\t]+now|(?:changed|set|reset|updated)[ \\t]+to)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{S}]|\\S*\\p{P}\\S)\\S+)', 'giu');
-const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+\\p{L}{1,20}){1,2}' + '[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)\\S+)', 'giu');
+const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+\\p{L}{1,20}){1,2}' + '[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*\\p{N}|\\S*[\\p{P}\\p{S}]\\S)\\S+)', 'giu');   // a digit anywhere, the last character too (hunter2; PR #27 review)
 // A credential noun, after a prose word ("use the password", "enter api key"), followed directly by its value: a quoted
 // token that carries a digit or a symbol before its last character ("use password x9k2"), so "my password yesterday."
 // is left alone (letters only, and a final full stop does not count).
@@ -1184,6 +1189,10 @@ const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]
 // since -P is a port elsewhere (PR #27 review).
 const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
 function scrubFlags(s, label, V) {
+  // Positional-password commands that need no "-" run before the fast path (vault login x; PR #27 review).
+  s = s.replace(/^.*\bvault[ \t]+login\b.*$/gim, (line) => line.replace(/(\bvault[ \t]+login(?:[ \t]+-\S+)*[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"'=-][^\s"'=]*)(?=[ \t]*$)/i, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
+  // rabbitmqctl add_user|change_password|authenticate_user <user> <password> (rabbitmq.com rabbitmqctl(8); PR #27 review).
+  s = s.replace(/(\brabbitmqctl\b(?:[ \t]+-\S+(?:[ \t]+[^\s-]\S*)?)*[ \t]+(?:add_user|change_password|authenticate_user)[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\S+)[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/gi, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v));
   if (!s.includes('-')) return s;
   s = s.replace(/^.*\bsshpass\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));   // sshpass -p x (PR #27)
   // htpasswd -b … user password: the last argument is the password; smbclient/rpcclient/smbmap -U user%password (PR #27).
@@ -1195,7 +1204,6 @@ function scrubFlags(s, label, V) {
   // docker/podman/buildah/nerdctl/helm … login -p x: -p is --password there (docs.docker.com docker login; PR #27 review).
   s = s.replace(/^.*\b(?:docker|podman|buildah|nerdctl|skopeo|helm|oras)\b.*\blogin\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));
   s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
-  s = s.replace(/^.*\bvault[ \t]+login\b.*$/gim, (line) => line.replace(/(\bvault[ \t]+login(?:[ \t]+-\S+)*[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"'=-][^\s"'=]*)(?=[ \t]*$)/i, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));   // vault login <token> (PR #27)
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
@@ -1274,7 +1282,7 @@ const PATTERNS = [
   // The whole RFC 5322 atext alphabet in the local part (o'connor@…, alice!@…; PR #27 review).
   ['EMAIL', /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
   ['CARD', /(?<![\p{L}\p{N}])(?:\d[ -]?){12,18}\d(?![\p{L}\p{N}])/gu],   // not \b: "id_4111…" must match (PR #16 review)
-  ['SSN', /(?<![\p{L}\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/gu],   // not \b: "id_123-45-6789" must match (PR #16 review)
+  ['SSN', /(?<![\p{L}\p{N}.-])\d{3}([-. ])\d{2}\1\d{4}(?![\p{N}.-])/gu],   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
   ['SSN', /(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
   ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
