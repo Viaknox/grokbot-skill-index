@@ -1,4 +1,5 @@
-import { scrubber } from './redact.js';
+import { scrubber, ScrubError } from './redact.js';
+import { HeldBack } from './openrouter.js';
 // Adapters turn "send this user message to the agent" into whatever the agent's platform needs.
 // Every adapter returns { reply, tools, tokens, ms } for one user turn. `tools` lists tool calls the agent made
 // (name, args, ok, result) when the platform exposes them; `null` means "not observable here".
@@ -69,7 +70,13 @@ const SCHEMA_MAPS = new Set(['properties', '$defs', 'definitions', 'patternPrope
 function namesWithPrivate(cfg, privateTerms) {
   if (!privateTerms.length) return [];
   // Names are split at camelCase and separators first, so "acmeId" and "ACME_LOOKUP" count as containing "Acme".
-  const has = (text) => { const s = scrubber({ terms: privateTerms }); const t = String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_\-.]+/g, ' '); s.scrub(t); return (s.counts().PRIVATE || 0) > 0 || s.mentionsTerm(t); };
+  // The terms are split the same way, and the raw name is checked too, so a compound term (AcmeCorp, Acme-Corp) still
+  // matches AcmeCorpLookup or Acme-Corp_lookup (PR #16 review).
+  const split = (x) => String(x).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_\-.]+/g, ' ');
+  const terms = [...new Set([...privateTerms, ...privateTerms.map(split)])];
+  const flat = (x) => String(x).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  const has = (text) => { const s = scrubber({ terms }); const t = split(text); s.scrub(t); if ((s.counts().PRIVATE || 0) > 0 || s.mentionsTerm(t) || s.mentionsTerm(String(text))) return true;
+    return privateTerms.some(pt => { const f = flat(pt); return f.length >= 3 && /[^\p{L}\p{N}]|\p{Lu}.*\p{Lu}/u.test(String(pt).trim()) && flat(text).includes(f); }); };
   const hits = [];
   const walk = (v, where) => {
     if (!v || typeof v !== 'object') return;
@@ -91,7 +98,10 @@ function namesWithPrivate(cfg, privateTerms) {
 }
 
 export function modelAdapter(cfg, or, { scrub, privateTerms = [] } = {}) {
-  const S = (t) => (scrub ? scrub.scrub(t) : t), U = (t) => (scrub ? scrub.unscrub(t) : t);
+  // Every piece sent to the replay model goes through sanitize(): its residual scan holds the run back (no call) when a
+  // secret survived scrubbing, exactly as the judge's outbound boundary does (PR #16 review).
+  const S = (t) => { if (!scrub) return t; let z; try { z = scrub.sanitize(t); } catch (e) { if (e instanceof ScrubError) throw new HeldBack(); throw e; } if (z.held) throw new HeldBack(); return z.text; };
+  const U = (t) => (scrub ? scrub.unscrub(t) : t);
   const clash = namesWithPrivate(cfg, privateTerms);
   if (clash.length) throw new Error(`A word from your --private list is in a tool name, a parameter name or a required list (${clash.length} place${clash.length > 1 ? 's' : ''}); it cannot be scrubbed without breaking the tool, so nothing was sent. Rename it or remove the word from the list.`);   // also $defs/definitions names (PR #16 review)
   // Tool definitions are sent too, so every string in them is scrubbed (descriptions, enums, examples) except

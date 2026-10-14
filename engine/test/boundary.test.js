@@ -212,3 +212,26 @@ test('[promised] cli check --consent on a conversation over the size cap exits 0
   assert.ok(rep.includes('held back part of this chat'), 'no held finding in the report');   // the report card carries the finding text, not its code
   assert.ok(!rep.includes('ScrubError') && !r.stderr.includes('ScrubError'));
 });
+
+test('[promised] boundary: the replay model is never called when a turn holds a residual-only secret (PR #16 review)', async () => {
+  const { or, calls } = recorder();
+  const tok = ['AbCdEfGh', 'IjKlMnOp', 'QrStUvWx', 'Yz012345'].join('');
+  const adapter = modelAdapter({ model: 'm', tools: {} }, or, { scrub: scrubber() });
+  const suite = { cases: [{ id: 'c1', intent: 'x', turns: [`send ${tok}`] }] };
+  const rep = await evaluate({ suite, instructions: 'You are a bot.', adapter, or, scrub: scrubber() });
+  assert.ok(!calls.some(c => c.includes(tok)), 'the token reached the wire');
+  assert.equal(rep.buckets.find(b => b.id === 'rules').unsure, 1);
+});
+
+test('[promised] boundary: compound never-send terms are refused in tool names (PR #16 review)', () => {
+  const { or } = recorder();
+  const base = { description: 'x', parameters: {}, default: {} };
+  assert.throws(() => modelAdapter({ model: 'm', tools: { AcmeCorpLookup: base } }, or, { scrub: scrubber({ terms: ['AcmeCorp'] }), privateTerms: ['AcmeCorp'] }));
+  assert.throws(() => modelAdapter({ model: 'm', tools: { 'Acme-Corp_lookup': base } }, or, { scrub: scrubber({ terms: ['Acme-Corp'] }), privateTerms: ['Acme-Corp'] }));
+});
+
+test('[promised] writer: a placeholder minted from the instructions is restored in the proposal (PR #16 review)', async () => {
+  const { or } = recorder(JSON.stringify({ revised_instructions: 'You are BookBot. Email [EMAIL_1] for help and confirm ids.', changes: ['x'] }));
+  const fix = await proposeFix(or, { instructions: 'You are BookBot. Email help@bookbot.example for help.', failures: [{ case: 'c', code: 'x', detail: 'd' }] });
+  assert.match(fix.revised_instructions, /help@bookbot\.example/);
+});

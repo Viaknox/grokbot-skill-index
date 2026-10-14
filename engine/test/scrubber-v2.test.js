@@ -672,3 +672,24 @@ test('[promised] viaknox PR #27 round 14: multiword CSV headers, UTF-8 query nam
   assert.ok(!s.sanitize('Acme ok').text.includes('Acme'));
   assert.equal(scrubber().sanitize('I said hi, then left\nok, fine').text, 'I said hi, then left\nok, fine');
 });
+test('[promised] tune-up PR #16 review backlog: plurals, PEM labels, schemes, YAML comments, JSON newlines, escaped flags, brace strings, decomposed emails', () => {
+  const pem = (l) => `-----BEGIN ${l} PRIVATE KEY-----\nhunter22\n-----END ${l} PRIVATE KEY-----`;
+  for (const x of ['sessions=hunter22', 'sids=hunter22', pem('VENDOR HARDWARE SECURITY MODULE WRAPPED'), 'curl -H "basic YTpiOmhl22"', 'send bearer Ab1hunter22 now',
+    'proxy digest username="a", response="hunter22"', 'password: # production\n  hunter22', '{"password":\n"hunter22"}', 'cmd --password "abc\\"hunter22"',
+    'export PASSWORD={hunter22:}', 'Authorization: Bearer\r\n hunter22hunter22', 'mail hunter22@exámple.com'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+  assert.equal(scrubber().sanitize('a basic understanding of bearer instruments').text, 'a basic understanding of bearer instruments');
+});
+test('[best-effort] tune-up PR #16 review backlog: PowerShell, JSON k8s Secrets, HTML/XML case, role-prefixed tables, netrc quotes, oversized credential objects', () => {
+  for (const x of ['$token = hunter22', '{"kind":"Secret","stringData":{"db":"hunter22"}}', '<table><TR><TH>password</TH></TR><TR><TD>hunter22</TD></TR></table>',
+    '<Password>hunter22</PASSWORD>', 'USER: | user | password |\n| --- | --- |\n| alice | hunter22 |', 'machine x.example\nlogin a\npassword "correct hunter22"',
+    '{"credentials":{"padding":"' + 'a'.repeat(66000) + '","value":"hunter22"}}'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x.slice(0, 50));
+});
+test('[best-effort] tune-up PR #16 review backlog: no over-scrub of compass/bypass, autocomplete cues, recurrences inside words; echoes are whole', () => {
+  assert.equal(scrubber().sanitize('compass: north\nbypass: on').text, 'compass: north\nbypass: on');
+  assert.equal(scrubber().sanitize('<input autocomplete="current-password">').text, '<input autocomplete="current-password">');
+  const s = scrubber(); s.sanitize('password=pass'); assert.equal(s.sanitize('bypass the compass').text, 'bypass the compass');
+  const e = scrubber(); e.sanitize('password=correct horse battery staple'); assert.deepEqual(e.echoes('That is correct.'), []);
+  const m = scrubber(); m.sanitize('a@example.com'); assert.deepEqual(m.echoes('data@example.com'), []);
+});

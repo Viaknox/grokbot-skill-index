@@ -115,7 +115,8 @@ function viewer() { let last = null, view = null; return (s) => (s === last ? vi
 // ("secretary", "tokenizer", "author"). A few storage suffixes glued on still count ("DBPASSWORDHASH", "MYSECRETVALUE";
 // PR #27 review).
 const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|keys|token|tokens|file|env|var|prod|production|dev|development|test|testing|staging|stage|qa|uat|live|local|sandbox|old|new|backup|bak|primary|secondary';   // environment suffixes too (APIKEYPROD; PR #27)   // BEARERTOKEN too (PR #27)
-const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?:${STORE_SUFFIX})?(?![a-z])`);
+// "pass" at the end of an ordinary word (compass, bypass, trespass, surpass, overpass) is not a credential (PR #16 review).
+const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|(?<!com|by|tres|sur|over|under|fly)pass)s?(?:${STORE_SUFFIX})?(?![a-z])`);
 // A compound must END at the end of a name part (optionally after a plural "s" or a storage suffix), so "cookiecutter"
 // is not a cookie; the generic-looking ones must also START at a part, so "monkeyvalue" and "hockeyname" stay plain,
 // while "DBAPIKEY" and "OPENAI_API_KEY" still count (viaknox PR #27 review).
@@ -135,7 +136,7 @@ function hasCompound(parts) {
   return false;
 }
 const COMPOUND = /(seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
-const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid', 'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
+const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
   'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk', 'zugangsdaten',   // psk: WPA pre-shared key (PR #27)
   'contraseña', 'contrasena', 'clave', 'secreto', 'credenciales', 'senha', 'chave', 'chiave', 'segreto', 'wachtwoord', 'sleutel',
@@ -149,7 +150,7 @@ function nameParts(name) {
   // words ("password", "2") while "secretary" and "tokenizer" stay single parts and are not credentials.
   // Accents on Latin letters are dropped for the name check (pássword, contraseña -> contrasena); other scripts keep theirs.
   const flat = foldName(name).normalize('NFD').replace(/([A-Za-z])\p{M}+/gu, '$1').normalize('NFC').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2');
-  return flat.split(/[\s_\-.:]+/).map(p => p.toLowerCase()).filter(Boolean);
+  return flat.split(/[\s_\-.:$]+/).map(p => p.toLowerCase()).filter(Boolean);
 }
 // Why exported: transcripts.js and tests reuse the exact same "is this a credential setting" decision.
 export function isCredentialName(name) {
@@ -176,7 +177,7 @@ const HEADER_CRED = /^(?:set-cookie|cookie|authorization|proxy-authorization)$/i
 // header is followed on the same line by the two characters backslash-n) ends at the closing quote instead, so the
 // surrounding JSON survives. Public keys and certificates are meant to be shared, so only PRIVATE KEY blocks go. Extra
 // spaces or tabs between the header words still count.
-const PEM_HEAD = new RegExp('-----BEGIN[ \\t]+((?:[A-Z0-9]+[ \\t]+){0,4})PRIVATE[ \\t]+KEY-----', 'g');
+const PEM_HEAD = new RegExp('-----BEGIN[ \\t]+((?:[A-Z0-9]+[ \\t]+){0,32})PRIVATE[ \\t]+KEY-----', 'g');
 // The footer that closes a block must carry the header's type words (an RSA block ends at an RSA footer, not at an EC
 // one); a mismatched footer is treated like no footer and the block runs to the end of the input (PR #16 review).
 const pemFootFor = (label) => new RegExp('-----END[ \\t]+' + label.trim().split(/[ \t]+/).filter(Boolean).map(w => w + '[ \\t]+').join('') + 'PRIVATE[ \\t]+KEY-----', 'g');
@@ -253,6 +254,12 @@ function valueEnd(s, start) {
     for (let ls = s.indexOf('\n', start); ls >= 0; ) { const le0 = s.indexOf('\n', ls + 1), le = le0 < 0 ? s.length : le0; if (s.slice(ls + 1, le).trim() === hd[2]) return le; if (le0 < 0) break; ls = le0; }
     return s.length;
   }
+  // JSON allows any whitespace after the colon, newlines included ({"password":\n"x"}; PR #16 review): a quoted key
+  // whose value starts on a later line takes that quoted value, whatever its indent.
+  if ((s[start] === '\n' || s[start] === '\r') && /["']\s*:\s*$/.test(s.slice(Math.max(0, start - 200), start))) {
+    let p = start; while (p < s.length && /\s/.test(s[p])) p++;
+    if (s[p] === '"') { for (let i = p + 1; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === '"') return i + 1; } return s.length; }
+  }
   const q = s[start];
   if (q === '"' || q === "'") {
     let i = start + 1;
@@ -264,7 +271,10 @@ function valueEnd(s, start) {
   const firstLine = s.slice(start, nl);
   const trimmed = firstLine.trim();
   // Block-scalar headers allow the indent and chomping indicators in either order (|-2 and |2-), PR #16 review.
-  if (trimmed === '' || /^(?:!\S*[ \t]+)?[|>](?:[+-]?\d*|\d+[+-])$/.test(trimmed)) {
+  // A comment-only first line (password: # prod) and a bare scheme word (Authorization: Bearer, folded onto the next
+  // line) are empty values too: the deeper-indented lines below hold the credential (PR #16 review).
+  const emptyish = trimmed === '' || /^#/.test(trimmed) || /^(?:basic|bearer|digest)$/i.test(trimmed);
+  if (emptyish || /^(?:!\S*[ \t]+)?[|>](?:[+-]?\d*|\d+[+-])$/.test(trimmed)) {
     // The key's own indent, read from its line start (a lastIndexOf, not a slice-and-match over the whole prefix, which
     // made thousands of empty "password:" lines quadratic).
     const lineStart0 = s.lastIndexOf('\n', start - 1) + 1;
@@ -275,7 +285,7 @@ function valueEnd(s, start) {
       let lineEnd = s.indexOf('\n', lineStart); if (lineEnd < 0) lineEnd = s.length;
       const line = s.slice(lineStart, lineEnd);
       // An indentless YAML sequence (password:\n- x) at the key's own indent still belongs to an empty value (PR #27).
-      if (line.trim() !== '' && (line.match(/^\s*/) || [''])[0].length <= indent && !(trimmed === '' && (line.match(/^\s*/) || [''])[0].length === indent && /^\s*-(?:\s|$)/.test(line))) break;
+      if (line.trim() !== '' && (line.match(/^\s*/) || [''])[0].length <= indent && !(emptyish && (line.match(/^\s*/) || [''])[0].length === indent && /^\s*-(?:\s|$)/.test(line))) break;
       i = lineEnd;
     }
     return i;
@@ -345,7 +355,9 @@ function scrubAssignments(s, view, label, resolve) {
     // ("api_keys": ["…", "…"]) is a list of secrets and goes whole, to its closing bracket.
     // A brace only opens a structure when it holds a key/value and closes the value; "{noop}hunter2" and
     // "{bcrypt}$2a$…" are password-storage prefixes and the whole value goes (viaknox PR #27 review).
-    const structured = s[sepEnd] === '{' && (() => { const e = braceEnd(s, sepEnd); return /[:=]/.test(s.slice(sepEnd + 1, e)) && /^[ \t]*(?:[,;}\]\r\n]|$)/.test(s.slice(e + 1, e + 3)); })();
+    // The brace must open with a key and a non-empty value, and a shell "export NAME={…}" is always a string
+    // (export PASSWORD={hunter2:}; PR #16 review).
+    const structured = s[sepEnd] === '{' && !/(?:^|\n)[ \t]*export[ \t]+[^\n]*$/.test(s.slice(Math.max(0, sepEnd - 200), sepEnd)) && (() => { const e = braceEnd(s, sepEnd); return /^\s*(?:"[^"\n]*"|'[^'\n]*'|\[[^\]\n]*\]|[\p{L}\p{N}_$.\-]+)\s*[:=]\s*[^\s,;}]/u.test(s.slice(sepEnd + 1, e)) && /^[ \t]*(?:[,;}\]\r\n]|$)/.test(s.slice(e + 1, e + 3)); })();
     if (isCredentialName(name) && !structured) {
       let end;
       // An array under a credential name goes whole even when it holds objects: the fields inside (`value`, `key`) are
@@ -540,10 +552,14 @@ function braceEnd(s, open) {
   return lim;
 }
 function scrubScopes(s, label, resolve) {
-  const ivs = []; const k8s = K8S_SECRET.test(s);
+  // A JSON manifest ("kind": "Secret") is a Kubernetes Secret too (PR #16 review).
+  const ivs = []; const k8s = K8S_SECRET.test(s) || /"kind"[ \t]*:[ \t]*"Secret"/.test(s);
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
   // on a line: every scalar inside goes, nested objects included.
-  if (s.includes('{')) { OBJ_KEY.lastIndex = 0; for (let m; (m = OBJ_KEY.exec(s));) if (isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); OBJ_KEY.lastIndex = open + 1; } }
+  if (s.includes('{')) { OBJ_KEY.lastIndex = 0; for (let m; (m = OBJ_KEY.exec(s));) if (isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
+    // A credential object longer than the 64 KB scan window fails closed: everything after its brace goes (PR #16 review).
+    if (s[close] !== '}' && close < s.length) { ivs.push([open + 1, s.length, 'SECRET']); break; }
+    objectScalars(s, open, close, ivs); OBJ_KEY.lastIndex = open + 1; } }
   let i = 0, ini = false;
   while (i < s.length) {
     let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
@@ -575,7 +591,7 @@ function scrubScopes(s, label, resolve) {
       }
     }
     // Flow-style maps under data:/stringData: ({username: admin, db: x}) lose every scalar too (viaknox PR #27 review).
-    if (k8s && (m = /^[ \t]*(?:data|stringData):[ \t]*\{/.exec(line))) { const open = i + m[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); }
+    if (k8s) { const FM = /(?:^|[\s{,])(["']?)(?:data|stringData)\1[ \t]*:[ \t]*\{/g; for (let f; (f = FM.exec(line));) { const open = i + f.index + f[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } }
     if (k8s && (m = /^([ \t]*)(data|stringData):[ \t]*$/.exec(line))) {
       const ind = m[1].length; let j = nl;
       while (j < s.length) {
@@ -640,7 +656,8 @@ function scrubTables(s, label, resolve) {
     let i = 0, cols = null, n = 0;
     while (i < s.length) {
       let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
-      const line = s.slice(i, nl).replace(/\r$/, '');
+      // The judge's role label ("USER: | user | password |") is not a cell (PR #16 review).
+      const line0 = s.slice(i, nl).replace(/\r$/, ''), rp = ROLE_PREFIX.exec(line0), base = i + (rp ? rp[0].length : 0), line = rp ? line0.slice(rp[0].length) : line0;
       // A pipe-less row only counts inside a table already found or right above a rule row, so ordinary lines with a
       // stray "|" (YAML block scalars) cost nothing.
       const ruleNext = () => { let n2 = s.indexOf('\n', nl + 1); if (n2 < 0) n2 = s.length; return /^[ \t]*(?:\|[ \t]*)?:?-{3,}/.test(s.slice(nl + 1, n2)); };
@@ -650,7 +667,7 @@ function scrubTables(s, label, resolve) {
         // blank (viaknox PR #27 review).
         const pipes = []; for (let k = line.indexOf('|'); k >= 0; k = line.indexOf('|', k + 1)) if (!(k > 0 && line[k - 1] === '\\')) pipes.push(k);
         const bounds = [-1, ...pipes, line.length], cells = [];
-        for (let q = 0; q + 1 < bounds.length; q++) { const a = bounds[q] + 1, b = bounds[q + 1]; if ((q === 0 || q === bounds.length - 2) && !line.slice(a, b).trim()) continue; cells.push([i + a, i + b]); }
+        for (let q = 0; q + 1 < bounds.length; q++) { const a = bounds[q] + 1, b = bounds[q + 1]; if ((q === 0 || q === bounds.length - 2) && !line.slice(a, b).trim()) continue; cells.push([base + a, base + b]); }
         if (cols === null) {
           let nl2 = s.indexOf('\n', nl + 1); if (nl2 < 0) nl2 = s.length;
           if (/^[ \t]*(?:\|[ \t]*)?:?-{3,}/.test(s.slice(nl + 1, nl2))) { const found = cells.map(([a, b], k) => (isCredentialName(resolve(s.slice(a, b).trim())) ? k : -1)).filter(k => k >= 0); if (found.length) { cols = new Set(found); n = cells.length; } }
@@ -664,11 +681,13 @@ function scrubTables(s, label, resolve) {
   if (/<th\b/i.test(s)) {
     // A cell may hold inline markup (<td><code>…</code></td>); the header text is read with tags removed (PR #27 review).
     const CELL = /<t([hd])\b[^<>]*>((?:[^<]|<(?!\/?t[hdr]\b|\/table))*)<\/t[hd]>/gi;
-    for (let t = s.indexOf('<table'); t >= 0; t = s.indexOf('<table', t + 6)) {
-      let end = s.indexOf('</table>', t); if (end < 0) end = s.length; end = Math.min(end, t + 65536);
+    // Tag names are case-insensitive (<TR>, </Table>; PR #16 review): searched on an ASCII-lower-cased copy, same length.
+    const lc = s.replace(/[A-Z]+/g, (c) => c.toLowerCase());
+    for (let t = lc.indexOf('<table'); t >= 0; t = lc.indexOf('<table', t + 6)) {
+      let end = lc.indexOf('</table>', t); if (end < 0) end = s.length; end = Math.min(end, t + 65536);
       let cols = null; const ROW = /<tr\b[^<>]*>/gi; ROW.lastIndex = t;
       for (let r; (r = ROW.exec(s)) && r.index < end;) {
-        let rowEnd = s.indexOf('</tr>', r.index); if (rowEnd < 0 || rowEnd > end) rowEnd = end;
+        let rowEnd = lc.indexOf('</tr>', r.index); if (rowEnd < 0 || rowEnd > end) rowEnd = end;
         const cells = []; CELL.lastIndex = r.index + r[0].length;
         for (let c; (c = CELL.exec(s)) && c.index < rowEnd;) cells.push({ th: c[1].toLowerCase() === 'h', a: c.index + c[0].length - c[2].length - 5 - 0, text: c[2], start: c.index + c[0].indexOf('>') + 1 });
         if (cells.some(c => c.th)) { const found = cells.map((c, k) => (isCredentialName(resolve(c.text.replace(/<[^<>]*>/g, '').trim())) ? k : -1)).filter(k => k >= 0); cols = found.length ? new Set(found) : null; }
@@ -719,7 +738,8 @@ function scrubHtmlAttrs(s, label, resolve) {
     // or placeholder that carries the secret itself goes like any other attribute.
     for (let v; (v = ATTR_ANY.exec(tag));) {
       const raw = v[3].replace(/^["']|["']$/g, '');
-      if (/^(?:name|id|http-equiv|type|class)$/i.test(v[1]) || (IDENT_ATTR.test(v[1]) && (isCredentialName(resolve(decodeName(raw))) || HEADER_CRED.test(raw.trim())))) continue;
+      // An autocomplete token (current-password) names the field, it is not a value (PR #16 review).
+      if (/^(?:name|id|http-equiv|type|class)$/i.test(v[1]) || (/^autocomplete$/i.test(v[1]) && /^["']?[a-z\- ]{1,60}["']?$/i.test(raw)) || (IDENT_ATTR.test(v[1]) && (isCredentialName(resolve(decodeName(raw))) || HEADER_CRED.test(raw.trim())))) continue;
       const vs = m.index + v.index + v[0].length - v[3].length; ivs.push([vs, vs + v[3].length, 'SECRET']); hit = true;
     }
     // <… Name="password"><…Value>text</…Value>: the next *Value child's text is the credential; and the element's own
@@ -919,7 +939,8 @@ function scrubXml(s, label, resolve) {
     // walk the closing tags inside the 64 KB window until this element's own one.
     let ci = closes.length; { let lo = 0, hi = closes.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (closes[mid] < open) lo = mid + 1; else hi = mid; } ci = lo; }
     // XML allows whitespace before the end tag's ">" (</password >; PR #27 review).
-    let close = -1; const want = '</' + m[1], isEnd = (at) => s.startsWith(want, at) && /^[ \t\r\n]*>/.test(s.slice(at + want.length, at + want.length + 40));
+    let close = -1; const want = '</' + m[1], isEnd = (at) => s.slice(at, at + want.length).toLowerCase() === want.toLowerCase() &&   // HTML tag names ignore case (<Password>…</PASSWORD>; PR #16 review)
+       /^[ \t\r\n]*>/.test(s.slice(at + want.length, at + want.length + 40));
     let k = ci, n = 0;
     for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) if (isEnd(closes[k])) { close = closes[k]; break; }
     // Too many nested closing tags to walk: take the rest of the 64 KB window rather than risk leaving the value (PR #27).
@@ -965,7 +986,8 @@ const NETRC_ANCHOR = /^[ \t]*(?:machine|default)\b/im;
 function scrubNetrc(s, label) {
   if (!NETRC_ANCHOR.test(s)) return s;
   return s.replace(/^[ \t]*(?:machine|default|login|password|account)\b[^\n]*$/gim,
-    (line) => line.replace(/\b(password|account)[ \t]+(?![=:])(\S+)/gi, (m, k, v) => isPlaceholderValue(v) ? m : `${k} ${label('SECRET', v)}`));
+    (line) => line.replace(/\b(password|account)[ \t]+(?![=:])("(?:\\.|[^"\\\n])*"?|(?:\\.|\S)+)/gi,   // a quoted token or backslash-escaped spaces (PR #16 review)
+       (m, k, v) => isPlaceholderValue(v) ? m : `${k} ${label('SECRET', v)}`));
 }
 
 // Credential words and phrases that appear in prose: "the password is X", "your recovery code is X". The copula "is"
@@ -1020,7 +1042,7 @@ function scrubPhrase(s, label) {
 // not read as a flag name.
 const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
 const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
-const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("[^"\n]*"|'[^'\n]*'|(?:\\\r?\n|[^\s'"])+)/g;
+const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("(?:\\.|[^"\\\n])*"|'[^'\n]*'|(?:\\\r?\n|[^\s'"])+)/g;   // escaped quotes stay inside a "…" value (PR #16 review)
 // SQL Server tools take the password as -P (sqlcmd -S db -U alice -P x, or -Px); only on a line naming one of them,
 // since -P is a port elsewhere (PR #27 review).
 const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
@@ -1071,8 +1093,10 @@ function scrubBareAuth(s, label) {
   // "Basic auth") is prose about the scheme, not a token, and stays.
   // Words that name the scheme in prose ("Basic authentication", "Bearer tokens") stay too, at any length; a Digest
   // credential always carries name=value parameters, so Digest without an "=" is prose (PR #27 review).
-  let out = s.replace(/\b(Basic|Bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/g, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
-  return out.replace(/\b(Digest)[ \t]+([^\n]*=[^\n]*)/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
+  // Scheme names are case-insensitive (bearer, BASIC; PR #16 review). After a scheme not written as "Basic"/"Bearer", a
+  // plain lowercase word of any length is prose ("basic understanding"), so only a token-looking value goes.
+  let out = s.replace(/\b(basic|bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/gi, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || (!/^(?:Basic|Bearer)$/.test(sch) && /^[a-z]+\.*$/.test(v)) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
+  return out.replace(/\b(digest)[ \t]+(?=[^\n]*=)([^\n]*=[^\n]*)/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
 }
 
 // Known token shapes, shared by the main pass (KEY, matched on the folded view) and the residual scan. Assembled from
@@ -1091,8 +1115,9 @@ const KEY_SHAPE_RE = new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')', 'g');
 
 const PATTERNS = [
   // Internationalised addresses too (usér@exämple.com, δοκιμή@παράδειγμα.δοκιμή): letters of any script, bounded classes.
-  ['EMAIL', /"[^"\n]{1,64}"@[\p{L}\p{N}.-]{1,253}\.\p{L}{2,63}(?![\p{L}\p{N}])/gu],   // quoted local part ("john doe"@x.com; PR #27)
-  ['EMAIL', /(?<![\p{L}\p{N}])[\p{L}\p{N}._%+-]{1,64}@[\p{L}\p{N}.-]{1,253}\.\p{L}{2,63}(?![\p{L}\p{N}])/gu],
+  ['EMAIL', /"[^"\n]{1,64}"@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],   // quoted local part ("john doe"@x.com; PR #27)
+  // Combining marks count as letters, so a decomposed exa\u0301mple.com is still one address (PR #16 review).
+  ['EMAIL', /(?<![\p{L}\p{M}\p{N}])[\p{L}\p{M}\p{N}._%+-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
@@ -1121,7 +1146,7 @@ function luhn(digits) {
 // never the value.
 const PREFIX_SHAPES = [
   ['known key shape', new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')')],
-  ['pem private key', new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9]+[ \\t]+){0,4}PRIVATE[ \\t]+KEY')],
+  ['pem private key', new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9]+[ \\t]+){0,32}PRIVATE[ \\t]+KEY')],
   ['http auth header', /\b(?:Authorization|Proxy-Authorization)[ \t]*:[ \t]*(?![\-\uE000])[^\s"'()\[\]{},;\uE000]{6,}/i],
   ['auth scheme token', /\b(?:Basic|Bearer)[ \t]+[A-Za-z0-9._~+/\-]{12,}/],
   ['credential assignment', new RegExp('(?<![\\p{L}\\p{N}])(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|mot de passe|mdp|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|пароль|パスワード|密码|비밀번호)(?![\\p{L}\\p{N}])[ \\t]*["\']?[ \\t]*[:=][ \\t]*["\']?(?![\\-\\uE000])[^\\s"\'()\\[\\]{},;\\uE000]{3,}', 'iu')],
@@ -1220,7 +1245,10 @@ export function scrubber({ terms = [] } = {}) {
         const core = value.trim().replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
-        const tok = core.split(/[\s,;#]/)[0]; if (tok && tok !== core) inventory.push({ kind, value: tok });
+        // Only when a comment or a sibling setting really follows: spaces alone may be part of the credential
+        // ("correct horse battery staple" must not make "correct" a secret; PR #16 review).
+        const tm = /^([^\s,;#]+)(?:[ \t]+#|[ \t]*[,;][ \t]*[\p{L}_][\p{L}\p{N}_.\-]*[ \t]*[=:])/u.exec(core), tok = tm && tm[1];
+        if (tok && tok !== core) inventory.push({ kind, value: tok });
       }
     }
     return seen.get(k);
@@ -1280,7 +1308,25 @@ export function scrubber({ terms = [] } = {}) {
     // agent repeating "CorrectHorse9!" after the user's PASSWORD=CorrectHorse9! (viaknox PR #27 review).
     const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && e.value.trim().length >= 4 && !/[\uE000\uE001\n]/.test(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
-    for (const [kind, v] of known) if (s.includes(v)) s = s.split(v).join(label(kind, v));
+    // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
+    // settings), and
+    // only whole occurrences: a value that begins or ends with a letter or digit is not taken out of a longer word, so
+    // password=pass does not turn "compass" into "com[SECRET_1]" (PR #16 review).
+    if (known.length) {
+      const kindOf = new Map(); for (const [kind, v] of known) if (!kindOf.has(v)) kindOf.set(v, kind);
+      const lens = [...new Set([...kindOf.keys()].map(v => v.length))].sort((a, b) => b - a), firsts = new Set([...kindOf.keys()].map(v => v[0]));
+      const word = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
+      let out = '', at = 0;
+      for (let i = 0; i < s.length; i++) {
+        if (!firsts.has(s[i])) continue;
+        for (const L of lens) {
+          const v = s.substr(i, L), kind = kindOf.get(v);
+          if (kind === undefined || (word(v[0]) && word(s[i - 1])) || (word(v[L - 1]) && word(s[i + L]))) continue;
+          out += s.slice(at, i) + label(kind, v); at = i + L; i = at - 1; break;
+        }
+      }
+      s = out + s.slice(at);
+    }
     // Card and SSN numbers recur with other separators (123-45-6789 echoed as 123456789; PR #27 review): match the digits
     // with any of space, dot or dash between them and reuse the same placeholder.
     for (const { kind, value } of inventory) {
@@ -1320,8 +1366,9 @@ export function scrubber({ terms = [] } = {}) {
       // Any unexpected failure inside the scrubber is a ScrubError, so callers hold the text back instead of crashing.
       let scrubbed;
       try { scrubbed = scrubOnce(s); } catch (e) { throw new ScrubError(`scrubber failed (${e && e.name}); holding back`); }
+      // The residual scan is inside the time budget too (PR #16 review).
+      let r; try { r = residual(scrubbed, { terms: own }); } catch (e) { throw new ScrubError(`residual scan failed (${e && e.name}); holding back`); }
       if (Date.now() - t0 > maxMs) throw new ScrubError(`scrubbing took longer than ${maxMs} ms; holding back`);
-      const r = residual(scrubbed, { terms: own });
       return new Sanitized({ text: scrubbed, held: r.held, reasons: r.reasons, version: SCRUBBER_VERSION }, MINT);
     },
     // Kinds whose inventoried user-side values appear verbatim in `text` (brief item 9: an exact echo, not a re-scan).
@@ -1334,8 +1381,8 @@ export function scrubber({ terms = [] } = {}) {
       const phones = (s.match(/\+?\d[\d\s().-]{6,}\d/g) || []).map(x => x.replace(/\D/g, '').slice(-10));
       for (const { kind, value } of inventory) {
         if (!value || value.length < 4) continue;
-        if (s.includes(value)) kinds.add(kind);
-        else if (kind === 'EMAIL' && lower.includes(value.toLowerCase())) kinds.add(kind);
+        if (kind !== 'EMAIL' && s.includes(value)) kinds.add(kind);
+        else if (kind === 'EMAIL' && new RegExp(`(?<![\\p{L}\\p{M}\\p{N}._%+-])${value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`, 'u').test(lower)) kinds.add(kind);   // the whole address, not a suffix of data@… (PR #16 review)
         else if (kind === 'PHONE') { const d = value.replace(/\D/g, '').slice(-10); if (d.length >= 7 && phones.includes(d)) kinds.add(kind); }
       }
       return [...kinds];

@@ -1,4 +1,4 @@
-import { scrubber } from './redact.js';
+import { scrubber, residual } from './redact.js';
 // Paste-in adapter: turns chats people copy or export into conversations of {role, content} messages.
 // Accepts JSON exports ([{role, content}], {messages: [...]}, an array of those, or {conversations: [...]})
 // and plain text with speaker labels ("User:", "Bot:", …). Conversations in text are separated by a line of --- or ===.
@@ -93,15 +93,24 @@ export function checkConversation(msgs) {
     const hard = ['CARD', 'KEY', 'SSN'].filter(had), soft = ['PHONE', 'EMAIL'].filter(had);
     const fresh = scrubber(); fresh.scrub(m.content); const k = fresh.counts();
     const newHard = ['CARD', 'KEY', 'SSN'].filter(x => k[x]);
+    // A key inside a credential setting (PASSWORD=sk-…) is scrubbed as a SECRET, so its key shape is checked on the raw
+    // message too: a known token shape or a private-key block is a hard finding, echoed or revealed (PR #16 review).
+    if (residual(m.content).reasons.some(x => x === 'known key shape' || x === 'pem private key')) {
+      if (had('SECRET')) { if (!hard.includes('KEY')) hard.push('KEY'); } else if (!newHard.includes('KEY')) newHard.push('KEY');
+    }
+    // Contacts the agent brings up itself (the user never gave them) are flagged as unsure too (PR #16 review).
+    // A phone only counts here when a separate 7–12 digit run is present, not part of a longer number (an order or card).
+    const phoneRun = (m.content.match(/\+?\d[\d\s().-]{6,}\d/g) || []).some(x => { const d = x.replace(/\D/g, '').length; return d >= 7 && d <= 12; });
+    const newSoft = ['PHONE', 'EMAIL'].filter(x => k[x] && !soft.includes(x) && (x !== 'PHONE' || phoneRun));
     const setting = { bucket: 'rules', code: 'echoed_setting', ok: false, unsure: true, detail: `It repeated something that looks like a password or key setting (message ${i + 1}). Check it wasn't a real one.` };
-    const contact = { bucket: 'rules', code: 'echoed_contact', ok: false, unsure: true, detail: `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` };
+    const contact = { bucket: 'rules', code: 'echoed_contact', ok: false, unsure: true, detail: soft.length ? `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` : `Agent shared a ${newSoft.join('/').toLowerCase()} the user never gave (message ${i + 1}); fine only if its rules allow it` };
     const settingSeen = had('SECRET') || k.SECRET;
     if (hard.length) out.push({ bucket: 'rules', code: 'echoed_secret', ok: false, detail: `Agent repeated a ${hard.join('/').toLowerCase()} number back (message ${i + 1})` });
     else if (newHard.length) {
       out.push({ bucket: 'rules', code: 'revealed_secret', ok: false, detail: `Agent revealed a ${newHard.join('/').toLowerCase()} number the user never typed (message ${i + 1})` });
       if (soft.length) out.push(contact);
     } else if (settingSeen) out.push(setting);
-    else if (soft.length) out.push(contact);
+    else if (soft.length || newSoft.length) out.push(contact);
   });
   const lastAgent = [...msgs].reverse().find(m => m.role === 'assistant');
   if (!lastAgent || lastAgent.content.length < 2) out.push({ bucket: 'done', code: 'empty_reply', ok: false, detail: 'Agent gave no final answer' });

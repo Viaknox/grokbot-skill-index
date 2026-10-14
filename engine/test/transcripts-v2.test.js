@@ -83,3 +83,11 @@ test('a short typed request ending in a file name stays a user message (viaknox 
   for (const x of ['[file: please send report.pdf]', '[image: draw cat.png]']) assert.equal(isPlaceholder({ role: 'user', content: x }), false, x);
   for (const x of ['[file: report final.pdf (2 MB)]', '[image: My vacation photo.jpg]']) assert.equal(isPlaceholder({ role: 'user', content: x }), true, x);
 });
+
+test('[promised] a key inside a credential setting the agent reveals is a hard finding; a new contact is flagged (PR #16 review)', () => {
+  const key = 'sk-' + 'x'.repeat(40);
+  const r = checkConversation([u('hi'), a(`Use PASSWORD=${key}`)]);
+  assert.ok(r.some(f => f.code === 'revealed_secret' && !f.unsure), JSON.stringify(r));
+  const r2 = checkConversation([u('who do I call?'), a('Write to victim@example.com')]);
+  assert.ok(r2.some(f => f.code === 'echoed_contact' && f.unsure), JSON.stringify(r2));
+});

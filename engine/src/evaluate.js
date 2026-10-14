@@ -1,6 +1,7 @@
 // Runs a test suite against an agent: every case `repeats` times, rule checks first, then the judge.
 import { checkCase } from './rules.js';
-import { judgeCase, judgeHeld, transcript, JUDGE_MODEL } from './judge.js';
+import { judgeCase, judgeHeld, transcript, heldFinding, JUDGE_MODEL } from './judge.js';
+import { HeldBack } from './openrouter.js';
 import { buildReport, runPassed } from './report.js';
 import { scrubber } from './redact.js';
 
@@ -20,14 +21,16 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
   const perCase = await pool(suite.cases, CONCURRENCY, async (c) => {
     const runs = [];
     for (let rep = 1; rep <= (suite.repeats || 1); rep++) {
-      const history = []; const turns = [];
+      const history = []; const turns = []; let held = false;
       for (const message of c.turns) {
-        const t = await adapter.turn({ history, message, instructions });
+        let t;
+        // The replay model's input was held back (a secret survived scrubbing): no call was made; the run is unsure.
+        try { t = await adapter.turn({ history, message, instructions }); } catch (e) { if (e instanceof HeldBack) { held = true; break; } throw e; }
         turns.push(t);
         // Keep tool calls and results in the history when the adapter exposes them (model adapter), not just the reply.
         history.push({ role: 'user', content: message }, ...(t.messages || [{ role: 'assistant', content: t.reply }]));
       }
-      const findings = [...checkCase(c, turns, adapter), ...await judge(or, scrub, transcript(c, instructions, turns, adapter.observesTools))];
+      const findings = held ? [heldFinding()] : [...checkCase(c, turns, adapter), ...await judge(or, scrub, transcript(c, instructions, turns, adapter.observesTools))];
       const passed = runPassed(findings);
       runs.push({ case: c.id, rep, passed, findings, turns: turns.map(t => ({ reply: t.reply, tools: t.tools, ...(t.truncated ? { truncated: true } : {}) })),
         ms: turns.reduce((a, t) => a + t.ms, 0), tokens: turns.some(t => t.tokens == null) ? null : turns.reduce((a, t) => a + t.tokens, 0),
