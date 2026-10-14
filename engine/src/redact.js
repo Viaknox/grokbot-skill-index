@@ -585,18 +585,26 @@ function braceEnd(s, open) {
   }
   return lim;
 }
+// A JSON "kind": "Secret" pair, with JSON escapes in the key or value decoded ("\u0053ecret" is "Secret"; PR #16 review).
+const decJson = (x) => { if (!x.includes('\\')) return x; try { return JSON.parse(`"${x}"`); } catch { return x; } };
+function jsonKindSecret(t) {
+  if (!t.includes('"')) return false;
+  const KV = /"((?:\\.|[^"\\\n])*)"\s*:\s*"((?:\\.|[^"\\\n])*)"/g;
+  for (let m; (m = KV.exec(t));) { if (decJson(m[1]) === 'kind' && decJson(m[2]) === 'Secret') return true; KV.lastIndex = m.index + 1; }
+  return false;
+}
 function scrubScopes(s, label, resolve) {
   // A JSON manifest ("kind": "Secret") is a Kubernetes Secret too (PR #16 review).
   const ivs = [];
   // Kubernetes Secret scope is per YAML document ("---" separates them), so a ConfigMap after a Secret keeps its data
   // (PR #27 review). `docs` holds [start, isSecret] for each document.
   // "..." ends a YAML document too (PR #16 review).
-  const docs = []; { let d0 = 0; const SEP = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || /"kind"[ \t]*:[ \t]*"Secret"/.test(t)]); };
+  const docs = []; { let d0 = 0; const SEP = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || jsonKindSecret(t)]); };
     for (let m; (m = SEP.exec(s));) { add(d0, m.index); d0 = m.index + m[0].length; } add(d0, s.length); }
   let di = 0, k8s = docs[0][1];
   // In a JSON Secret, data/stringData may sit across lines from its colon and brace ({"data"\n:\n{…}}; PR #27 review).
-  docs.forEach(([a, sec], d) => { if (!sec) return; const b = d + 1 < docs.length ? docs[d + 1][0] : s.length; const JD = /(["'])(?:data|stringData)\1\s*:\s*\{/g; JD.lastIndex = a;
-    for (let j; (j = JD.exec(s)) && j.index < b;) { const open = j.index + j[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } });
+  docs.forEach(([a, sec], d) => { if (!sec) return; const b = d + 1 < docs.length ? docs[d + 1][0] : s.length; const JD = /(["'])((?:\\.|(?!\1)[^\\\n])*)\1\s*:\s*\{/g; JD.lastIndex = a;
+    for (let j; (j = JD.exec(s)) && j.index < b;) { if (!/^(?:data|stringData)$/.test(j[1] === '"' ? decJson(j[2]) : j[2])) { JD.lastIndex = j.index + 1; continue; } const open = j.index + j[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } });
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
   // on a line: every scalar inside goes, nested objects included.
   if (s.includes('{')) { OBJ_KEY.lastIndex = 0; for (let m; (m = OBJ_KEY.exec(s));) if (isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
@@ -1122,7 +1130,7 @@ function scrubPhrase(s, label) {
 // not read as a flag name.
 const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
 const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
-const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("(?:\\.|[^"\\\n])*"|'[^'\n]*'|(?:\\\r?\n|[^\s'"])+)/g;   // escaped quotes stay inside a "…" value (PR #16 review)
+const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("(?:\\.|[^"\\\n])*"|'(?:[^'\n]|'')*'|(?:\\\r?\n|[^\s'"])+)/g;   // '' inside '…' is one quote (PowerShell; PR #16 review); escaped quotes stay inside a "…" value (PR #16 review)
 // SQL Server tools take the password as -P (sqlcmd -S db -U alice -P x, or -Px); only on a line naming one of them,
 // since -P is a port elsewhere (PR #27 review).
 const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
@@ -1208,7 +1216,7 @@ const PATTERNS = [
   // Combining marks count as letters, so a decomposed exa\u0301mple.com is still one address (PR #16 review).
   // The whole RFC 5322 atext alphabet in the local part (o'connor@…, alice!@…; PR #27 review).
   ['EMAIL', /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
-  ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
+  ['CARD', /(?<![\p{L}\p{N}])(?:\d[ -]?){12,18}\d(?![\p{L}\p{N}])/gu],   // not \b: "id_4111…" must match (PR #16 review)
   ['SSN', /(?<![\p{L}\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/gu],   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
   ['SSN', /(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
@@ -1289,7 +1297,7 @@ export function residual(text, { terms = [] } = {}) {
     // Whole words only, as the scrubber matches them ("Ann" is not in "announce"; PR #27 review); plurals still count.
     for (const t of terms) {
       const tt = foldName(foldStr(t)).trim().toLowerCase();
-      if (tt && new RegExp(`(?<![\\p{L}\\p{N}])${tt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:['’]s|es|s)?(?![\\p{L}\\p{N}])`, 'u').test(folded)) { reasons.push('never-send term'); break; }
+      if (tt && new RegExp(`(?<![\\p{L}\\p{N}])${tt.split(/\s+/).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+')}(?:['’]s|es|s)?(?![\\p{L}\\p{N}])`, 'u').test(folded)) { reasons.push('never-send term'); break; }
     }
   }
   return { held: reasons.length > 0, reasons };
@@ -1324,7 +1332,8 @@ export function scrubber({ terms = [] } = {}) {
   // The \uE000 in the lookbehind stops a term from matching inside a placeholder already made (a PEM block labelled
   // [KEY_1] must not have its "KEY" re-matched by never-send term "KEY").
   // A plural or possessive of the term ("Acmes", "Acme's") is still the term; "Ivory" for "Ivo" and "ACMEcorp" are not.
-  const ownBody = `(?:${own.map(t => esc(foldStr(t))).join('|')})(?:['’]s|es|s)?`;
+  // A multiword term matches across any whitespace run ("Acme  Corp", a tab, a line break; PR #16 review).
+  const ownBody = `(?:${own.map(t => foldStr(t).trim().split(/\s+/).map(esc).join('\\s+')).join('|')})(?:['’]s|es|s)?`;
   const ownRe = own.length ? new RegExp(`(?<![\\p{L}\\p{N}@\\uE000])${ownBody}(?![\\p{L}\\p{N}@])`, 'giu') : null;
   // The same words with "@" allowed beside them, for a second sweep after the email rule has run (see scrubOnce).
   const ownAtRe = own.length ? new RegExp(`(?<![\\p{L}\\p{N}\\uE000])${ownBody}(?![\\p{L}\\p{N}])`, 'giu') : null;
@@ -1416,7 +1425,10 @@ export function scrubber({ terms = [] } = {}) {
     if (ownAtRe) s = applyOnView(s, V(s), ownAtRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
     // A secret already recognised anywhere (in this text or an earlier one) is replaced wherever it recurs bare, e.g. an
     // agent repeating "CorrectHorse9!" after the user's PASSWORD=CorrectHorse9! (viaknox PR #27 review).
-    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && e.value.trim().length >= 4 && !/[\uE000\uE001\n]/.test(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
+    // A value wrapping a never-send placeholder (password=Acme-x is [PRIVATE_1]-x) still recurs as that same text, so it
+    // stays eligible; the part outside the placeholder must still be at least four characters (PR #16 review).
+    const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 4; };
+    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
     // settings), and

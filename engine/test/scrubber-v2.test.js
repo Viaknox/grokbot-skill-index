@@ -3,7 +3,7 @@
 // placeholder appeared. Fixtures are templates expanded at run time, so no secret shape sits in the repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubber, Sanitized, isCredentialName } from '../src/redact.js';
+import { scrubber, Sanitized, isCredentialName, residual } from '../src/redact.js';
 import { fixture, expand, gen, makeRng, seedOf, attackRounds } from './corpus/expand.js';
 
 const V2 = () => import('../src/redact.js');   // new exports are reached dynamically so a missing one fails one test, not the file
@@ -775,4 +775,15 @@ test('[best-effort] round 27: role-prefixed Secret manifests, htpasswd -b, smbcl
   for (const x of ['USER: kind: Secret\ndata:\n  foo: aHVudGVyMjI=', 'htpasswd -b .htpasswd alice hunter22', 'smbclient //server/share -U alice%hunter22'])
     assert.ok(!/aHVudGVyMjI|hunter22/.test(scrubber().sanitize(x).text), x);
   const s = scrubber(); s.sanitize('my ssn 123-45-6789'); assert.deepEqual(s.echoes('got 123 45 6789'), ['SSN']);
+});
+test('[best-effort] round 28: recurrences wrapping a private term, escaped JSON Secret keys, cards after _, doubled PowerShell quotes, multiword terms across whitespace', () => {
+  const p = scrubber({ terms: ['Acme'] }); p.sanitize('password=Acme-huntertwo');
+  assert.ok(!/huntertwo/.test(p.sanitize('send Acme-huntertwo now').text));
+  for (const x of ['{"kind":"\\u0053ecret","stringData":{"db":"huntertwo"}}', '{"kind":"Secret","\\u0073tringData":{"db":"huntertwo"}}', "cmd -Password 'foo''huntertwo'"])
+    assert.ok(!/huntertwo/.test(scrubber().sanitize(x).text), x);
+  assert.ok(!/4111111111111111/.test(scrubber().sanitize('id_4111111111111111').text));
+  for (const x of ['Acme  Corp', 'Acme\tCorp', 'Acme\nCorp']) {
+    assert.ok(!/Acme|Corp/.test(scrubber({ terms: ['Acme Corp'] }).sanitize(x).text), x);
+    assert.equal(residual(x, { terms: ['Acme Corp'] }).held, true, x);
+  }
 });
