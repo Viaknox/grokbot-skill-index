@@ -714,3 +714,11 @@ test('[promised] viaknox PR #27 round 18: form-encoded query names (?api+key=)',
     assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
   assert.equal(scrubber().sanitize('https://x.example/?q=a+b&page=2').text, 'https://x.example/?q=a+b&page=2');
 });
+test('[best-effort] viaknox PR #27 round 19: card codes, multiword passphrases, wallet phrases, config set commands, symbol-rich passwords held', () => {
+  for (const x of ['cvv=922', 'CVC: 922', 'my password is correct horse battery staple', 'recovery phrase: abandon ability able about above',
+    'seed phrase is abandon ability able about', 'aws configure set aws_secret_access_key hunter22'])
+    assert.ok(!/922|horse|ability|hunter22/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('N7!qP2@vL9#sR4$x').held, true);
+  assert.equal(scrubber().sanitize('npm config set registry https://x.example').text, 'npm config set registry https://x.example');
+  assert.match(scrubber().sanitize('my password is not working, can you help').text, /working, can you help/);
+});

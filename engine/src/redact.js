@@ -143,7 +143,8 @@ function hasCompound(parts) {
   return false;
 }
 const COMPOUND = /(seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
-const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
+const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'cvv', 'cvv2', 'cvc', 'cvc2', 'csc', 'cvn',   // card verification codes (PR #27)
+  'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
   'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk', 'zugangsdaten',   // psk: WPA pre-shared key (PR #27)
   'contraseña', 'contrasena', 'clave', 'secreto', 'credenciales', 'senha', 'chave', 'chiave', 'segreto', 'wachtwoord', 'sleutel',
@@ -1014,13 +1015,21 @@ function scrubNetrc(s, label) {
 // Credential words and phrases in prose, in English and the other languages the scrubber knows. Guards are
 // Unicode-aware lookarounds (JS \b only knows ASCII letters, so "пароль" or "密码" would never sit at a \b).
 const MULTI_CRED = 'mot[ \\t]+de[ \\t]+passe|mdp|cl[eé][ \\t]+(?:api|secr[eè]te)|cl[eé]|jeton|passw[oö]rter|passwort|kennwort|geheimnis|schl[uü]ssel|zugangsdaten|contrase[ñn]a|clave|secreto|credenciales|senha|chave|chiave|segreto|wachtwoord|sleutel|пароль|секрет|ключ|токен|パスワード|秘密鍵|トークン|密码|密钥|口令|令牌|비밀번호|암호';
-const PROSE_CRED = '(?:passwords?|passphrases?|passwd|pwd|pw|passcodes?|pins?|otp|secrets?|creds?|credentials?|tokens?|api[ _-]?keys?|auth[ _-]?tokens?|access[ _-]?tokens?|(?:recovery|backup|verification|security|auth|2fa|mfa)[ _-]?codes?|' + MULTI_CRED + ')';
+const PROSE_CRED = '(?:(?:seed|recovery|mnemonic|secret|wallet)[ _-]?phrases?|mnemonics?|cvv2?|cvc2?|passwords?|passphrases?|passwd|pwd|pw|passcodes?|pins?|otp|secrets?|creds?|credentials?|tokens?|api[ _-]?keys?|auth[ _-]?tokens?|access[ _-]?tokens?|(?:recovery|backup|verification|security|auth|2fa|mfa)[ _-]?codes?|' + MULTI_CRED + ')';
 const NOT_L = '(?![\\p{L}\\p{N}])', NOT_L_BEHIND = '(?<![\\p{L}\\p{N}])';
 // "password is X", "creds are user:pass", "pw's X", "le mot de passe est X", "das Passwort ist X", "la contraseña es X":
 // a copula (is/are/est/ist/lautet/es/é/è/это/—) or a possessive 's, then the value.
 // Up to two plain words may sit between the noun and the copula ("the secret phrase is X", "my api key here is X") when
 // the value carries a digit or a symbol, so "Our API key rotation policy is documented" (a plain word) is left alone.
-const COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+|[\'’]s[ \\t]+)("[^"\\n]*"|\'[^\'\\n]*\'|\\S+)', 'giu');
+// Words that describe a password rather than spell it ("is not working", "is too short") never extend a value.
+const EXT_WORD = '(?!(?:not|no|wrong|incorrect|invalid|expired|too|missing|required|empty|blank|weak|strong|short|long|working|broken|locked|reset|changed|the|a|an|my|your|our|their|in|on|at|for|to|of|and|but|or|so|very|still|now|again|anymore|i|it|that|this|please|help|me|you|we|they)(?![\\p{L}\\p{N}]))[\\p{L}\\p{N}]+';
+// An unquoted value takes the following lowercase words too when they run to the end of the clause, so a passphrase
+// ("correct horse battery staple") or a 24-word recovery phrase goes whole (PR #27 review).
+const COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+|[\'’]s[ \\t]+)("[^"\\n]*"|\'[^\'\\n]*\'|\\S+(?:(?:[ \\t]+' + EXT_WORD + '){1,23}(?=[ \\t]*(?:[.,;!?\\n]|$)))?)', 'giu');
+// "recovery phrase: abandon ability …", "seed phrase = …": a wallet phrase cue with a separator takes the rest of the line.
+const WALLET_RE = new RegExp(NOT_L_BEHIND + '(?:(?:seed|recovery|mnemonic|secret|wallet)[ _-]?phrases?|mnemonics?)' + NOT_L + '[ \\t]*(?:[:=\\uFF1A][ \\t]*)([^\\n]+)', 'giu');
+// "aws configure set aws_secret_access_key X", "npm config set _authToken X": a config command naming a credential.
+const CONFIG_SET_RE = /\b(?:configure|config)[ \t]+set[ \t]+(["']?)([\w.\-:\/]{1,80})\1[ \t]+([^\n]+)/g;
 // Past and changed forms ("was", "will be", "changed to") take a value only when it is quoted or token-like (has a digit,
 // punctuation or symbol), so "the password was reset yesterday" keeps its words (PR #27 review).
 const PAST_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '[ \\t]+(?:was|were|will[ \\t]+be|(?:has|had|have)[ \\t]+been|(?:is|was)[ \\t]+now|(?:changed|set|reset|updated)[ \\t]+to)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{S}]|\\S*\\p{P}\\S)\\S+)', 'giu');
@@ -1036,6 +1045,8 @@ const PHRASE2_RE = new RegExp(NOT_L_BEHIND + '(?:mot[ \\t]+de[ \\t]+passe|cl[eé
 // "I changed the password to …", "set my PIN to …" (PR #27 review).
 const CHANGE_RE = new RegExp(NOT_L_BEHIND + '(?:changed|set|reset|updated|switched)[ \\t]+(?:(?:the|my|our|your|his|her|their)[ \\t]+)?(?:\\p{L}{1,20}[ \\t]+)?' + PROSE_CRED + NOT_L + '[ \\t]+to[ \\t]+("[^"\\n]*"|\'[^\'\\n]*\'|\\S+)', 'giu');
 function scrubCopula(s, label) {
+  s = s.replace(WALLET_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  s = s.replace(CONFIG_SET_RE, (m, q, name, v) => !isCredentialName(name) || isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   s = s.replace(CHANGE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   s = s.replace(PAST_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   const out = s.replace(COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
@@ -1195,6 +1206,12 @@ export function residual(text, { terms = [] } = {}) {
     if (/^[0-9a-fA-F]+$/.test(run)) { if (/[a-fA-F]/.test(run) && shannon(run) >= 3.0) { reasons.push('high-entropy hex run'); break; } continue; }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }
+  }
+  // A generated password full of symbols (N7!qP2@vL9#sR4$x) breaks into short runs above, so whole tokens are looked at
+  // too: upper, lower, digit and at least two symbols, 10-64 characters, not a URL or an email (PR #27 review).
+  if (!reasons.includes('high-entropy token')) for (const tok of s.match(/[^\s"'`<>()\[\]{},;\uE000\uE001]{10,64}/g) || []) {
+    if (tok.includes('://') || /^[^@]+@[\w.-]+\.[A-Za-z]{2,}$/.test(tok) || !/[a-z]/.test(tok) || !/[A-Z]/.test(tok) || !/[0-9]/.test(tok)) continue;
+    if ((tok.match(/[!@#$%^&*~?+=]/g) || []).length >= 2 && shannon(tok) >= 3.3) { reasons.push('high-entropy token'); break; }
   }
   if (terms.length) {
     // The same folding as the main pass, so a term hidden with invisible characters or look-alike forms is still seen.
