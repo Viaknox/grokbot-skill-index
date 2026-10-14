@@ -551,7 +551,8 @@ function objectScalars(s, open, close, ivs) {
     KV.lastIndex = ve;
   }
 }
-const YAML_MAP_KEY = /^([ \t]*)(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\2:[ \t]*$/u;
+// An optional list marker: "- credentials:" is a container too (PR #27 review); group 4 is the marker.
+const YAML_MAP_KEY = /^([ \t]*)(-[ \t]+)?(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\3:[ \t]*$/u;
 // A child line inside a credential block: `key: …`, `- key: …` or a bare list item `- …`; the match is the prefix before
 // the scalar. A map head (`nested:` with nothing after it) matches too and is told apart by having no value.
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
@@ -599,8 +600,9 @@ function scrubScopes(s, label, resolve) {
     // record: every scalar inside it goes, at any depth. A nested map head (`nested:`) stays as structure and its
     // children are walked; a block scalar (`blob: |`) takes its indented block; a list item loses its scalar or the
     // value after `- key:`. A nested map used to turn the whole scope back into a container (PR #16 review).
-    if ((m = YAML_MAP_KEY.exec(line)) && isCredentialName(resolve(m[3])) && nl < s.length) {
-      const base = m[1].length; let j = nl;
+    if ((m = YAML_MAP_KEY.exec(line)) && isCredentialName(resolve(m[4])) && nl < s.length) {
+      // A list-item key's children sit at the key's own column, after the marker; the next "- " item ends the record.
+      const base = m[1].length + (m[2] ? m[2].length : 0); let j = nl;
       while (j < s.length) {
         const ls = j + 1; let le = s.indexOf('\n', ls); if (le < 0) le = s.length; const l2 = s.slice(ls, le);
         // A blank line inside the record does not end it (PR #16 review); only a line at or above the key's indent does.
@@ -1079,6 +1081,7 @@ const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
 function scrubFlags(s, label, V) {
   if (!s.includes('-')) return s;
   s = s.replace(/^.*\bsshpass\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));   // sshpass -p x (PR #27)
+  s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);

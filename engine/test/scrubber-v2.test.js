@@ -722,3 +722,9 @@ test('[best-effort] viaknox PR #27 round 19: card codes, multiword passphrases, 
   assert.equal(scrubber().sanitize('npm config set registry https://x.example').text, 'npm config set registry https://x.example');
   assert.match(scrubber().sanitize('my password is not working, can you help').text, /working, can you help/);
 });
+test('[best-effort] viaknox PR #27 round 20: YAML list-item credential containers, redis-cli -a', () => {
+  const y = scrubber().sanitize('- credentials:\n    value: hunter22\n- other:\n    value: keepme').text;
+  assert.ok(!y.includes('hunter22')); assert.ok(y.includes('keepme'), y);
+  assert.ok(!scrubber().sanitize('redis-cli -a hunter22 PING').text.includes('hunter22'));
+  assert.equal(scrubber().sanitize('tar -a x.tar').text, 'tar -a x.tar');
+});
