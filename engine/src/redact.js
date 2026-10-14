@@ -142,8 +142,10 @@ const HEADER_CRED = /^(?:set-cookie|cookie|authorization|proxy-authorization)$/i
 // header is followed on the same line by the two characters backslash-n) ends at the closing quote instead, so the
 // surrounding JSON survives. Public keys and certificates are meant to be shared, so only PRIVATE KEY blocks go. Extra
 // spaces or tabs between the header words still count.
-const PEM_HEAD = new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9]+[ \\t]+){0,4}PRIVATE[ \\t]+KEY-----', 'g');
-const PEM_FOOT = new RegExp('-----END[ \\t]+(?:[A-Z0-9]+[ \\t]+){0,4}PRIVATE[ \\t]+KEY-----', 'g');
+const PEM_HEAD = new RegExp('-----BEGIN[ \\t]+((?:[A-Z0-9]+[ \\t]+){0,4})PRIVATE[ \\t]+KEY-----', 'g');
+// The footer that closes a block must carry the header's type words (an RSA block ends at an RSA footer, not at an EC
+// one); a mismatched footer is treated like no footer and the block runs to the end of the input (PR #16 review).
+const pemFootFor = (label) => new RegExp('-----END[ \\t]+' + label.trim().split(/[ \t]+/).filter(Boolean).map(w => w + '[ \\t]+').join('') + 'PRIVATE[ \\t]+KEY-----', 'g');
 function scrubPem(s, label) {
   let out = '', at = 0; PEM_HEAD.lastIndex = 0;
   for (let h; (h = PEM_HEAD.exec(s));) {
@@ -156,7 +158,7 @@ function scrubPem(s, label) {
       while (q < lim) { if (s[q] === '"' && s[q - 1] !== '\\') break; q++; }
       stop = q;
     } else {
-      PEM_FOOT.lastIndex = afterHead;
+      const PEM_FOOT = pemFootFor(h[1]); PEM_FOOT.lastIndex = afterHead;
       const foot = PEM_FOOT.exec(s);
       stop = foot ? foot.index + foot[0].length : s.length;
     }
@@ -477,7 +479,8 @@ function scrubScopes(s, label, resolve) {
       const base = m[1].length; let j = nl;
       while (j < s.length) {
         const ls = j + 1; let le = s.indexOf('\n', ls); if (le < 0) le = s.length; const l2 = s.slice(ls, le);
-        if (!l2.trim()) break; if ((l2.match(/^[ \t]*/) || [''])[0].length <= base) break;
+        // A blank line inside the record does not end it (PR #16 review); only a line at or above the key's indent does.
+        if (!l2.trim()) { j = le; continue; } if ((l2.match(/^[ \t]*/) || [''])[0].length <= base) break;
         const c = YAML_CHILD.exec(l2);
         if (c && c[0].length < l2.replace(/[ \t\r]+$/, '').length) { const vs = ls + c[0].length, ve = valueEnd(s, vs); ivs.push([vs, ve, 'SECRET']); j = Math.max(le, ve); }
         else j = le;
@@ -887,13 +890,15 @@ function scrubQuery(s, label, resolve) {
 // URL userinfo scheme://user:pass@host — the whole user:pass is replaced (a token-as-user form too). No length ceiling:
 // a 300-character generated password must go too, and the classes exclude whitespace, slash and @, so the scan stays
 // linear without one (PR #16 review).
-const URL_USERINFO = /([a-z][a-z0-9+.\-]{1,30}:\/\/)([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;
+const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,30}:\/\/)([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // a scheme may be one letter (x://) (PR #16 review)
 
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.
 // Named header lines (Authorization:, Cookie:) are removed by scrubAssignments to the end of the line first; this is the
 // safety net for a scheme token that is not introduced by a header name.
 function scrubBareAuth(s, label) {
-  let out = s.replace(/\b(Basic|Bearer)[ \t]+([A-Za-z0-9._~+/\-]{8,}={0,2})/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
+  // No minimum length (`Basic YTpi` is a:b in base64; PR #16 review); a short plain lowercase word ("Bearer token",
+  // "Basic auth") is prose about the scheme, not a token, and stays.
+  let out = s.replace(/\b(Basic|Bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/g, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v))) ? m : `${sch} ${label('KEY', v)}`);
   return out.replace(/\b(Digest)[ \t]+([^\n]*)/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
 }
 

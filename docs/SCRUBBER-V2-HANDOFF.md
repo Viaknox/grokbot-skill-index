@@ -12,6 +12,7 @@ nothing here was merged, pushed to `main`, or marked ready.
 | After (`npm test`, commit `7de8ea1`) | 308 | 308 pass, exit 0 |
 | After PR #16 review round 3 (commit `87b3b71`) | 311 | 311 pass, exit 0 |
 | After PR #16 review round 4 (Codex, 11 threads on `87b3b71`) | 325 | 325 pass, exit 0 |
+| After PR #16 review round 6 (four promised-tier threads on `e089193`) | 329 | 329 pass, exit 0 (Windows and Linux) |
 | After PR #16 review round 5 (Linux CI, tiers; head `441b2b7`) | 325 | 325 pass on Windows (Node 24) and on Linux (WSL Ubuntu, Node 22); `.github/workflows/test.yml` runs the suite on `ubuntu-latest` |
 
 New files: `engine/test/scrubber-v2.test.js` (corpus, known bypasses, placeholders, residual, sanitize, echoes, mutation
@@ -55,6 +56,10 @@ survivors, review-2 bypasses, five self-attack rounds), `boundary.test.js`, `tra
 | Review 4: `check --consent` on a chat over the 4,000,000-character cap | `ScrubError` crashed the command | one `judge:held` finding (unsure), exit 0, no call (`judgeHeld` shared with `evaluate`) |
 | Review 4: key revealed by the agent in message 2 and quoted by the user in message 3 | `echoed_secret` (inventory built from all user turns first) | `revealed_secret` (message 2); an echo only after the user typed it |
 | Review 4: perf budgets in fixed milliseconds | failed on the reviewer's slower machine | ratios against an in-test baseline unit (plan D18) |
+| Review 6 (PR #16, promised): `credentials:` record with a blank line before `nested:` | the blank line ended the scope | the record continues across blank lines, ends at a dedent |
+| Review 6: `curl -H "Basic YTpi"` | leaked (8-character minimum) | no minimum; a short plain lowercase word (`Bearer token`) stays |
+| Review 6: an RSA key header closed by an EC footer, more body after it | block ended at the wrong footer | a footer must carry the header's type; otherwise the block runs to the end of input |
+| Review 6: `x://alice:hunter2@db/app` | leaked (scheme needed two characters) | whole userinfo goes |
 | Review 5 (PR #16, Linux CI): `2000 YAML lines, growing indent` perf payload took 1.8 s on Node 22 (24 ms on Node 24) | `ScrubError` from the 2 s cap, `npm test` red on Linux | the review-3 prose rule's unbounded `[ \t]+` lookbehind is bounded to 4 blanks; 32 ms on Node 22, root cause fixed, payload kept at 2M characters |
 | Found while adding the review-4 perf payloads: 4000 `<textarea name="password">x</textarea>` lines | 1.6 s (the sibling-pair pass rescanned to the end of the text for every name with no `value=`) | 150 ms, linear (last search remembered; the indexed-variable search bounded to its 20 lines) |
 

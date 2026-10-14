@@ -467,6 +467,36 @@ test('[promised] known bypass (review 4): a never_send term next to @ is still s
   for (const t of ['user@Acme', 'jo@acme', 'mail to jo@acme.example now']) assert.ok(!/acme/i.test(scrubber({ terms: ['Acme'] }).scrub(t)), t);
 });
 
+// ---- PR #16 review round 6 (promised tier): fixtures written before their fixes ----
+
+test('[promised] known bypass (review 5): a YAML credential scope continues across blank lines', () => {
+  const out = scrubber().scrub('credentials:\n  username: admin\n\n  nested:\n    account: hunter2\n\nother: keepme\n');
+  for (const v of ['admin', 'hunter2']) assert.ok(!out.includes(v), v + ' survived: ' + out);
+  assertKept(out, ['credentials:', 'nested:', 'other: keepme']);
+});
+
+test('[promised] known bypass (review 5): Basic and Bearer tokens have no minimum length; a plain lowercase word stays', () => {
+  for (const [text, v] of [['curl -H "Basic YTpi" https://h.example', 'YTpi'], ['send Bearer Ab1 with it', 'Ab1'], ['Basic dXNlcjpwdw==', 'dXNlcjpwdw==']]) {
+    const s = scrubber(); const out = s.scrub(text); assert.ok(!out.includes(v), text + ' -> ' + out); assert.equal(s.counts().KEY, 1, out);
+  }
+  for (const keep of ['Basic auth is fine and the Bearer token header is set', 'use the Bearer scheme here']) assert.equal(scrubber().scrub(keep), keep, keep);
+});
+
+test('[promised] known bypass (review 5): a PEM footer ends the block only when its type matches the header', () => {
+  const body = gen.pemLines(rng, 3), tail = gen.pemLines(rng, 2);
+  const text = PEM_HEAD('RSA') + '\n' + body.join('\n') + '\n' + PEM_FOOT('EC') + '\n' + tail.join('\n') + '\nTRAILING TEXT';
+  const out = scrubber().scrub(text);
+  assertGone(out, [...body, ...tail], 'mismatched footer'); assert.ok(!out.includes('TRAILING TEXT'), 'text after a mismatched footer survived (no footer means to the end of input): ' + out);
+  const ok = scrubber().scrub(PEM_HEAD('RSA') + '\n' + body.join('\n') + '\n' + PEM_FOOT('RSA') + '\nAFTER');
+  assertGone(ok, body); assertKept(ok, ['AFTER']);
+});
+
+test('[promised] known bypass (review 5): URL userinfo with a one-character scheme', () => {
+  const s = scrubber(); const out = s.scrub('x://alice:hunter2@db/app and a://tok8chars@h');
+  assert.ok(!out.includes('hunter2') && !out.includes('alice') && !out.includes('tok8chars'), out);
+  assert.equal(s.counts().KEY, 2, out);
+});
+
 // ---- mutation survivors (engine/scripts/mutate.mjs): each test kills one mutant that the suite missed ----
 
 test('[promised] mutation: names split at letter/digit boundaries, so token2 and v2token are credentials', () => {
