@@ -234,6 +234,16 @@ function bracketEnd(s, start) {
 // value runs to the end of the line (so a trailing # comment goes too; plan D1: nothing on the line after a credential
 // separator survives, not even after a comma).
 function valueEnd(s, start) {
+  // Multi-line literals run to their own closing delimiter: triple quotes, backticks and shell/HCL heredocs
+  // (password = <<EOF … EOF; PR #27 review). An unclosed one takes the rest of the input.
+  const tq = s.slice(start, start + 3);
+  if (tq === '"""' || tq === "'''") { const e = s.indexOf(tq, start + 3); return e < 0 ? s.length : e + 3; }
+  if (s[start] === '`') { for (let i = start + 1; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === '`') return i + 1; } return s.length; }
+  const hd = /^<<[-~]?[ \t]*(["']?)([A-Za-z_]\w{0,40})\1/.exec(s.slice(start, start + 60));
+  if (hd) {
+    for (let ls = s.indexOf('\n', start); ls >= 0; ) { const le0 = s.indexOf('\n', ls + 1), le = le0 < 0 ? s.length : le0; if (s.slice(ls + 1, le).trim() === hd[2]) return le; if (le0 < 0) break; ls = le0; }
+    return s.length;
+  }
   const q = s[start];
   if (q === '"' || q === "'") {
     let i = start + 1;
@@ -351,6 +361,22 @@ function scrubAssignments(s, view, label, resolve) {
   return out + s.slice(at);
 }
 
+// A quoted key that is not identifier-shaped ("api key": …, 'password field': …) is read whole and judged like any
+// other setting name (PR #27 review). Identifier-shaped keys are left to scrubAssignments.
+const QUOTED_KEY = /(["'])([^"'\n]{1,80})\1[ \t]*[:=][ \t]*/gu;
+function scrubQuotedKeys(s, label, resolve) {
+  let out = '', at = 0; QUOTED_KEY.lastIndex = 0;
+  for (let m; (m = QUOTED_KEY.exec(s));) {
+    const name = resolve(m[2]);
+    if (/^[\p{L}\p{N}_$.\-]+$/u.test(name) || !isCredentialName(name)) continue;
+    const vs = m.index + m[0].length; if (s[vs] === '{') continue;
+    const ve = s[vs] === '[' ? bracketEnd(s, vs) : valueEnd(s, vs), v = s.slice(vs, ve);
+    if (!v.trim() || isPlaceholderValue(v.trim())) continue;
+    out += s.slice(at, vs) + label('SECRET', v); at = ve; QUOTED_KEY.lastIndex = ve;
+  }
+  return out + s.slice(at);
+}
+
 // Line forms that carry no separator at all, handled line by line in one forward walk:
 //  - two tokens, the first a credential name at the line start (after an optional export/setenv/set, or a prefix with no
 //    spaces such as //registry/:): "password CorrectHorse9!", "export PASSWORD x", "//r/:_authToken x". Prose such as
@@ -463,7 +489,7 @@ const GENERIC_ASSIGN = /(^|[\s{,;])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,60})\2[ 
 const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*[:=][ \t]*\{/gu;
 // Any quoted property counts as a key inside a credential container ("alice@example.com", "my key", "1st"), not only
 // identifier-shaped ones (viaknox PR #27 review).
-const KV = /("[^"\n]{0,400}"|'[^'\n]{0,400}'|[\p{L}_$][\p{L}\p{N}_$.\-]{0,160})[ \t]*[:=][ \t]*/gu;
+const KV = /("[^"\n]{0,400}"|'[^'\n]{0,400}'|[\p{L}\p{N}_$][\p{L}\p{N}_$.\-]{0,160})[ \t]*[:=][ \t]*/gu;   // numeric keys too ({123: …}; PR #27 review)
 // Every scalar value between `open` ({) and `close` (its match): quoted strings whole, bare values up to , } ] or the
 // line end; a nested { or [ is simply scanned through, so nested keys are seen one by one.
 function objectScalars(s, open, close, ivs) {
@@ -486,7 +512,7 @@ const YAML_MAP_KEY = /^([ \t]*)(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\2:[ \t
 // A child line inside a credential block: `key: …`, `- key: …` or a bare list item `- …`; the match is the prefix before
 // the scalar. A map head (`nested:` with nothing after it) matches too and is told apart by having no value.
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
-const K8S_SECRET = /^[ \t]*kind:[ \t]*Secret[ \t]*$/m;
+const K8S_SECRET = /^[ \t]*kind:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\1[ \t]*(?:#.*)?$/m;   // quoted, tagged or commented kinds too (PR #27 review)
 function braceEnd(s, open) {
   let d = 0; const lim = Math.min(s.length, open + 65536);
   for (let i = open; i < lim; i++) {
@@ -567,6 +593,10 @@ function scrubTables(s, label, resolve) {
         for (; i < s.length; i++) {
           const c = s[i];
           if (c === "'" || c === '"') { for (i++; i < s.length && s[i] !== c; i++) if (s[i] === '\\') i++; continue; }
+          // PostgreSQL dollar quotes ($$…$$, $tag$…$tag$) and array brackets keep their commas (PR #27 review).
+          if (c === '$') { const dq = /^\$[A-Za-z_]?\w{0,30}\$/.exec(s.slice(i, i + 34)); if (dq) { const e = s.indexOf(dq[0], i + dq[0].length); i = e < 0 ? s.length : e + dq[0].length - 1; continue; } }
+          if (c === '[' || c === '{') { depth++; continue; }
+          if (c === ']' || c === '}') { depth--; continue; }
           if (c === '(') depth++;
           else if (c === ')') { if (depth === 0) { if (cols.includes(k)) ivs.push([cellStart, i, 'SECRET']); done = true; break; } depth--; }
           else if (c === ',' && depth === 0) { if (cols.includes(k)) ivs.push([cellStart, i, 'SECRET']); k++; cellStart = i + 1; }
@@ -615,7 +645,8 @@ function scrubTables(s, label, resolve) {
     }
   }
   if (/<th\b/i.test(s)) {
-    const CELL = /<t([hd])\b[^<>]*>([^<]*)<\/t[hd]>/gi;
+    // A cell may hold inline markup (<td><code>…</code></td>); the header text is read with tags removed (PR #27 review).
+    const CELL = /<t([hd])\b[^<>]*>((?:[^<]|<(?!\/?t[hdr]\b|\/table))*)<\/t[hd]>/gi;
     for (let t = s.indexOf('<table'); t >= 0; t = s.indexOf('<table', t + 6)) {
       let end = s.indexOf('</table>', t); if (end < 0) end = s.length; end = Math.min(end, t + 65536);
       let cols = null; const ROW = /<tr\b[^<>]*>/gi; ROW.lastIndex = t;
@@ -623,7 +654,7 @@ function scrubTables(s, label, resolve) {
         let rowEnd = s.indexOf('</tr>', r.index); if (rowEnd < 0 || rowEnd > end) rowEnd = end;
         const cells = []; CELL.lastIndex = r.index + r[0].length;
         for (let c; (c = CELL.exec(s)) && c.index < rowEnd;) cells.push({ th: c[1].toLowerCase() === 'h', a: c.index + c[0].length - c[2].length - 5 - 0, text: c[2], start: c.index + c[0].indexOf('>') + 1 });
-        if (cells.some(c => c.th)) { const found = cells.map((c, k) => (isCredentialName(resolve(c.text.trim())) ? k : -1)).filter(k => k >= 0); cols = found.length ? new Set(found) : null; }
+        if (cells.some(c => c.th)) { const found = cells.map((c, k) => (isCredentialName(resolve(c.text.replace(/<[^<>]*>/g, '').trim())) ? k : -1)).filter(k => k >= 0); cols = found.length ? new Set(found) : null; }
         else if (cols) for (const k of cols) if (cells[k] && cells[k].text.trim()) ivs.push([cells[k].start, cells[k].start + cells[k].text.length, 'SECRET']);
         ROW.lastIndex = rowEnd;
       }
@@ -850,7 +881,7 @@ function scrubMultipart(s, label, resolve) {
 // XML/HTML elements whose tag name is a credential name (<ageToken>…</ageToken>, <snykToken>…</snykToken>): the content
 // between the tags goes, the tags stay. Linear: each opening tag is found once and the closing tag with one indexOf;
 // content is bounded at 64 KB so a tag never opened is not a quadratic scan.
-const XML_OPEN = /<([A-Za-z_\uE000][\w.\-:\uE000\uE001]{0,80})(?:\s[^<>\n]{0,200})?>/g;
+const XML_OPEN = /<([\p{L}_\uE000][\p{L}\p{N}_.\-:\uE000\uE001]{0,80})(?:\s[^<>\n]{0,200})?>/gu;   // Unicode names too (<пароль>; PR #27 review)
 function scrubXml(s, label, resolve) {
   if (!s.includes('</')) return s;
   // Every "</" position once, so each opening tag finds its closing tag by binary search instead of an indexOf that,
@@ -899,6 +930,9 @@ const NOT_L = '(?![\\p{L}\\p{N}])', NOT_L_BEHIND = '(?<![\\p{L}\\p{N}])';
 // Up to two plain words may sit between the noun and the copula ("the secret phrase is X", "my api key here is X") when
 // the value carries a digit or a symbol, so "Our API key rotation policy is documented" (a plain word) is left alone.
 const COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+|[\'’]s[ \\t]+)("[^"\\n]*"|\'[^\'\\n]*\'|\\S+)', 'giu');
+// Past and changed forms ("was", "will be", "changed to") take a value only when it is quoted or token-like (has a digit,
+// punctuation or symbol), so "the password was reset yesterday" keeps its words (PR #27 review).
+const PAST_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '[ \\t]+(?:was|were|will[ \\t]+be|(?:has|had|have)[ \\t]+been|(?:is|was)[ \\t]+now|(?:changed|set|reset|updated)[ \\t]+to)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{S}]|\\S*\\p{P}\\S)\\S+)', 'giu');
 const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+\\p{L}{1,20}){1,2}' + '[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)\\S+)', 'giu');
 // A credential noun, after a prose word ("use the password", "enter api key"), followed directly by its value: a quoted
 // token that carries a digit or a symbol before its last character ("use password x9k2"), so "my password yesterday."
@@ -908,7 +942,11 @@ const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]
 const NOUN_VALUE_RE = new RegExp('(?<=\\p{L}[ \\t]{1,4})' + PROSE_CRED + NOT_L + '[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)[\\p{L}\\p{N}][^\\s"\']*)', 'giu');
 // A multi-word foreign name before a separator: "Mot de passe: X", "clé API = X".
 const PHRASE2_RE = new RegExp(NOT_L_BEHIND + '(?:mot[ \\t]+de[ \\t]+passe|cl[eé][ \\t]+(?:api|secr[eè]te)|chave[ \\t]+(?:de[ \\t]+)?api)' + NOT_L + '[ \\t]*(?:->|[:=\\u2236\\uFF1D\\uFF1A\\u2192])[ \\t]*("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]+)', 'giu');
+// "I changed the password to …", "set my PIN to …" (PR #27 review).
+const CHANGE_RE = new RegExp(NOT_L_BEHIND + '(?:changed|set|reset|updated|switched)[ \\t]+(?:(?:the|my|our|your|his|her|their)[ \\t]+)?(?:\\p{L}{1,20}[ \\t]+)?' + PROSE_CRED + NOT_L + '[ \\t]+to[ \\t]+("[^"\\n]*"|\'[^\'\\n]*\'|\\S+)', 'giu');
 function scrubCopula(s, label) {
+  s = s.replace(CHANGE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  s = s.replace(PAST_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   const out = s.replace(COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   const mid = out.replace(QUAL_COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   return mid.replace(NOUN_VALUE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
@@ -1147,6 +1185,7 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubTables(s, label, resolve);
     s = scrubCodeForms(s, label, resolve);
     s = scrubConcatNames(s, label, resolve);
+    s = scrubQuotedKeys(s, label, resolve);
     s = scrubAssignments(s, V(s), label, resolve);
     s = scrubLineForms(s, label, resolve);
     s = scrubCallArg(s, label, resolve);

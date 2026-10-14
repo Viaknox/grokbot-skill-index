@@ -610,3 +610,14 @@ test('[promised] compound names with a digit suffix (APIKEYB64) and mixed arrays
   assert.ok(!scrubber().sanitize('APIKEYB64: "aHVudGVyMg=="').text.includes('aHVudGVyMg'));
   assert.ok(!scrubber().sanitize('{"credentials":{"items":["hunter2",{"note":"legacy"}]}}').text.includes('hunter2'));
 });
+test('[promised] viaknox PR #27 round 7: quoted multiword keys, numeric keys, heredocs and multi-line literals', () => {
+  for (const x of ['{"api key":"hunter2"}', '"password field": hunter2', 'credentials: {123: hunter2}', 'password = <<EOF\nhunter2\nEOF', 'password = """\nhunter2\n"""', "password = '''\nhunter2\n'''"])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
+  assert.equal(scrubber().sanitize('password = <<EOF\nhunter2\nEOF\nnext=ok').text, 'password = [SECRET_1]\nnext=ok');
+});
+test('[best-effort] viaknox PR #27 round 7: HTML cells with markup, decorated k8s kinds, Unicode XML names, prose verbs, SQL dollar quotes', () => {
+  for (const x of ['<table><tr><th>password</th></tr><tr><td><code>hunter2</code></td></tr></table>', 'kind: Secret # prod\nstringData: {db: hunter2}', 'kind: "Secret"\nstringData: {db: hunter2}',
+    '<пароль>hunter2</пароль>', '<密码>hunter2</密码>', 'the password was hunter2', 'I changed the password to hunter2', "INSERT INTO users(note,password) VALUES ($$a,b$$,'hunter2')"])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
+  assert.equal(scrubber().sanitize('The password was reset yesterday by IT').text, 'The password was reset yesterday by IT');
+});
