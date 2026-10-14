@@ -811,3 +811,8 @@ test('[best-effort] round 32: docker login -p with a space', () => {
   assert.ok(!/hunter22/.test(scrubber().sanitize('docker login -u alice -p hunter22 registry.example.com').text));
   assert.equal(scrubber().sanitize('psql -h db -p 5432').text, 'psql -h db -p 5432');
 });
+test('[best-effort] round 34: kubectl create secret --from-literal, SASL challenge-response lines', () => {
+  for (const x of ['kubectl create secret generic db --from-literal=foo=hunter22', 'C: AUTH LOGIN\nS: 334 VXNlcm5hbWU6\nC: dXNlcg==\nS: 334 UGFzc3dvcmQ6\nC: aHVudGVyMjI=\nS: 235 ok', 'a1 AUTHENTICATE PLAIN\n+ \nAGh1bnRlcjIy'])
+    assert.ok(!/hunter22|aHVudGVyMjI|AGh1bnRlcjIy/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('kubectl get secret db').text, 'kubectl get secret db');
+});

@@ -1043,6 +1043,9 @@ function scrubCallArg(s, label, resolve) {
   // SMTP/IMAP "AUTH PLAIN <base64>" initial responses (RFC 4954; PR #27 review).
   s = s.replace(/^((?:[ \t]*(?:USER|AGENT|C|S|>>?|<<?):?)?[ \t]*(?:\w+[ \t]+)?AUTH(?:ENTICATE)?[ \t]+(?:PLAIN|LOGIN|XOAUTH2?|OAUTHBEARER|CRAM-MD5|DIGEST-MD5|SCRAM-SHA-\d+(?:-PLUS)?)[ \t]+)(\S+)/gim, (m, pre, v) =>
     v === '=' || isPlaceholderValue(v) ? m : pre + label('SECRET', v));
+  // SASL challenge-response (RFC 4954 §4; IMAP "+" continuations, RFC 9051): after an AUTH command, each client line
+  // answering a server challenge ("334 …" or "+ …") is a Base64 credential response (PR #27 review).
+  if (/\bAUTH(?:ENTICATE)?\b/i.test(s)) s = s.replace(/^([ \t]*(?:(?:S|SERVER|AGENT|<<?):?[ \t]*)?(?:334|\+)(?:[ \t][^\n]*)?\r?\n[ \t]*(?:(?:C|CLIENT|USER|>>?):?[ \t]*)?)([A-Za-z0-9+\/]{2,}={0,2})(?=[ \t]*\r?$)/gm, (m, pre, v) => v === '*' || isPlaceholderValue(v) ? m : pre + label('SECRET', v));
   // Redis "AUTH [username] password" (redis.io/docs/latest/commands/auth; PR #27 review): the last argument is the
   // password. On a redis-cli line, after a redis prompt (host:port>), or as an uppercase AUTH command at line start;
   // a SASL mechanism after AUTH is the SMTP/IMAP form above, not this one.
@@ -1161,6 +1164,9 @@ function scrubFlags(s, label, V) {
   // htpasswd -b … user password: the last argument is the password; smbclient/rpcclient/smbmap -U user%password (PR #27).
   s = s.replace(/^(.*\bhtpasswd\b.*[ \t]-\w*b\w*\b.*[ \t])("[^"\n]*"|'[^'\n]*'|[^\s"']+)[ \t]*$/gim, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v));
   s = s.replace(/^.*\b(?:smbclient|rpcclient|smbmap|smbget|smbcacls|net|mount\.cifs)\b.*$/gim, (line) => line.replace(/((?:^|\s)(?:-U|--user(?:name)?)(?:=|[ \t]+)["']?[^\s%"']*%)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
+  // kubectl create secret … --from-literal=key=value: every literal is Secret data, whatever its key (kubernetes.io
+  // kubectl create secret generic; PR #27 review).
+  s = s.replace(/^.*\b(?:kubectl|oc)\b.*\bcreate[ \t]+secret\b.*$/gim, (line) => line.replace(/(--from-literal(?:=|[ \t]+)["']?[^=\s"']*=)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
   // docker/podman/buildah/nerdctl/helm … login -p x: -p is --password there (docs.docker.com docker login; PR #27 review).
   s = s.replace(/^.*\b(?:docker|podman|buildah|nerdctl|skopeo|helm|oras)\b.*\blogin\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));
   s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
