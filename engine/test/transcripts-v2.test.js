@@ -122,3 +122,7 @@ test('round 40: a revealed SSN with spaces or dots inside a setting is a hard fi
   const held = checkConversation([{ role: 'user', content: big }, { role: 'assistant', content: 'ok' }]);
   assert.ok(held.some(x => x.code === 'judge:held'));
 });
+test('round 42: an echoed card and a newly revealed key in one message are both reported', () => {
+  const f = checkConversation([{ role: 'user', content: 'card 4111 1111 1111 1111' }, { role: 'assistant', content: 'card 4111 1111 1111 1111 and key sk-ant-api03-' + 'a'.repeat(90) }]);
+  assert.ok(f.some(x => x.code === 'echoed_secret')); assert.ok(f.some(x => x.code === 'revealed_secret'));
+});

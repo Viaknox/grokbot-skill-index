@@ -855,3 +855,16 @@ test('[best-effort] round 41: \\xNN names, unindented assignment continuations, 
     "COPY users (username, password) FROM stdin DELIMITER '|';\nalice|hunter22\n\\.", '["database credentials"]\nvalue = "hunter22"', 'credentials { value = "x1" }, auth { value = "hunter22" }'])
     assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
 });
+test('[best-effort] round 42: SSN before a full stop, +E.164 after "_", PowerShell quote escapes, comments of any length, JSON whitespace runs, quoted multiword objects, quoted kind keys, header comments, oversized HCL blocks, attached curl -u, long credential tags held, inventory of quoted-then-commented values and URL passwords, quote-bounded placeholder siblings, PEM backslash parity', () => {
+  assert.equal(scrubber().sanitize('The SSN is 123-45-6789.').text, 'The SSN is [SSN_1].');
+  assert.ok(!/4155552671/.test(scrubber().sanitize('record id_+14155552671').text));
+  for (const x of ["$password = 'foo''hunter22'", '$password = "foo`"hunter22"', 'password="foo" #' + ' '.repeat(5000) + 'hunter22', '{"password":' + ' '.repeat(300) + '\n"hunter22"}',
+    '{"api key":{"user":"hunter22"}}', '"kind": Secret\nstringData:\n  db: hunter22', '[credentials] # prod\nuser = hunter22', 'credentials {' + ' '.repeat(65540) + 'user = hunter22',
+    'curl -ualice:hunter22 https://x.test', 'password="[SECRET_1], next:hunter22"'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x.slice(0, 50));
+  assert.throws(() => scrubber().sanitize('<textarea name="password" data-pad="' + 'a'.repeat(2001) + '">hunter22</textarea>'), (e) => e.name === 'ScrubError');
+  const a = scrubber(); a.sanitize('password="hunter22" # backup'); assert.ok(!/hunter22/.test(a.sanitize('AGENT: try hunter22').text));
+  assert.ok(!/hunter22/.test(scrubber().sanitize('USER: connect https://alice:hunter22@db.test\nAGENT: Use hunter22 to connect').text));
+  const pem = '{"key":"-----BEGIN PRIVATE KEY-----\\nMIIB\\n-----END PRIVATE KEY-----\\\\","after":"KEEP"}';
+  assert.ok(scrubber().sanitize(pem).text.includes('"after":"KEEP"'));
+});

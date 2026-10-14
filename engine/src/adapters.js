@@ -96,6 +96,8 @@ function namesWithPrivate(cfg, privateTerms) {
     }
   };
   for (const [name, d] of Object.entries(cfg.tools || {})) { if (has(name)) hits.push(`tool ${name}`); walk(d && d.parameters, `tool ${name}.parameters`); }
+  // The model id is sent verbatim too (it cannot be scrubbed without making the request invalid; PR #16 review).
+  if (typeof cfg.model === 'string' && has(cfg.model)) hits.push('model id');
   return hits;
 }
 
@@ -105,7 +107,7 @@ export function modelAdapter(cfg, or, { scrub, privateTerms = [] } = {}) {
   const S = (t) => { if (!scrub) return t; let z; try { z = scrub.sanitize(t); } catch (e) { if (e instanceof ScrubError) throw new HeldBack(); throw e; } if (z.held) throw new HeldBack(); return z.text; };
   const U = (t) => (scrub ? scrub.unscrub(t) : t);
   const clash = namesWithPrivate(cfg, privateTerms);
-  if (clash.length) throw new Error(`A word from your --private list is in a tool name, a parameter name or a required list (${clash.length} place${clash.length > 1 ? 's' : ''}); it cannot be scrubbed without breaking the tool, so nothing was sent. Rename it or remove the word from the list.`);   // also $defs/definitions names (PR #16 review)
+  if (clash.length) throw new Error(`A word from your --private list is in the model id, a tool name, a parameter name or a required list (${clash.length} place${clash.length > 1 ? 's' : ''}); it cannot be scrubbed without breaking the tool, so nothing was sent. Rename it or remove the word from the list.`);   // also $defs/definitions names (PR #16 review)
   // Tool definitions are sent too, so every string in them is scrubbed (descriptions, enums, examples) except
   // tool and property names and `required` lists, which the model must echo back exactly for dispatch.
   const scrubSchema = (v, key) => typeof v === 'string' ? S(v)

@@ -30,7 +30,11 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
         // Keep tool calls and results in the history when the adapter exposes them (model adapter), not just the reply.
         history.push({ role: 'user', content: message }, ...(t.messages || [{ role: 'assistant', content: t.reply }]));
       }
-      const findings = held ? [heldFinding()] : [...checkCase(c, turns, adapter), ...await judge(or, scrub, transcript(c, instructions, turns, adapter.observesTools))];
+      // A held run still keeps the failures its completed turns already proved and that later turns cannot undo (a false
+      // "done", a forbidden call or phrase); end-of-run expectations are not judged for turns that never ran (PR #16 review).
+      const MONOTONE = new Set(['false_done', 'must_not_call', 'must_not_say']);
+      const findings = held ? [heldFinding(), ...(turns.length ? checkCase(c, turns, adapter).filter(f => MONOTONE.has(f.code) && !f.ok && !f.unsure) : [])]
+        : [...checkCase(c, turns, adapter), ...await judge(or, scrub, transcript(c, instructions, turns, adapter.observesTools))];
       const passed = runPassed(findings);
       runs.push({ case: c.id, rep, passed, findings, turns: turns.map(t => ({ reply: t.reply, tools: t.tools, ...(t.truncated ? { truncated: true } : {}) })),
         ms: turns.reduce((a, t) => a + t.ms, 0), tokens: turns.some(t => t.tokens == null) ? null : turns.reduce((a, t) => a + t.tokens, 0),

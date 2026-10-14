@@ -19,7 +19,7 @@ import { evaluate, pool, CONCURRENCY } from './src/evaluate.js';
 import { validateSuite } from './src/rules.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
 import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
-import { scrubber } from './src/redact.js';
+import { scrubber, ScrubError } from './src/redact.js';
 import { parseTranscripts, checkConversation } from './src/transcripts.js';
 import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judge.js';
 
@@ -43,8 +43,11 @@ if (cmd === 'check') {
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
     // A chat over the scrubber's size or time cap gets the held finding (unsure), like a run in evaluate: never a crash.
     const findings = [...checkConversation(msgs), ...(or ? await judgeHeld(scrub, chatState(instructions, msgs), (san) => judgeConversation(or, san, { hasInstructions: !!instructions })) : [])];
-    return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && scrub.scrub(f.quote) })),
-      turns: msgs.map(m => ({ role: m.role, reply: scrub.scrub(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
+    // Report text is scrubbed again for display; past the scrubber's cap it is withheld rather than crashing the command
+    // (PR #16 review).
+    const shown = (t) => { try { return scrub.scrub(t); } catch (e) { if (e instanceof ScrubError) return '[held back: too large to scrub safely]'; throw e; } };
+    return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
+      turns: msgs.map(m => ({ role: m.role, reply: shown(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });
   const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
   rep.scrubbed = scrub.counts();

@@ -82,3 +82,6 @@ test('review 3: splitter is linear on long blank runs; more key shapes are scrub
   const out = scrubber().scrub(['sk_live_' + 'abcdefghijklmnop', 'whsec_' + 'abcdefghijkl', 'Bearer abcdefghijklmnopqrstu', 'https://bob:hunter2pw@db.example.com', 'glpat-' + 'abcdefghijklmnopqrst'].join(' '));
   for (const leak of ['sk_live_abc', 'whsec_abc', 'abcdefghijklmnopqrstu', 'hunter2pw', 'glpat-']) assert.ok(!out.includes(leak), leak);
 });
+test('round 42: a --private term in the replay model id refuses the run', () => {
+  assert.throws(() => modelAdapter({ model: 'vendor/Acme-private', tools: {} }, {}, { privateTerms: ['Acme'] }), /model id/);
+});

@@ -236,3 +236,18 @@ test('[promised] writer: a placeholder minted from the instructions is restored 
   const fix = await proposeFix(or, { instructions: 'You are BookBot. Email help@bookbot.example for help.', failures: [{ case: 'c', code: 'x', detail: 'd' }] });
   assert.match(fix.revised_instructions, /help@bookbot\.example/);
 });
+test('round 42: a run held at a later turn keeps the false "done" its first turn already proved', async () => {
+  const { or, calls } = recorder();
+  let n = 0;
+  const adapter = { name: 't', observesTools: true, turn: async () => { if (n++ > 0) throw new HeldBack(); return { reply: 'I booked it.', tools: [], ms: 1 }; } };
+  const rep = await evaluate({ suite: { cases: [{ id: 'c', turns: ['book it', 'and again'] }] }, instructions: 'x', adapter, or, scrub: scrubber() });
+  const b = Object.fromEntries(rep.buckets.map(x => [x.id, x]));
+  assert.equal(b.truth.failed, 1); assert.equal(b.rules.unsure, 1);
+  assert.equal(rep.runs[0].passed, false); assert.equal(calls.length, 0);
+});
+test('round 42: cli.js check finishes with a report when a pasted chat exceeds the scrubber cap (no crash)', () => {
+  const d = mkdtempSync(join(tmpdir(), 'tu-')), f = join(d, 'chat.txt');
+  writeFileSync(f, 'User: ' + Array.from({ length: 2000 }, () => 'credentials {').join('\n') + '\nBot: ok\n');
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--out', join(d, 'o')], { encoding: 'utf8', maxBuffer: 256e6 });
+  assert.equal(r.status, 0, r.stderr);
+});

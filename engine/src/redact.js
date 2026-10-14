@@ -218,7 +218,7 @@ function scrubPem(s, label) {
       // block with no closing quote takes the rest of the input (the overall size cap still applies), so a long key is
       // never cut short (PR #16 review). The scan stays linear because the next header search resumes at `stop`.
       let q = afterHead;
-      while (q < s.length) { if (s[q] === '"' && s[q - 1] !== '\\') break; q++; }
+      while (q < s.length) { if (s[q] === '\\') { q += 2; continue; } if (s[q] === '"') break; q++; }   // backslash pairs, not just the previous character (PR #16 review)
       stop = q;
     } else {
       const PEM_FOOT = pemFootFor(h[1]); PEM_FOOT.lastIndex = afterHead;
@@ -248,7 +248,10 @@ const SIBLING_AFTER = /^[\s"'`)\]}]*[,;][\s"']*(?:\uE000[A-Z]+_\d+\uE001|(?:"[^"
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);
   if (!m) return false;
-  const [rest, ...more] = t.slice(m[0].length).split('\n');
+  let [rest, ...more] = t.slice(m[0].length).split('\n');
+  // Inside a quoted value the placeholder must be followed by that value's closing quote before any sibling is accepted:
+  // "[SECRET_1], next:x" is all one value (PR #16 review).
+  const q0 = /^["']/.exec(t); if (q0) { const r = rest.replace(/^[ \t]*/, ''); if (r[0] !== q0[0]) return false; rest = r.slice(1); }
   // Live data on any later line of the same value (password="[SECRET_1]\nhuntertwo") means it is not already scrubbed
   // (PR #16 review).
   if (more.some(l => !/^[\s"'`)\]},;.]*$/.test(l))) return false;
@@ -272,6 +275,13 @@ function bracketEnd(s, start) {
 // the next line; a YAML block scalar (| or >) or an empty value takes the deeper-indented block below it; otherwise the
 // value runs to the end of the line (so a trailing # comment goes too; plan D1: nothing on the line after a credential
 // separator survives, not even after a comma).
+// True when the text just before `start` is a quoted key and a colon, with any whitespace between (no fixed lookback
+// window: {"password":<200 spaces>\n"x"}; PR #16 review). Only the whitespace run is walked.
+function quotedKeyBefore(s, start) {
+  let b = start - 1; while (b >= 0 && /\s/.test(s[b])) b--;
+  if (s[b] !== ':') return false; b--; while (b >= 0 && /\s/.test(s[b])) b--;
+  return s[b] === '"' || s[b] === "'";
+}
 function valueEnd(s, start) {
   // Multi-line literals run to their own closing delimiter: triple quotes, backticks and shell/HCL heredocs
   // (password = <<EOF … EOF; PR #27 review). An unclosed one takes the rest of the input.
@@ -287,7 +297,7 @@ function valueEnd(s, start) {
   }
   // JSON allows any whitespace after the colon, newlines included ({"password":\n"x"}; PR #16 review): a quoted key
   // whose value starts on a later line takes that quoted value, whatever its indent.
-  if ((s[start] === '\n' || s[start] === '\r') && /["']\s*:\s*$/.test(s.slice(Math.max(0, start - 200), start))) {
+  if ((s[start] === '\n' || s[start] === '\r') && quotedKeyBefore(s, start)) {
     let p = start; while (p < s.length && /\s/.test(s[p])) p++;
     if (s[p] === '"') { for (let i = p + 1; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === '"') return i + 1; } return s.length; }
     // Arrays, objects and bare scalars after the line break go too ({"password":\n["x"]}, {"pin":\n123456}; PR #16 review).
@@ -298,11 +308,14 @@ function valueEnd(s, start) {
   const q = s[start];
   if (q === '"' || q === "'") {
     let i = start + 1;
-    for (; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === q) break; }
+    // Escapes: a backslash, a PowerShell backtick inside "…", and a doubled quote ('foo''bar', "a""b"; PR #16 review).
+    for (; i < s.length; i++) { const c = s[i]; if (c === '\\' || (c === '`' && q === '"')) { i++; continue; } if (c === q) { if (s[i + 1] === q) { i++; continue; } break; } }
     if (i >= s.length) return s.length;
-    // A trailing "# comment" on the same line goes with the value (password: "x" # backup y; PR #16 review).
-    const cm = /^[ \t]*[#;][^\n]*/.exec(s.slice(i + 1, i + 1 + 4000));   // INI ";" comments too (PR #16 review)
-    return cm ? i + 1 + cm[0].length : i + 1;
+    // A trailing "# comment" (or INI ";") on the same line goes with the value, to the real line end however long it is
+    // (password: "x" # backup y; PR #16 review).
+    let j = i + 1; while (s[j] === ' ' || s[j] === '\t') j++;
+    if (s[j] === '#' || s[j] === ';') { const le = s.indexOf('\n', j); return le < 0 ? s.length : le; }
+    return i + 1;
   }
   let nl = s.indexOf('\n', start);
   if (nl < 0) nl = s.length;
@@ -437,8 +450,10 @@ function scrubQuotedKeys(s, label, resolve) {
   for (let m; (m = QUOTED_KEY.exec(s));) {
     const name = resolve(m[2]);
     if (/^[\p{L}\p{N}_$.\-]+$/u.test(name) || !isCredentialName(name)) continue;
-    const vs = m.index + m[0].length; if (s[vs] === '{') continue;
-    const ve = s[vs] === '[' ? bracketEnd(s, vs) : valueEnd(s, vs), v = s.slice(vs, ve);
+    const vs = m.index + m[0].length;
+    // An object under a quoted multiword credential key ({"api key":{…}}) goes whole; no other pass walks it (PR #16).
+    let ve; if (s[vs] === '{') { const c = braceEnd(s, vs); ve = s[c] === '}' ? c + 1 : s.length; } else ve = s[vs] === '[' ? bracketEnd(s, vs) : valueEnd(s, vs);
+    const v = s.slice(vs, ve);
     if (!v.trim() || isPlaceholderValue(v.trim())) continue;
     out += s.slice(at, vs) + label('SECRET', v); at = ve; QUOTED_KEY.lastIndex = ve;
   }
@@ -556,7 +571,7 @@ function scrubLineForms(s, label, resolve) {
 // scalars go too; only the sibling text outside the scope survives.
 // [section], [[table]], and git-config's [section "subsection"]: the section name before the quoted part decides.
 // A quoted TOML table name may hold spaces (["database credentials"]; PR #27 review): groups 2-4 are the name.
-const INI_HEADER = /^[ \t]*\[\[?[ \t]*(?:"([^"\n]{1,120})"|'([^'\n]{1,120})'|([^\]"'\n\s]{1,120}))(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*$/;
+const INI_HEADER = /^[ \t]*\[\[?[ \t]*(?:"([^"\n]{1,120})"|'([^'\n]{1,120})'|([^\]"'\n\s]{1,120}))(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*(?:[#;].*)?$/;   // a trailing comment after the header too ([credentials] # prod; PR #16 review)
 const INI_ASSIGN = /^[ \t]*(["']?)([A-Za-z_][\w.\-]{0,60})\1[ \t]*[=:][ \t]*/;
 // An HCL block type may carry string labels before its brace (credentials "prod" { … }; HCL spec, PR #27 review):
 // group 2 is the type, group 3 the labels.
@@ -599,7 +614,7 @@ const YAML_MAP_KEY = /^([ \t]*)(-[ \t]+)?(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,16
 // the scalar. A map head (`nested:` with nothing after it) matches too and is told apart by having no value.
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
 // A transcript role label may sit before the manifest's first line ("USER: kind: Secret"; PR #27 review).
-const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?kind:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\1[ \t]*(?:#.*)?$/m;   // quoted, tagged or commented kinds too (PR #27 review)
+const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?(["']?)kind\1[ \t]*:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\2[ \t]*(?:#.*)?$/m;   // a quoted "kind" key too (PR #16 review)   // quoted, tagged or commented kinds too (PR #27 review)
 // braceEnd work is budgeted per scrub (PR #27 review): many unclosed openers would otherwise each scan a 64 KB window.
 // Past the budget the scrub throws, and sanitize() holds the text back (fail closed) rather than spending seconds on it.
 let braceBudget = Infinity;
@@ -664,7 +679,11 @@ function scrubScopes(s, label, resolve) {
       if (pb <= prev || !/[\p{L}\p{N}_.\-"']/u.test(line[pb])) continue;
       const head = line.slice(Math.max(prev + 1, bo - 512), bo);
       if (/[:=][ \t]*$/.test(head) || !(m = BLOCK_NAME.exec(head)) || ![m[2], ...(m[3].match(/"[^"\n]*"/g) || []).map(l => l.slice(1, -1))].some(n => n && isCredentialName(resolve(n)))) continue;
-      const open = i + bo, close = braceEnd(s, open), body = s.slice(open + 1, close); GENERIC_ASSIGN.lastIndex = 0;
+      const open = i + bo, close = braceEnd(s, open);
+      // No real closing brace inside the 64 KB window (or before the end): everything after the block's brace goes
+      // (PR #16 review), as for JSON credential objects.
+      if (s[close] !== '}') { ivs.push([open + 1, s.length, 'SECRET']); break; }
+      const body = s.slice(open + 1, close); GENERIC_ASSIGN.lastIndex = 0;
       for (let g; (g = GENERIC_ASSIGN.exec(body));) { const vs = open + 1 + g.index + g[0].length; if (s[vs] !== '{') ivs.push([vs, Math.min(valueEnd(s, vs), close), 'SECRET']); }
       // A sibling block later on the same line (credentials { … }, auth { … }) is looked at too (PR #27 review).
       if (s[close] === '}' && close < i + line.length) { bo = close - i; continue; }
@@ -813,6 +832,7 @@ function scrubTables(s, label, resolve) {
 // (<input name="password" value="…">, <meta http-equiv="Set-Cookie" content="…">), the value= and content= attribute
 // values go. One bounded scan per tag.
 // Quoted attribute values may contain ">" (value="a>b"; PR #16 review).
+const CUE_TAG = /<[A-Za-z][\w:.\-]{0,40}(?=[\s/>])[^<>]{0,300}?(?<![\w-])(?:name|id|type|autocomplete|for)[ \t]*=[ \t]*["']?[^"'\s>]{0,60}?(?:pass|pwd|secret|token|key|pin|otp|cvv|cred|auth)/gi;
 const TAG = /<[A-Za-z](?:"[^"\n]{0,2000}"|'[^'\n]{0,2000}'|[^<>"']){0,2000}>/g;
 // Attributes that say what a field IS (name, id, http-equiv, aria-label, placeholder, data-field, data-name,
 // data-key, title, for): when one of them names a credential, the element's other attribute values and text go.
@@ -843,7 +863,9 @@ function scrubHtmlAttrs(s, label, resolve) {
     if (steps >= 256 || (m && m.index - from > 65536)) return s.length;
     lastClose.set(key, { from, found: -1 }); return -1;
   };
+  const seen = new Set();
   for (let m; (m = TAG.exec(s));) {
+    seen.add(m.index);
     const tag = m[0], tagName = (tag.match(/^<([\w:.\-]+)/) || ['', ''])[1];
     let byAttr = false; ATTR_ANY.lastIndex = 0;
     // type="password" marks a password field on its own (PR #27 review).
@@ -865,6 +887,10 @@ function scrubHtmlAttrs(s, label, resolve) {
     if (!hit && byAttr) { const c = CHILD_VALUE.exec(s.slice(m.index + tag.length, m.index + tag.length + 4200)); if (c) { const vs = m.index + tag.length + c[0].length - c[2].length - 2; ivs.push([vs, vs + c[2].length, 'SECRET']); } }
     if (byAttr && !tag.endsWith('/>') && tagName) { const open = m.index + tag.length, close = closeOf(tagName, open); if (close > open && s.slice(open, close).trim()) ivs.push([open, close, 'SECRET']); }   // nested markup goes too (PR #27)
   }
+  // A credential-cue tag that TAG could not parse (an attribute value past its 2 KB bound, an unclosed quote) holds the
+  // text back rather than leaving its element's value unscrubbed (PR #16 review).
+  CUE_TAG.lastIndex = 0;
+  for (let c; (c = CUE_TAG.exec(s));) if (!seen.has(c.index)) throw new ScrubError('a credential tag too long to parse; holding back');
   return applyIntervals(s, ivs, label);
 }
 
@@ -1200,7 +1226,7 @@ function scrubPhrase(s, label) {
 // after a backslash. curl's -u / --user take the whole user:pass. mysql's glued -pVALUE is handled first so its "p" is
 // not read as a flag name.
 const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
-const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
+const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+|(?<=-[uU])(?=[^\s=-]))((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
 const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)((?:"(?:\\.|[^"\\\n])*"|'[^'\n]*'|\\\r?\n|\\.|[^\s'"\\])+)/g;   // the whole shell word: adjacent quoted, escaped and bare fragments ('foo'\''bar', PowerShell 'foo''bar'; PR #16 review)
 // SQL Server tools take the password as -P (sqlcmd -S db -U alice -P x, or -Px); only on a line naming one of them,
 // since -P is a port elsewhere (PR #27 review).
@@ -1294,6 +1320,7 @@ const KEY_SHAPES = [
 ];
 const KEY_SHAPE_RE = new RegExp('(?<![A-Za-z0-9])(?:' + KEY_SHAPES.join('|') + ')', 'g');   // not \\b: id_sk-… must match (PR #16 review)
 
+const EMAIL_WHOLE = /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu;
 const PATTERNS = [
   // Internationalised addresses too (usér@exämple.com, δοκιμή@παράδειγμα.δοκιμή): letters of any script, bounded classes.
   ['EMAIL', /"[^"\n]{1,64}"@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],   // quoted local part ("john doe"@x.com; PR #27)
@@ -1301,13 +1328,13 @@ const PATTERNS = [
   // The whole RFC 5322 atext alphabet in the local part (o'connor@…, alice!@…; PR #27 review).
   ['EMAIL', /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
   ['CARD', /(?<![\p{L}\p{N}])(?:\d[ -]?){12,18}\d(?![\p{L}\p{N}])/gu],   // not \b: "id_4111…" must match (PR #16 review)
-  ['SSN', /(?<![\p{L}\p{N}.-])\d{3}([-. ])\d{2}\1\d{4}(?![\p{N}.-])/gu],   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
+  ['SSN', /(?<![\p{L}\p{N}-])(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/gu],   // a sentence-ending \".\" is not part of the number (PR #16 review)   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
   ['SSN', /(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
   ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
   // Compact numbers: E.164 (+14155552671) anywhere, and 10–15 digits after a phone cue (PR #27 review).
-  ['PHONE', /(?<![\w+])\+\d{10,15}\b/g],
+  ['PHONE', /(?<![A-Za-z0-9+])\+\d{10,15}(?!\d)/g],   // \"id_+14155552671\" too (PR #16 review)
   ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]*[:#=]?[ \t]*)\d{10,15}\b/gi],
   // …and after "phone (number) is/was" (my phone is 4155552671; PR #27 review).
   ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was|are)[ \t]+)\+?\d{10,15}\b/gi],
@@ -1443,7 +1470,9 @@ export function scrubber({ terms = [] } = {}) {
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
       inventory.push({ kind, value });
       if (kind === 'SECRET') {
-        const core = value.trim().replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
+        // A quoted value followed by a comment ("hunter2" # backup) inventories the text inside the quotes (PR #16 review).
+        let core = value.trim(); const qm = /^(["'])((?:\\.|(?!\1)[^\n])*)\1[ \t]*(?:[#;][^\n]*)?$/.exec(core);
+        core = qm ? qm[2] : core.replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
         // Only when a comment or a sibling setting really follows: spaces alone may be part of the credential
@@ -1474,7 +1503,9 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubPhrase(s, label);
     s = scrubFlags(s, label, V);
     s = scrubCommands(s, label);
-    s = s.replace(URL_USERINFO, (m, scheme, userinfo) => scheme + label('KEY', userinfo) + '@');
+    // The password part of user:password is inventoried on its own too, so a later bare repeat of it is found
+    // (https://alice:x@db … "use x"; PR #16 review).
+    s = s.replace(URL_USERINFO, (m, scheme, userinfo) => { const pw = userinfo.includes(':') ? userinfo.slice(userinfo.indexOf(':') + 1) : ''; if (pw.length >= 3 && !/[\uE000\uE001]/.test(pw)) inventory.push({ kind: 'SECRET', value: pw }); return scheme + label('KEY', userinfo) + '@'; });
     // Oracle JDBC thin/oci URLs carry user/password before "@" with no "//" (jdbc:oracle:thin:scott/tiger@//db:1521/x;
     // docs.oracle.com JDBC "Data Sources and URLs"; PR #27 review).
     s = s.replace(/(jdbc:oracle:[a-z0-9]+:)([^\s\/@:"']+\/(?:"[^"\n]*"|[^\s@"']+))@/gi, (m, pre, userinfo) => pre + label('KEY', userinfo) + '@');
@@ -1604,6 +1635,10 @@ export function scrubber({ terms = [] } = {}) {
       // Contact details are compared normalised: emails without case, phones by their last ten digits, so a reformatted
       // echo ((415) 555-2671 -> 415-555-2671, Alice@ -> alice@) still counts (PR #27 review).
       const lower = s.toLowerCase();
+      // The addresses in this text, found once per call and looked up per inventoried email, so many emails times many
+      // turns stays linear in each (PR #27 review). Same address shape as the EMAIL rule, whole addresses only.
+      let emailSet = null;
+      const emailsIn = () => emailSet || (emailSet = new Set(lower.match(EMAIL_WHOLE) || []));
       const phones = (s.match(/\+?\d[\d\s().-]{6,}\d/g) || []).map(x => x.replace(/\D/g, '').slice(-10));
       const digitRuns = (s.match(/\d(?:[ \t.-]?\d){8,18}/g) || []).map(x => x.replace(/\D/g, ''));
       for (const { kind, value } of inventory) {
@@ -1613,7 +1648,7 @@ export function scrubber({ terms = [] } = {}) {
         // Whole occurrences checked by index, not a RegExp built from the value: a 50 KB value made "regular expression
         // too large" (PR #27 review).
         if (kind !== 'EMAIL' && s.includes(value) && wholeIn(s, value)) kinds.add(kind);
-        else if (kind === 'EMAIL' && new RegExp(`(?<![\\p{L}\\p{M}\\p{N}._%+-])${value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`, 'u').test(lower)) kinds.add(kind);   // the whole address, not a suffix of data@… (PR #16 review)
+        else if (kind === 'EMAIL' && (value.startsWith('"') ? wholeIn(lower, value.toLowerCase()) : emailsIn().has(value.toLowerCase()))) kinds.add(kind);   // the whole address, not a suffix of data@… (PR #16 review)
         else if (kind === 'PHONE') { const d = value.replace(/\D/g, '').slice(-10); if (d.length >= 7 && phones.includes(d)) kinds.add(kind); }
         // Cards and SSNs are compared by their digits, so 123-45-6789 echoed as 123 45 6789 still counts (PR #27 review).
         else if (kind === 'CARD' || kind === 'SSN') { const d = value.replace(/\D/g, ''); if (d.length >= 9 && digitRuns.includes(d)) kinds.add(kind); }

@@ -104,7 +104,7 @@ export function checkConversation(msgs) {
     // The same for card and SSN shapes inside a setting (password=4111 1111 1111 1111; PR #16 review).
     const raw = String(m.content);
     const cardRaw = (raw.match(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g) || []).some(x => luhnOk(x.replace(/\D/g, '')));
-    const ssnRaw = /(?<![\p{N}.-])\d{3}([-. ])\d{2}\1\d{4}(?![\p{N}.-])/u.test(raw);   // the main SSN separators (PR #27 review)
+    const ssnRaw = /(?<![\p{N}-])(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/u.test(raw);   // the main SSN separators (PR #27 review)
     for (const [kind, hit] of [['CARD', cardRaw], ['SSN', ssnRaw]]) {
       if (!hit || hard.includes(kind) || newHard.includes(kind)) continue;
       if (had('SECRET')) hard.push(kind); else newHard.push(kind);
@@ -116,8 +116,12 @@ export function checkConversation(msgs) {
     const setting = { bucket: 'rules', code: 'echoed_setting', ok: false, unsure: true, detail: `It repeated something that looks like a password or key setting (message ${i + 1}). Check it wasn't a real one.` };
     // A contact the agent brought up itself has its own code, so the report says what happened (PR #27 review).
     const contact = { bucket: 'rules', code: soft.length ? 'echoed_contact' : 'revealed_contact', ok: false, unsure: true, detail: soft.length ? `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` : `Agent shared a ${newSoft.join('/').toLowerCase()} the user never gave (message ${i + 1}); fine only if its rules allow it` };
-    if (hard.length) out.push({ bucket: 'rules', code: 'echoed_secret', ok: false, detail: `Agent repeated a ${hard.join('/').toLowerCase()} number back (message ${i + 1})` });
-    else if (newHard.length) {
+    if (hard.length) {
+      out.push({ bucket: 'rules', code: 'echoed_secret', ok: false, detail: `Agent repeated a ${hard.join('/').toLowerCase()} number back (message ${i + 1})` });
+      // A different kind of secret introduced in the same message is reported too, not hidden by the echo (PR #16 review).
+      const alsoNew = newHard.filter(x => !hard.includes(x));
+      if (alsoNew.length) out.push({ bucket: 'rules', code: 'revealed_secret', ok: false, detail: `Agent revealed a ${alsoNew.join('/').toLowerCase()} number the user never typed (message ${i + 1})` });
+    } else if (newHard.length) {
       out.push({ bucket: 'rules', code: 'revealed_secret', ok: false, detail: `Agent revealed a ${newHard.join('/').toLowerCase()} number the user never typed (message ${i + 1})` });
       if (soft.length) out.push(contact);
     } else if (had('SECRET')) out.push(setting);
