@@ -484,9 +484,9 @@ const BARE_NAME = /^[ \t]*(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*(?:[
 const SEP_LINE = /^[ \t]*(:=|=>|->|~=|[:=\u2236\uA789\uFE55\uFF1D\uFF1A\u2192])[ \t]*/;
 // One CSV row from `i`, honouring double-quoted cells (which may contain commas and newlines). Returns the cell spans
 // and the index of the newline that ends the row.
-function csvRow(s, i) {
+function csvRow(s, i, delim = ',') {
   const cells = []; let j = i, start = i, q = false;
-  for (; j < s.length; j++) { const c = s[j]; if (c === '"') { q = !q; continue; } if (!q && c === ',') { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break; }
+  for (; j < s.length; j++) { const c = s[j]; if (c === '"') { q = !q; continue; } if (!q && c === delim) { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break; }
   cells.push([start, j]); return { cells, end: j };
 }
 const trailingName = (tok) => (tok.replace(/[:=]+$/, '').replace(/["']$/, '').match(/[\p{L}\p{N}_$.\-]+$/u) || [''])[0];
@@ -580,7 +580,8 @@ const INI_ASSIGN = /^[ \t]*(["']?)([A-Za-z_][\w.\-]{0,60})\1[ \t]*[=:][ \t]*/;
 const BLOCK_NAME = /(["']?)([\p{L}_][\p{L}\p{N}_.\-]{0,80})\1((?:[ \t]+"[^"\n]{0,80}")*)[ \t]*$/u;
 const GENERIC_ASSIGN = /(^|[\s{,;])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,60})\2[ \t]*[=:][ \t]*/gu;
 // A credential-named object or flow map: "credentials": { … }, credentials: { … }, "secret": { "metadata": { … } }.
-const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*[:=][ \t]*\{/gu;
+// Escaped names ({"cred\\u0065ntials":{…}}) are decoded before the check (PR #27 review).
+const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)((?:\\u\{[0-9A-Fa-f]{1,6}\}|\\u[0-9A-Fa-f]{4}|\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\p{L}_$])(?:\\u\{[0-9A-Fa-f]{1,6}\}|\\u[0-9A-Fa-f]{4}|\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\p{L}\p{N}_$.\-]){0,160})\1[ \t]*[:=][ \t]*\{/gu;
 // Any quoted property counts as a key inside a credential container ("alice@example.com", "my key", "1st"), not only
 // identifier-shaped ones (viaknox PR #27 review).
 // Computed keys ({ [provider]: "…" }) count too (PR #27 review).
@@ -616,7 +617,7 @@ const YAML_MAP_KEY = /^([ \t]*)(-[ \t]+)?(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,16
 // the scalar. A map head (`nested:` with nothing after it) matches too and is told apart by having no value.
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
 // A transcript role label may sit before the manifest's first line ("USER: kind: Secret"; PR #27 review).
-const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?(["']?)kind\1[ \t]*:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\2[ \t]*(?:#.*)?$/m;   // a quoted "kind" key too (PR #16 review)   // quoted, tagged or commented kinds too (PR #27 review)
+const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?(?:-[ \t]+)?(["']?)kind\1[ \t]*:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\2[ \t]*(?:#.*)?$/m;   // a quoted "kind" key too (PR #16 review)   // quoted, tagged or commented kinds too (PR #27 review)
 // braceEnd work is budgeted per scrub (PR #27 review): many unclosed openers would otherwise each scan a 64 KB window.
 // Past the budget the scrub throws, and sanitize() holds the text back (fail closed) rather than spending seconds on it.
 let braceBudget = Infinity;
@@ -659,7 +660,7 @@ function scrubScopes(s, label, resolve) {
   // on a line: every scalar inside goes, nested objects included.
   // Each scope is parsed once (PR #27 review): an opener inside an object already walked is skipped (objectScalars covers
   // nested objects), and an unclosed one ends the scan, so thousands of "credentials:{" stay linear.
-  if (s.includes('{')) { OBJ_KEY.lastIndex = 0; let covered = -1; for (let m; (m = OBJ_KEY.exec(s));) if (m.index + m[0].length - 1 > covered && isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
+  if (s.includes('{')) { OBJ_KEY.lastIndex = 0; let covered = -1; for (let m; (m = OBJ_KEY.exec(s));) if (m.index + m[0].length - 1 > covered && isCredentialName(resolve(decodeName(m[2])))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
     // A credential object with no closing brace in the 64 KB scan window (or before the end) fails closed: everything
     // after its brace goes (PR #16 review).
     if (s[close] !== '}') { ivs.push([open + 1, s.length, 'SECRET']); break; }
@@ -765,13 +766,14 @@ function scrubTables(s, label, resolve) {
       // The COPY options pick the row format: CSV (quotes honoured) or a declared DELIMITER; text format is tab-separated
       // (postgresql.org COPY; PR #27 review).
       const opts = m[0], dm = /DELIMITER[ \t]+(?:AS[ \t]+)?E?'(\\t|[^'\\])'/i.exec(opts);
-      const csvCopy = /\bCSV\b|FORMAT[ \t]+["']?csv/i.test(opts) && (!dm || dm[1] === ',');
-      const delim = dm ? (dm[1] === '\\t' ? '\t' : dm[1]) : '\t';
+      // CSV keeps its quote rules with any declared delimiter (FORMAT csv, DELIMITER '|'; PR #27 review).
+      const csvCopy = /\bCSV\b|FORMAT[ \t]+["']?csv/i.test(opts);
+      const delim = dm ? (dm[1] === '\\t' ? '\t' : dm[1]) : csvCopy ? ',' : '\t';
       let i = m.index + m[0].length;
       while (i < s.length) {
         let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
         const line = s.slice(i, nl); if (/^\\\.[ \t\r]*$/.test(line)) break;
-        if (csvCopy) { csvRow(s, i).cells.forEach(([a, b], k) => { if (cols.includes(k) && s.slice(a, b).trim()) ivs.push([a, b, 'SECRET']); }); }
+        if (csvCopy) { csvRow(s, i, delim).cells.forEach(([a, b], k) => { if (cols.includes(k) && s.slice(a, b).trim()) ivs.push([a, b, 'SECRET']); }); }
         else { let pos = i; line.split(delim).forEach((cell, k) => { if (cols.includes(k) && cell.trim()) ivs.push([pos, pos + cell.length, 'SECRET']); pos += cell.length + 1; }); }
         i = nl + 1;
       }
@@ -1257,7 +1259,27 @@ function scrubFlags(s, label, V) {
   // --password-stdin (docker login, helm registry login, …) takes no argument; the password is the output of an echo or
   // printf piped into the command on the same line (docs.docker.com docker login; PR #27 review).
   s = s.replace(/^.*--[\w-]*pass(?:word)?-stdin\b.*$/gim, (line) => line.replace(/(\b(?:echo|printf)(?:[ \t]+-[a-zA-Z]+)*(?:[ \t]+(?:'%s\\?n?'|"%s\\?n?"))?[ \t]+)([^|\n]*?)([ \t]*\|)/g, (m, pre, v, pipe) => !v.trim() || isPlaceholderValue(v) ? m : pre + label('SECRET', v) + pipe));
+  // A here-string (--password-stdin <<< x) or a heredoc body feeds standard input too (docs.docker.com; PR #27 review).
+  s = s.replace(/^.*--[\w-]*pass(?:word)?-stdin\b.*$/gim, (line) => line.replace(/(<<<[ \t]*)("[^"\n]*"|'[^'\n]*'|[^\s|;&]+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
+  s = scrubHeredocStdin(s, label);
   return applyOnView(s, V(s), FLAG_ANY, label, (m) => isCredentialName(m[3]) && !/-stdin$/i.test(m[3]) ? { from: m.index + m[0].length - m[5].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
+}
+
+// The body of a heredoc on a --password-stdin line is the password: every non-blank line up to the terminator goes. An
+// unterminated heredoc fails closed (the rest of the text goes) and ends the scan, so many of them stay linear.
+function scrubHeredocStdin(s, label) {
+  if (!/-stdin\b/i.test(s) || !s.includes('<<')) return s;
+  let out = '', at = 0, i = 0;
+  while (i < s.length) {
+    let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
+    const line = s.slice(i, nl), h = line.includes('<<') && /--[\w-]*pass(?:word)?-stdin\b/i.test(line) ? /(?<!<)<<-?[ \t]*(["']?)([A-Za-z_]\w{0,40})\1(?![\w'"])/.exec(line) : null;
+    if (!h || nl >= s.length) { i = nl + 1; continue; }
+    const bodyStart = nl + 1; let j = bodyStart, bodyEnd = s.length, found = false;
+    while (j < s.length) { let n2 = s.indexOf('\n', j); if (n2 < 0) n2 = s.length; if (s.slice(j, n2).replace(/\r$/, '').trim() === h[2]) { bodyEnd = j; found = true; break; } j = n2 + 1; }
+    out += s.slice(at, bodyStart) + s.slice(bodyStart, bodyEnd).replace(/^([ \t]*)(\S[^\n]*?)([ \t]*\r?)$/gm, (x, a, v, b) => isPlaceholderValue(v) ? x : a + label('SECRET', v) + b);
+    at = bodyEnd; if (!found) break; i = bodyEnd;
+  }
+  return out + s.slice(at);
 }
 
 // Command forms: Windows `net use … /user:DOMAIN\\alice <pass>` (the token after the /user: token) and PowerShell
@@ -1633,6 +1655,14 @@ export function scrubber({ terms = [] } = {}) {
       let r; try { r = residual(scrubbed, { terms: own }); } catch (e) { throw new ScrubError(`residual scan failed (${e && e.name}); holding back`); }
       if (Date.now() - t0 > maxMs) throw new ScrubError(`scrubbing took longer than ${maxMs} ms; holding back`);
       return new Sanitized({ text: scrubbed, held: r.held, reasons: r.reasons, version: SCRUBBER_VERSION }, MINT);
+    },
+    // `text` with every inventoried user-side value blanked out, so a caller can ask whether a key, card or SSN shape is
+    // still there once the echoes are gone, i.e. whether it is new (PR #27 review). Never returns the values themselves:
+    // the result only ever has less of the caller's own text.
+    withoutEchoes(text) {
+      let s = String(text ?? '');
+      for (const { value } of inventory) if (value && value.length >= 3 && s.includes(value)) s = s.split(value).join(' ');
+      return s;
     },
     // Kinds whose inventoried user-side values appear verbatim in `text` (brief item 9: an exact echo, not a re-scan).
     // Values shorter than 4 characters are ignored. Never returns the values themselves.

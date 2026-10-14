@@ -98,16 +98,20 @@ export function checkConversation(msgs) {
     const newHard = ['CARD', 'KEY', 'SSN'].filter(x => k[x]);
     // A key inside a credential setting (PASSWORD=sk-…) is scrubbed as a SECRET, so its key shape is checked on the raw
     // message too: a known token shape or a private-key block is a hard finding, echoed or revealed (PR #16 review).
-    if (residual(m.content).reasons.some(x => x === 'known key shape' || x === 'pem private key')) {
-      if (had('SECRET')) { if (!hard.includes('KEY')) hard.push('KEY'); } else if (!newHard.includes('KEY')) newHard.push('KEY');
+    // It counts as an echo only when the key shape is gone once the user's own values are blanked out, so an unrelated
+    // echoed password does not make a brand-new key look repeated (PR #27 review).
+    const keyShape = (t) => residual(t).reasons.some(x => x === 'known key shape' || x === 'pem private key');
+    const rest = had('SECRET') ? s.withoutEchoes(m.content) : null;
+    if (keyShape(m.content)) {
+      if (rest !== null && !keyShape(rest)) { if (!hard.includes('KEY')) hard.push('KEY'); } else if (!newHard.includes('KEY')) newHard.push('KEY');
     }
     // The same for card and SSN shapes inside a setting (password=4111 1111 1111 1111; PR #16 review).
     const raw = String(m.content);
-    const cardRaw = (raw.match(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g) || []).some(x => luhnOk(x.replace(/\D/g, '')));
-    const ssnRaw = /(?<![\p{N}-])(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/u.test(raw);   // the main SSN separators (PR #27 review)
-    for (const [kind, hit] of [['CARD', cardRaw], ['SSN', ssnRaw]]) {
-      if (!hit || hard.includes(kind) || newHard.includes(kind)) continue;
-      if (had('SECRET')) hard.push(kind); else newHard.push(kind);
+    const cardIn = (t) => (t.match(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g) || []).some(x => luhnOk(x.replace(/\D/g, '')));
+    const ssnIn = (t) => /(?<![\p{N}-])(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/u.test(t);   // the main SSN separators (PR #27 review)
+    for (const [kind, test] of [['CARD', cardIn], ['SSN', ssnIn]]) {
+      if (!test(raw) || hard.includes(kind) || newHard.includes(kind)) continue;
+      if (rest !== null && !test(rest)) hard.push(kind); else newHard.push(kind);
     }
     // Contacts the agent brings up itself (the user never gave them) are flagged as unsure too (PR #16 review).
     // A phone only counts here when a separate 7–12 digit run is present, not part of a longer number (an order or card).

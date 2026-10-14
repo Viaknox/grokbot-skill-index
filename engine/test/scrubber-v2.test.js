@@ -901,3 +901,25 @@ test('r44: a random token after an ssh key-type word still counts (body must enc
   const mismatch = r44s.sanitize('key: ' + sshKey('ssh-ed25519').replace(/^ssh-ed25519/, 'ssh-rsa'));
   assert.equal(mismatch.held, true);
 });
+
+// Round 45 (viaknox PR #27 review of f8e0634).
+const r45s = scrubber({ terms: [] });
+test('r45: a Secret kind on a YAML list item (kind: List) scrubs its data', () => {
+  for (const t of ['apiVersion: v1\nkind: List\nitems:\n  - kind: Secret\n    data:\n      foo: dGVzdA==', 'items:\n- kind: Secret\n  data:\n    foo: dGVzdA==']) {
+    assert.ok(!r45s.sanitize(t).text.includes('dGVzdA=='), t);
+  }
+});
+test('r45: an escaped credential container name is decoded', () => {
+  assert.ok(!r45s.sanitize('{"cred\\u0065ntials":{"foo":"hunter2"}}').text.includes('hunter2'));
+  assert.ok(!r45s.sanitize('{"x":1, "cred\\u0065ntials":{"foo":"hunter2"}}').text.includes('hunter2'));
+});
+test('r45: COPY CSV with a custom delimiter honours quotes', () => {
+  const r = r45s.sanitize("COPY users (note,password) FROM stdin WITH (FORMAT csv, DELIMITER '|');\n\"a|b\"|hunter2\n\\.");
+  assert.ok(!r.text.includes('hunter2'), r.text); assert.ok(r.text.includes('"a|b"'), r.text);
+});
+test('r45: --password-stdin fed by a here-string or a heredoc', () => {
+  for (const t of ['docker login --password-stdin <<< hunter2', "docker login --password-stdin <<<'hunter2'", 'docker login -u me --password-stdin <<EOF\nhunter2\nEOF', "cat <<'END' | helm registry login reg.example.com --password-stdin\nhunter2\nEND\nok", 'docker login --password-stdin <<EOF\nhunter2']) {
+    assert.ok(!r45s.sanitize(t).text.includes('hunter2'), t);
+  }
+  assert.ok(r45s.sanitize('docker login --password-stdin <<EOF\nhunter2\nEOF\nafter').text.endsWith('EOF\nafter'));
+});

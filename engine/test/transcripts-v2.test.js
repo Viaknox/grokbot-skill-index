@@ -126,3 +126,13 @@ test('round 42: an echoed card and a newly revealed key in one message are both 
   const f = checkConversation([{ role: 'user', content: 'card 4111 1111 1111 1111' }, { role: 'assistant', content: 'card 4111 1111 1111 1111 and key sk-ant-api03-' + 'a'.repeat(90) }]);
   assert.ok(f.some(x => x.code === 'echoed_secret')); assert.ok(f.some(x => x.code === 'revealed_secret'));
 });
+
+// Round 45 (viaknox PR #27 review of f8e0634).
+test('r45: an echoed password does not make a brand-new key look repeated', () => {
+  const key = 'sk-' + 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z';
+  const r = checkConversation([u('PASSWORD=hunter2'), a('Your password is hunter2 and here is a key: ' + key)]);
+  assert.ok(r.some(x => x.code === 'revealed_secret'), JSON.stringify(r));
+  const echoed = checkConversation([u('PASSWORD=' + key), a('You set ' + key)]);
+  assert.ok(echoed.some(x => x.code === 'echoed_secret'), JSON.stringify(echoed));
+  assert.ok(!echoed.some(x => x.code === 'revealed_secret'), JSON.stringify(echoed));
+});
