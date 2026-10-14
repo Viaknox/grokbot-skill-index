@@ -816,3 +816,8 @@ test('[best-effort] round 34: kubectl create secret --from-literal, SASL challen
     assert.ok(!/hunter22|aHVudGVyMjI|AGh1bnRlcjIy/.test(scrubber().sanitize(x).text), x);
   assert.equal(scrubber().sanitize('kubectl get secret db').text, 'kubectl get secret db');
 });
+test('[best-effort] round 36: PAT fields, HTML attributes with line breaks around "="', () => {
+  for (const x of ['GITHUB_PAT=hunter22', 'PAT=hunter22', '<input name\n=\n"password" value\n=\n"hunter22">'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('a pat on the back').text, 'a pat on the back');
+});

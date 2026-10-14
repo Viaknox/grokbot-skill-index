@@ -143,7 +143,9 @@ function hasCompound(parts) {
   return false;
 }
 const COMPOUND = /(onetimecode|onetimepasscode|onetimepassword|otpcode|seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
-const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'cvv', 'cvv2', 'cvc', 'cvc2', 'csc', 'cvn', 'totp', 'hotp',   // card verification codes (PR #27)
+// 'pat' is a personal access token (GITHUB_PAT=…; PR #27 review). HTML attributes may have any whitespace, line breaks
+// included, around "=" (ATTR_ANY below; PR #27 review).
+const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'pat', 'pats', 'creds', 'cred', 'session', 'sessions', 'sid', 'sids', 'otps', 'cvv', 'cvv2', 'cvc', 'cvc2', 'csc', 'cvn', 'totp', 'hotp',   // card verification codes (PR #27)
   'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
   'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk', 'zugangsdaten',   // psk: WPA pre-shared key (PR #27)
@@ -782,7 +784,7 @@ const TAG = /<[A-Za-z](?:"[^"\n]{0,2000}"|'[^'\n]{0,2000}'|[^<>"']){0,2000}>/g;
 const CUE_ATTR = /^(?:name|id|http-equiv|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
 const IDENT_ATTR = /^(?:name|id|http-equiv|type|class|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
 const ATTR_VALUE = /\b(value|content)([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
-const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>"']+)/g;
+const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})(\s*=\s*)("[^"]*"|'[^']*'|[^\s>"']+)/g;
 const CHILD_VALUE = /^[\s]*<([\w:.\-]*Value)\b[^<>]*>([^<]{1,4000})<\//i;
 function scrubHtmlAttrs(s, label, resolve) {
   if (!s.includes('<')) return s;
