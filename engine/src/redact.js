@@ -495,7 +495,8 @@ const GENERIC_ASSIGN = /(^|[\s{,;])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,60})\2[ 
 const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*[:=][ \t]*\{/gu;
 // Any quoted property counts as a key inside a credential container ("alice@example.com", "my key", "1st"), not only
 // identifier-shaped ones (viaknox PR #27 review).
-const KV = /("[^"\n]{0,400}"|'[^'\n]{0,400}'|[\p{L}\p{N}_$][\p{L}\p{N}_$.\-]{0,160})[ \t]*[:=][ \t]*/gu;   // numeric keys too ({123: …}; PR #27 review)
+// Computed keys ({ [provider]: "…" }) count too (PR #27 review).
+const KV = /("[^"\n]{0,400}"|'[^'\n]{0,400}'|\[[^\[\]\n]{1,160}\]|[\p{L}\p{N}_$][\p{L}\p{N}_$.\-]{0,160})[ \t]*[:=][ \t]*/gu;   // numeric keys too ({123: …}; PR #27 review)
 // Every scalar value between `open` ({) and `close` (its match): quoted strings whole, bare values up to , } ] or the
 // line end; a nested { or [ is simply scanned through, so nested keys are seen one by one.
 function objectScalars(s, open, close, ivs) {

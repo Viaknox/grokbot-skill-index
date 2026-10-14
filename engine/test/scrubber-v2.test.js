@@ -656,3 +656,6 @@ test('[promised] viaknox PR #27 round 11: sshpass -p, HTML-entity cue names, SQL
     assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
   assert.equal(scrubber().sanitize('ssh -p 22 host').text, 'ssh -p 22 host');
 });
+test('[promised] computed keys inside a credential container lose their values (viaknox PR #27 round 12)', () => {
+  assert.ok(!scrubber().sanitize('const credentials = { [provider]: "hunter22" }').text.includes('hunter22'));
+});
