@@ -728,3 +728,14 @@ test('[best-effort] viaknox PR #27 round 20: YAML list-item credential container
   assert.ok(!scrubber().sanitize('redis-cli -a hunter22 PING').text.includes('hunter22'));
   assert.equal(scrubber().sanitize('tar -a x.tar').text, 'tar -a x.tar');
 });
+test('[promised] tune-up PR #16 round 2 backlog: Digest any case, SSN after underscore; [best-effort] lowercase-scheme tokens, TOML escapes, HTML quoted >, nested end tags, YAML "...", token-indexed keys', () => {
+  for (const x of ['Digest username="bob", response="hunter22"', 'id_123-45-6789', 'send bearer correcthorse now', 'password = """abc\\"""hunter22"""',
+    '<input name="password" value="hunter\\">two">', '<textarea name="password"><textarea>in</textarea>outersecret</textarea>', '{"api_keys":{"hunter22":{"owner":"alice"}}}'])
+    assert.ok(!/hunter22|6789|correcthorse|two|outersecret/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('a basic understanding').text, 'a basic understanding');
+  assert.ok(scrubber().sanitize('kind: Secret\nstringData:\n  db: hunter22\n...\nkind: ConfigMap\ndata:\n  greeting: hello world\n').text.includes('hello world'));
+});
+test('[promised] perf: 800 distinct-length recurrences over a shared first character stay fast (PR #16 review)', () => {
+  const lines = []; for (let i = 0; i < 800; i++) lines.push('password=a' + 'b'.repeat(i + 4));
+  const t = Date.now(); scrubber().sanitize(lines.join('\n') + '\n' + 'a '.repeat(20000)); assert.ok(Date.now() - t < 2000);
+});

@@ -228,6 +228,7 @@ test('[promised] boundary: compound never-send terms are refused in tool names (
   const base = { description: 'x', parameters: {}, default: {} };
   assert.throws(() => modelAdapter({ model: 'm', tools: { AcmeCorpLookup: base } }, or, { scrub: scrubber({ terms: ['AcmeCorp'] }), privateTerms: ['AcmeCorp'] }));
   assert.throws(() => modelAdapter({ model: 'm', tools: { 'Acme-Corp_lookup': base } }, or, { scrub: scrubber({ terms: ['Acme-Corp'] }), privateTerms: ['Acme-Corp'] }));
+  assert.throws(() => modelAdapter({ model: 'm', tools: { acmecorplookup: base } }, or, { scrub: scrubber({ terms: ['acmecorp'] }), privateTerms: ['acmecorp'] }));
 });
 
 test('[promised] writer: a placeholder minted from the instructions is restored in the proposal (PR #16 review)', async () => {

@@ -67,6 +67,7 @@ const isPlaceholderText = (t) => {
 /** True for a user turn that only describes an action the user took (see the comment above). */
 export const isPlaceholder = (m) => m.role === 'user' && isPlaceholderText(String(m.content).trim());
 
+const luhnOk = (d) => { if (d.length < 13 || d.length > 19) return false; let sum = 0, alt = false; for (let i = d.length - 1; i >= 0; i--) { let n = +d[i]; if (alt) { n *= 2; if (n > 9) n -= 9; } sum += n; alt = !alt; } return sum % 10 === 0; };
 export function checkConversation(msgs) {
   const out = [];
   // Placeholders keep their place (so "message 2" stays message 2 and a later "No, that's wrong" is still a correction)
@@ -97,6 +98,14 @@ export function checkConversation(msgs) {
     // message too: a known token shape or a private-key block is a hard finding, echoed or revealed (PR #16 review).
     if (residual(m.content).reasons.some(x => x === 'known key shape' || x === 'pem private key')) {
       if (had('SECRET')) { if (!hard.includes('KEY')) hard.push('KEY'); } else if (!newHard.includes('KEY')) newHard.push('KEY');
+    }
+    // The same for card and SSN shapes inside a setting (password=4111 1111 1111 1111; PR #16 review).
+    const raw = String(m.content);
+    const cardRaw = (raw.match(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g) || []).some(x => luhnOk(x.replace(/\D/g, '')));
+    const ssnRaw = /(?<![\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/u.test(raw);
+    for (const [kind, hit] of [['CARD', cardRaw], ['SSN', ssnRaw]]) {
+      if (!hit || hard.includes(kind) || newHard.includes(kind)) continue;
+      if (had('SECRET')) hard.push(kind); else newHard.push(kind);
     }
     // Contacts the agent brings up itself (the user never gave them) are flagged as unsure too (PR #16 review).
     // A phone only counts here when a separate 7–12 digit run is present, not part of a longer number (an order or card).

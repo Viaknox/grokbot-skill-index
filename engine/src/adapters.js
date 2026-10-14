@@ -76,7 +76,9 @@ function namesWithPrivate(cfg, privateTerms) {
   const terms = [...new Set([...privateTerms, ...privateTerms.map(split)])];
   const flat = (x) => String(x).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
   const has = (text) => { const s = scrubber({ terms }); const t = split(text); s.scrub(t); if ((s.counts().PRIVATE || 0) > 0 || s.mentionsTerm(t) || s.mentionsTerm(String(text))) return true;
-    return privateTerms.some(pt => { const f = flat(pt); return f.length >= 3 && /[^\p{L}\p{N}]|\p{Lu}.*\p{Lu}/u.test(String(pt).trim()) && flat(text).includes(f); }); };
+    // The flattened name holds the flattened term (acmecorp inside acmecorplookup), whatever the term's capitalisation
+    // (PR #16 review). Terms of four or more letters only, so a short name like "Ivo" does not block "ivory_lookup".
+    return privateTerms.some(pt => { const f = flat(pt); return f.length >= 4 && flat(text).includes(f); }); };
   const hits = [];
   const walk = (v, where) => {
     if (!v || typeof v !== 'object') return;

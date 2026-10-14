@@ -96,3 +96,7 @@ test('[promised] attachment notes with Unicode file names are actions, not typed
   for (const x of ['[file: résumé.pdf]', '[file: 报告.pdf]']) assert.ok(isPlaceholder(u(x)), x);
   assert.ok(!isPlaceholder(u('[file: please send résumé.pdf]')));
 });
+test('[promised] a card or SSN inside a setting the agent reveals is a hard finding (PR #16 review)', () => {
+  for (const t of ['password=4111 1111 1111 1111', 'password=123-45-6789'])
+    assert.ok(checkConversation([u('hi'), a(t)]).some(f => f.code === 'revealed_secret' && !f.unsure), t);
+});

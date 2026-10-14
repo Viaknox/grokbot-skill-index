@@ -261,7 +261,9 @@ function valueEnd(s, start) {
   // Multi-line literals run to their own closing delimiter: triple quotes, backticks and shell/HCL heredocs
   // (password = <<EOF … EOF; PR #27 review). An unclosed one takes the rest of the input.
   const tq = s.slice(start, start + 3);
-  if (tq === '"""' || tq === "'''") { const e = s.indexOf(tq, start + 3); return e < 0 ? s.length : e + 3; }
+  // A basic multi-line string (""") honours backslash escapes, so \" does not close it (PR #16 review); a literal one (''')
+  // has no escapes.
+  if (tq === '"""' || tq === "'''") { for (let i = start + 3; i < s.length; i++) { if (tq === '"""' && s[i] === '\\') { i++; continue; } if (s.startsWith(tq, i)) { let e = i + 3; while (e < s.length && e < i + 5 && s[e] === tq[0]) e++; return e; } } return s.length; }
   if (s[start] === '`') { for (let i = start + 1; i < s.length; i++) { if (s[i] === '\\') { i++; continue; } if (s[i] === '`') return i + 1; } return s.length; }
   const hd = /^<<[-~]?[ \t]*(["']?)([A-Za-z_]\w{0,40})\1/.exec(s.slice(start, start + 60));
   if (hd) {
@@ -539,6 +541,9 @@ function objectScalars(s, open, close, ivs) {
   KV.lastIndex = open + 1;
   for (let m; (m = KV.exec(s)) && m.index < close;) {
     const vs = m.index + m[0].length, c = s[vs];
+    // A key can be the secret itself in a token-indexed map ({"api_keys":{"hunter2":{…}}}; PR #16 review): a key whose
+    // value is an object or an array, or that carries a digit, goes too.
+    if ((c === '{' || c === '[' || /\d/.test(m[1])) && m[1].replace(/^["'\[]|["'\]]$/g, '').trim()) ivs.push([m.index, m.index + m[1].length, 'SECRET']);
     // An array of plain values inside a credential object goes whole ({"credentials":{"items":["…"]}}; PR #27 review);
     // an array of objects is scanned through so each object's fields are found.
     // Any array inside a credential container goes whole, mixed ones included (["…", {…}]; PR #27 review).
@@ -571,7 +576,8 @@ function scrubScopes(s, label, resolve) {
   const ivs = [];
   // Kubernetes Secret scope is per YAML document ("---" separates them), so a ConfigMap after a Secret keeps its data
   // (PR #27 review). `docs` holds [start, isSecret] for each document.
-  const docs = []; { let d0 = 0; const SEP = /^---[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || /"kind"[ \t]*:[ \t]*"Secret"/.test(t)]); };
+  // "..." ends a YAML document too (PR #16 review).
+  const docs = []; { let d0 = 0; const SEP = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || /"kind"[ \t]*:[ \t]*"Secret"/.test(t)]); };
     for (let m; (m = SEP.exec(s));) { add(d0, m.index); d0 = m.index + m[0].length; } add(d0, s.length); }
   let di = 0, k8s = docs[0][1];
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
@@ -724,13 +730,14 @@ function scrubTables(s, label, resolve) {
 // HTML attributes: in a tag whose name=, id= or http-equiv= attribute is a credential name or a credential header
 // (<input name="password" value="…">, <meta http-equiv="Set-Cookie" content="…">), the value= and content= attribute
 // values go. One bounded scan per tag.
-const TAG = /<[A-Za-z][^<>]{0,2000}>/g;
+// Quoted attribute values may contain ">" (value="a>b"; PR #16 review).
+const TAG = /<[A-Za-z](?:"[^"\n]{0,2000}"|'[^'\n]{0,2000}'|[^<>"']){0,2000}>/g;
 // Attributes that say what a field IS (name, id, http-equiv, aria-label, placeholder, data-field, data-name,
 // data-key, title, for): when one of them names a credential, the element's other attribute values and text go.
 const CUE_ATTR = /^(?:name|id|http-equiv|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
 const IDENT_ATTR = /^(?:name|id|http-equiv|type|class|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
 const ATTR_VALUE = /\b(value|content)([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
-const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>]+)/g;
+const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>"']+)/g;
 const CHILD_VALUE = /^[\s]*<([\w:.\-]*Value)\b[^<>]*>([^<]{1,4000})<\//i;
 function scrubHtmlAttrs(s, label, resolve) {
   if (!s.includes('<')) return s;
@@ -743,9 +750,15 @@ function scrubHtmlAttrs(s, label, resolve) {
   let lower = null; const lastClose = new Map();
   const closeOf = (name, from) => {
     if (lower === null) lower = s.replace(/[A-Z]+/g, (u) => u.toLowerCase());
+    // The complete end-tag name, counting nested same-name elements (<x><x>…</x>secret</x>, and </xy> is not </x>;
+    // PR #16 review). At most 256 tags of that name inside the 64 KB window; past that the window is taken (fail closed).
     const key = name.toLowerCase(), last = lastClose.get(key);
-    if (last && from >= last.from && (last.found < 0 || last.found >= from)) return last.found;
-    const found = lower.indexOf('</' + key, from); lastClose.set(key, { from, found }); return found;
+    if (last && from >= last.from && last.found < 0) return -1;
+    const re = new RegExp('<(/?)' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s>/])', 'g'); re.lastIndex = from;
+    let depth = 1, steps = 0, m;
+    for (; (m = re.exec(lower)) && m.index - from <= 65536 && steps < 256; steps++) { if (m[1]) { if (--depth === 0) return m.index; } else depth++; }
+    if (steps >= 256 || (m && m.index - from > 65536)) return Math.min(s.length, from + 65536);
+    lastClose.set(key, { from, found: -1 }); return -1;
   };
   for (let m; (m = TAG.exec(s));) {
     const tag = m[0], tagName = (tag.match(/^<([\w:.\-]+)/) || ['', ''])[1];
@@ -1122,6 +1135,9 @@ const SCHEME_PROSE = /^(?:authentication|authorization|authorisation|credentials
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.
 // Named header lines (Authorization:, Cookie:) are removed by scrubAssignments to the end of the line first; this is the
 // safety net for a scheme token that is not introduced by a header name.
+// After a lowercase scheme word, these plain words are prose ("basic understanding", "bearer instruments"); any other
+// lowercase value is treated as a token (send bearer correcthorse now; PR #16 review).
+const SCHEME_LOWER_PROSE = /^(?:understanding|knowledge|instruments?|bonds?|configuration|config|information|info|usage|idea|ideas|setup|version|plan|plans|account|level|training|rules?|needs|features?|principles?|functionality|structure|requirements?|skills?|questions?|steps?|stuff|things?|example|examples|form|format|search|support|package|tier|mode|level|policy|checks?|tests?|test|syntax|concepts?|terms|operations?|of|and|or|for|to|the|a|an|in|on|with|is|was)$/i;
 function scrubBareAuth(s, label) {
   // No minimum length (`Basic YTpi` is a:b in base64; PR #16 review); a short plain lowercase word ("Bearer token",
   // "Basic auth") is prose about the scheme, not a token, and stays.
@@ -1129,8 +1145,8 @@ function scrubBareAuth(s, label) {
   // credential always carries name=value parameters, so Digest without an "=" is prose (PR #27 review).
   // Scheme names are case-insensitive (bearer, BASIC; PR #16 review). After a scheme not written as "Basic"/"Bearer", a
   // plain lowercase word of any length is prose ("basic understanding"), so only a token-looking value goes.
-  let out = s.replace(/\b(basic|bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/gi, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || (!/^(?:Basic|Bearer)$/.test(sch) && /^[a-z]+\.*$/.test(v)) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
-  return out.replace(/\b(digest)[ \t]+(?=[^\n]*=)([^\n]*=[^\n]*)/g, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
+  let out = s.replace(/\b(basic|bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/gi, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || (!/^(?:Basic|Bearer)$/.test(sch) && SCHEME_LOWER_PROSE.test(v.replace(/\.+$/, ''))) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
+  return out.replace(/\b(digest)[ \t]+(?=[^\n]*=)([^\n]*=[^\n]*)/gi, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
 }
 
 // Known token shapes, shared by the main pass (KEY, matched on the folded view) and the residual scan. Assembled from
@@ -1153,7 +1169,7 @@ const PATTERNS = [
   // Combining marks count as letters, so a decomposed exa\u0301mple.com is still one address (PR #16 review).
   ['EMAIL', /(?<![\p{L}\p{M}\p{N}])[\p{L}\p{M}\p{N}._%+-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
-  ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
+  ['SSN', /(?<![\p{L}\p{N}-])\d{3}-\d{2}-\d{4}(?![\p{N}-])/gu],   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
   ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
@@ -1261,6 +1277,7 @@ export function scrubber({ terms = [] } = {}) {
   const ownRe = own.length ? new RegExp(`(?<![\\p{L}\\p{N}@\\uE000])${ownBody}(?![\\p{L}\\p{N}@])`, 'giu') : null;
   // The same words with "@" allowed beside them, for a second sweep after the email rule has run (see scrubOnce).
   const ownAtRe = own.length ? new RegExp(`(?<![\\p{L}\\p{N}\\uE000])${ownBody}(?![\\p{L}\\p{N}])`, 'giu') : null;
+  let deadline = Infinity;           // set by sanitize() for its run, so long loops can stop early
   const seen = new Map();            // kind\u0000value -> sentinel-wrapped placeholder
   const real = new Map();            // public [KIND_n] -> real value, for unscrub and echoes
   const counts = {};                 // distinct values found, per kind (what counts() reports)
@@ -1356,11 +1373,19 @@ export function scrubber({ terms = [] } = {}) {
     // password=pass does not turn "compass" into "com[SECRET_1]" (PR #16 review).
     if (known.length) {
       const kindOf = new Map(); for (const [kind, v] of known) if (!kindOf.has(v)) kindOf.set(v, kind);
-      const lens = [...new Set([...kindOf.keys()].map(v => v.length))].sort((a, b) => b - a), firsts = new Set([...kindOf.keys()].map(v => v[0]));
+      // Candidate lengths are indexed by the value's first four characters (every value has at least four), so a
+      // position is only tried against values that can start there.
+      const byPre = new Map(); for (const v of kindOf.keys()) { const p = v.slice(0, 4); if (!byPre.has(p)) byPre.set(p, new Set()); byPre.get(p).add(v.length); }
+      for (const [p, set] of byPre) byPre.set(p, [...set].sort((a, b) => b - a));
+      const firsts = new Set([...kindOf.keys()].map(v => v[0]));
       const word = (c) => c !== undefined && /[\p{L}\p{N}]/u.test(c);
       let out = '', at = 0;
       for (let i = 0; i < s.length; i++) {
+        // The sanitize deadline is checked inside the loop: many distinct lengths sharing a first character could
+        // otherwise run far past it before the check after scrubbing (PR #16 review). Past it, sanitize holds.
+        if ((i & 1023) === 0 && Date.now() > deadline) throw new ScrubError('scrubbing took too long; holding back');
         if (!firsts.has(s[i])) continue;
+        const lens = byPre.get(s.substr(i, 4)); if (!lens) continue;
         for (const L of lens) {
           const v = s.substr(i, L), kind = kindOf.get(v);
           if (kind === undefined || (word(v[0]) && word(s[i - 1])) || (word(v[L - 1]) && word(s[i + L]))) continue;
@@ -1407,7 +1432,8 @@ export function scrubber({ terms = [] } = {}) {
       const t0 = Date.now();
       // Any unexpected failure inside the scrubber is a ScrubError, so callers hold the text back instead of crashing.
       let scrubbed;
-      try { scrubbed = scrubOnce(s); } catch (e) { throw new ScrubError(`scrubber failed (${e && e.name}); holding back`); }
+      deadline = t0 + maxMs;
+      try { scrubbed = scrubOnce(s); } catch (e) { throw new ScrubError(`scrubber failed (${e && e.name}); holding back`); } finally { deadline = Infinity; }
       // The residual scan is inside the time budget too (PR #16 review).
       let r; try { r = residual(scrubbed, { terms: own }); } catch (e) { throw new ScrubError(`residual scan failed (${e && e.name}); holding back`); }
       if (Date.now() - t0 > maxMs) throw new ScrubError(`scrubbing took longer than ${maxMs} ms; holding back`);
