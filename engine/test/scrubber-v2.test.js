@@ -709,3 +709,8 @@ test('[promised] viaknox PR #27 round 17: adjacent look-alikes in a Latin name; 
   assert.ok(!scrubber().sanitize('connect fe80::1 now').text.includes('fe80'));
   assert.equal(scrubber().sanitize('meet 10::30 then std::vector').text, 'meet 10::30 then std::vector');
 });
+test('[promised] viaknox PR #27 round 18: form-encoded query names (?api+key=)', () => {
+  for (const x of ['https://x.example/?api+key=hunter22&a=1', 'https://x.example/?a=1&access+token=hunter22'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+  assert.equal(scrubber().sanitize('https://x.example/?q=a+b&page=2').text, 'https://x.example/?q=a+b&page=2');
+});

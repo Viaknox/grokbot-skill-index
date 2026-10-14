@@ -1091,9 +1091,10 @@ function scrubCommands(s, label) {
 const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp']);
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
-  // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review).
-  return s.replace(/([?&]((?:[A-Za-z0-9_.\-]|%[0-9A-Fa-f]{2}){1,60})=)([^&\s#\]]+)/g, (m, pre, name, v) => {
-    const n = decodeName(name);
+  // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review), and "+" is a space
+  // as in form encoding (?api+key=…; PR #27 review).
+  return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})=)([^&\s#\]]+)/g, (m, pre, name, v) => {
+    const n = decodeName(name.replace(/\+/g, ' '));
     return (!QUERY_NAMES.has(n.toLowerCase()) && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
   });
 }
