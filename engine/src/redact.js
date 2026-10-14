@@ -52,6 +52,8 @@ function decodeName(name) {
   return name.replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)))   // \u{61} (PR #27 review)
     .replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/\\x([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))   // JS/Python \xNN (PR #27 review)
+    // Java .properties drops a backslash before any other character (p\assword is password; PR #27 review).
+    .replace(/\\([^uUxX\\])/g, '$1')
     // A run of %HH bytes is UTF-8 (contrase%C3%B1a is contraseña; PR #27 review); a run that is not valid UTF-8 falls
     // back to one character per byte.
     .replace(/(?:%[0-9a-fA-F]{2})+/g, (m) => { try { return decodeURIComponent(m); } catch { return m.replace(/%([0-9a-fA-F]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))); } });
@@ -416,7 +418,7 @@ const ASSIGN_START = new RegExp(
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
   // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review).
-  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*\\n]|\\*(?!/)){0,80}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?(?:(?<=["\'])[ \\t\\r\\n]{0,40}|[ \\t]*)\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?(?:(?<=["\'])[ \\t\\r\\n]{0,40}|[ \\t]*)\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -596,6 +598,8 @@ function scrubLineForms(s, label, resolve) {
 // A quoted TOML table name may hold spaces (["database credentials"]; PR #27 review): groups 2-4 are the name.
 const INI_HEADER = /^[ \t]*\[\[?[ \t]*(?:"([^"\n]{1,120})"|'([^'\n]{1,120})'|([^\]"'\n\s]{1,120}))(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*(?:[#;].*)?$/;   // a trailing comment after the header too ([credentials] # prod; PR #16 review)
 // Quoted and numeric keys too ("login name" = x inside [credentials]; PR #16 review).
+// A dotted table name with quoted parts (["database credentials".prod]): any credential-named part counts (PR #27 review).
+const INI_DOTTED = /^[ \t]*\[\[?[ \t]*((?:"[^"\n]{1,120}"|'[^'\n]{1,120}'|[\w-]{1,120})(?:[ \t]*\.[ \t]*(?:"[^"\n]{1,120}"|'[^'\n]{1,120}'|[\w-]{1,120})){1,8})[ \t]*\]\]?[ \t]*(?:[#;].*)?$/;
 const INI_ASSIGN = /^[ \t]*(?:"[^"\n]{1,160}"|'[^'\n]{1,160}'|[A-Za-z0-9_][\w.\-]{0,60})[ \t]*[=:][ \t]*/;
 // An HCL block type may carry string labels before its brace (credentials "prod" { … }; HCL spec, PR #27 review):
 // group 2 is the type, group 3 the labels.
@@ -665,13 +669,19 @@ function jsonKindSecret(t) {
   for (let m; (m = KV.exec(t));) { if (decJson(m[1]) === 'kind' && decJson(m[2]) === 'Secret') return true; KV.lastIndex = m.index + 1; }
   return false;
 }
+// kind: *s where &s anchors the scalar Secret elsewhere in the document is a Secret too (PR #27 review).
+function aliasSecret(t) {
+  const k = /^[ \t]*(?:-[ \t]+)?(["']?)kind\1[ \t]*:[ \t]*\*([^\s,\]}]{1,64})[ \t]*(?:#.*)?$/m.exec(t); if (!k) return false;
+  const name = k[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('&' + name + '[ \\t]+(?:![^\\s]+[ \\t]+)?(["\']?)Secret\\1[ \\t]*(?:#.*)?$', 'm').test(t);
+}
 function scrubScopes(s, label, resolve) {
   // A JSON manifest ("kind": "Secret") is a Kubernetes Secret too (PR #16 review).
   const ivs = [];
   // Kubernetes Secret scope is per YAML document ("---" separates them), so a ConfigMap after a Secret keeps its data
   // (PR #27 review). `docs` holds [start, isSecret] for each document.
   // "..." ends a YAML document too (PR #16 review).
-  const docs = []; { let d0 = 0; const SEP = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || jsonKindSecret(t)]); };
+  const docs = []; { let d0 = 0; const SEP = /^(?:---|\.\.\.)[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || jsonKindSecret(t) || aliasSecret(t)]); };
     for (let m; (m = SEP.exec(s));) { add(d0, m.index); d0 = m.index + m[0].length; } add(d0, s.length); }
   let di = 0, k8s = docs[0][1];
   // In a JSON Secret, data/stringData may sit across lines from its colon and brace ({"data"\n:\n{…}}; PR #27 review).
@@ -696,6 +706,7 @@ function scrubScopes(s, label, resolve) {
     const line = s.slice(i, nl).replace(/\r$/, ''); let m;   // CRLF behaves like LF (PR #16 review)
     while (di + 1 < docs.length && docs[di + 1][0] <= i) k8s = docs[++di][1];
     if ((m = INI_HEADER.exec(line))) ini = isCredentialName(resolve(m[1] ?? m[2] ?? m[3]));
+    else if ((m = INI_DOTTED.exec(line))) ini = (m[1].match(/"[^"\n]*"|'[^'\n]*'|[\w-]+/g) || []).some(c => isCredentialName(resolve(c.replace(/^["']|["']$/g, ''))));
     else if (ini && (m = INI_ASSIGN.exec(line))) {
       // More-indented lines below continue the value (Python configparser; PR #16 review).
       const vs = i + m[0].length; let ve = valueEnd(s, vs); const ind = (line.match(/^[ \t]*/) || [''])[0].length;
@@ -1222,7 +1233,7 @@ const NOT_L = '(?![\\p{L}\\p{N}])', NOT_L_BEHIND = '(?<![\\p{L}\\p{N}])';
 const EXT_WORD = '(?!(?:not|no|wrong|incorrect|invalid|expired|too|missing|required|empty|blank|weak|strong|short|long|working|broken|locked|reset|changed|the|a|an|my|your|our|their|in|on|at|for|to|of|and|but|or|so|very|still|now|again|anymore|i|it|that|this|please|help|me|you|we|they)(?![\\p{L}\\p{N}]))[\\p{L}\\p{N}]+';
 // An unquoted value takes the following lowercase words too when they run to the end of the clause, so a passphrase
 // ("correct horse battery staple") or a 24-word recovery phrase goes whole (PR #27 review).
-const COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)[ \\t]+|[\'’]s[ \\t]+)("[^"\\n]*"|\'[^\'\\n]*\'|\\S+(?:(?:[ \\t]+' + EXT_WORD + '){1,23}(?=[ \\t]*(?:[.,;!?\\n]|$)))?)', 'giu');
+const COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]+(?:is|are|est|ist|lautet|es|é|è|это|—)(?:[ \\t]*[:=][ \\t]*|[ \\t]+)|[\'’]s[ \\t]+)("[^"\\n]*"|\'[^\'\\n]*\'|\\S+(?:(?:[ \\t]+' + EXT_WORD + '){1,23}(?=[ \\t]*(?:[.,;!?\\n]|$)))?)', 'giu');
 // "recovery phrase: abandon ability …", "seed phrase = …": a wallet phrase cue with a separator takes the rest of the line.
 const WALLET_RE = new RegExp(NOT_L_BEHIND + '(?:(?:seed|recovery|mnemonic|secret|wallet)[ _-]?phrases?|mnemonics?)' + NOT_L + '[ \\t]*(?:[:=\\uFF1A][ \\t]*)([^\\n]+)', 'giu');
 // "aws configure set aws_secret_access_key X", "npm config set _authToken X": a config command naming a credential.

@@ -990,3 +990,12 @@ test('r51: an SSN after a label hyphen is scrubbed; longer numeric IDs stay', ()
   assert.ok(!t('SSN-123-45-6789').includes('6789'));
   assert.equal(t('id 987-123-45-6789'), 'id 987-123-45-6789');
 });
+
+// Round 52 (viaknox PR #27 review of bfc5077).
+test('r52: copula punctuation, dotted TOML headers, Java escapes, multiline block comments, aliased Secret kinds', () => {
+  for (const t of ['The password is: hunter2.', '["database credentials".prod]\nvalue = "hunter2"', 'p\\assword=hunter2',
+    'const password /* production\nvalue */ = "hunter2";', 'x: &s Secret\nkind: *s\ndata:\n  foo: hunter2']) {
+    const r = scrubber({ terms: [] }).sanitize(t);
+    assert.ok(r.held || !r.text.includes('hunter2'), t + ' -> ' + r.text);
+  }
+});
