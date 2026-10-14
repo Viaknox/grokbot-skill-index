@@ -106,7 +106,26 @@ function viewer() { let last = null, view = null; return (s) => (s === last ? vi
 // name ("PGPASSWORD", "dbSecret") or as a plural ("passwords:", "secrets:") but not as the prefix of an unrelated word
 // ("secretary", "tokenizer", "author"). A few storage suffixes glued on still count ("DBPASSWORDHASH", "MYSECRETVALUE";
 // PR #27 review).
-const STRONG = /(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?:hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|file|env|var)?(?![a-z])/;
+const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|file|env|var';
+const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?:${STORE_SUFFIX})?(?![a-z])`);
+// A compound must END at the end of a name part (optionally after a plural "s" or a storage suffix), so "cookiecutter"
+// is not a cookie; the generic-looking ones must also START at a part, so "monkeyvalue" and "hockeyname" stay plain,
+// while "DBAPIKEY" and "OPENAI_API_KEY" still count (viaknox PR #27 review).
+const COMPOUND_TAIL = new RegExp(`^s?(?:${STORE_SUFFIX})?$`);
+const COMPOUND_HEAD = /^(?:cookie|setcookie|keyname|keyvalue)$/;
+function hasCompound(parts) {
+  const joined = parts.join(''), starts = new Set(), ends = [];
+  let at = 0; for (const p of parts) { starts.add(at); at += p.length; ends.push(at); }
+  const re = new RegExp(COMPOUND.source, 'g');
+  for (let i = 0; i < joined.length; i++) {
+    re.lastIndex = i; const m = re.exec(joined); if (!m) break; i = m.index;
+    const end = m.index + m[0].length, partEnd = ends.find(e => e >= end);
+    if (!COMPOUND_TAIL.test(joined.slice(end, partEnd))) continue;
+    if (COMPOUND_HEAD.test(m[0]) && !starts.has(m.index)) continue;
+    return true;
+  }
+  return false;
+}
 const COMPOUND = /(apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
 const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid',   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
@@ -127,7 +146,7 @@ function nameParts(name) {
 export function isCredentialName(name) {
   const parts = nameParts(name);
   if (!parts.length) return false;
-  if (COMPOUND.test(parts.join(''))) return true;
+  if (hasCompound(parts)) return true;
   if (parts.length >= 2 && /^keys?$/.test(parts[parts.length - 1]) && !STRUCTURAL_KEY.has(parts[parts.length - 2])) return true;
   return parts.some((p, i) => {
     if (STRONG.test(p) || WHOLE.has(p)) return true;
@@ -444,7 +463,10 @@ function objectScalars(s, open, close, ivs) {
   KV.lastIndex = open + 1;
   for (let m; (m = KV.exec(s)) && m.index < close;) {
     const vs = m.index + m[0].length, c = s[vs];
-    if (c === '{' || c === '[') continue;
+    // An array of plain values inside a credential object goes whole ({"credentials":{"items":["…"]}}; PR #27 review);
+    // an array of objects is scanned through so each object's fields are found.
+    if (c === '[') { const ae = Math.min(bracketEnd(s, vs), close); if (!s.slice(vs, ae).includes('{')) { if (s.slice(vs + 1, ae - 1).trim()) ivs.push([vs, ae, 'SECRET']); KV.lastIndex = ae; } continue; }
+    if (c === '{') continue;
     let ve;
     if (c === '"' || c === "'") { ve = vs + 1; while (ve < close && s[ve] !== c) { if (s[ve] === '\\') ve++; ve++; } ve = Math.min(ve + 1, close); }
     else { ve = vs; while (ve < close && !',}]\n'.includes(s[ve])) ve++; }
@@ -992,7 +1014,11 @@ export function residual(text, { terms = [] } = {}) {
   if (terms.length) {
     // The same folding as the main pass, so a term hidden with invisible characters or look-alike forms is still seen.
     const folded = foldName(foldStr(s)).toLowerCase();
-    for (const t of terms) { const tt = foldName(foldStr(t)).trim().toLowerCase(); if (tt && folded.includes(tt)) { reasons.push('never-send term'); break; } }
+    // Whole words only, as the scrubber matches them ("Ann" is not in "announce"; PR #27 review); plurals still count.
+    for (const t of terms) {
+      const tt = foldName(foldStr(t)).trim().toLowerCase();
+      if (tt && new RegExp(`(?<![\\p{L}\\p{N}])${tt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:['’]s|es|s)?(?![\\p{L}\\p{N}])`, 'u').test(folded)) { reasons.push('never-send term'); break; }
+    }
   }
   return { held: reasons.length > 0, reasons };
 }

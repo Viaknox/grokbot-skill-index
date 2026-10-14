@@ -569,3 +569,16 @@ test('[promised] a compact name ending in b64 is a credential (DBPASSWORDB64)', 
   const r = scrubber().sanitize('DBPASSWORDB64: "aHVudGVyMg=="'); assert.ok(!r.text.includes('aHVudGVyMg'), r.text);
   assert.equal(isCredentialName('secretary2'), false);
 });
+test('[promised] a plain-value array inside a credential object goes whole', () => {
+  assert.ok(!scrubber().sanitize('{"credentials":{"items":["hunter2"]}}').text.includes('hunter2'));
+});
+test('[best-effort] compound credential names need part boundaries (cookiecutter, monkeyvalue stay plain)', () => {
+  for (const n of ['cookiecutter', 'monkeyvalue', 'hockeyname']) assert.equal(isCredentialName(n), false, n);
+  for (const n of ['DBAPIKEY', 'OPENAI_API_KEY', 'cookies', 'Set-Cookie', 'KeyValue', 'DBAPIKEYHASH', 'PHPSESSID', 'mysessionid']) assert.equal(isCredentialName(n), true, n);
+});
+test('[promised] the residual term check is whole-word, like the scrubber', async () => {
+  const { residual } = await V2();
+  assert.equal(scrubber({ terms: ['Ann'] }).sanitize('Please announce the result').held, false);
+  assert.equal(residual('ask Ann today', { terms: ['Ann'] }).held, true);
+  assert.equal(residual('the Anns agreed', { terms: ['Ann'] }).held, true);
+});
