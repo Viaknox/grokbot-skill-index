@@ -621,3 +621,18 @@ test('[best-effort] viaknox PR #27 round 7: HTML cells with markup, decorated k8
     assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
   assert.equal(scrubber().sanitize('The password was reset yesterday by IT').text, 'The password was reset yesterday by IT');
 });
+test('[promised] viaknox PR #27 round 8: indentless YAML lists, compound token names, proxy-user, nested XML, seed phrases', () => {
+  for (const x of ['password:\n- hunter2', 'credentials:\n  password:\n  - hunter2', 'BEARERTOKEN=hunter2', 'curl --proxy-user alice:hunter2 https://x', 'curl -U alice:hunter2 https://x',
+    '<password><value>hunter2</value></password>', 'mnemonic: "abandon hunter2 about"', 'seed_phrase: abandon hunter2 about', '<input autocomplete="current-password" value="hunter2">'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
+  assert.equal(scrubber().sanitize('random_seed: 42').text, 'random_seed: 42');
+});
+test('[promised] viaknox PR #27 round 8: compact SSNs and phones after a cue, E.164, IPv6; times and C++ scopes stay', () => {
+  for (const [x, bad] of [['SSN: 123456789', '123456789'], ['call +14155552671', '4155552671'], ['phone: 4155552671', '4155552671'], ['client at 2001:db8:85a3::8a2e:370:7334', '8a2e']])
+    assert.ok(!scrubber().sanitize(x).text.includes(bad), x);
+  for (const x of ['meeting at 10:30:00 today', 'use std::string here', 'order 1234567890 shipped']) assert.equal(scrubber().sanitize(x).text, x);
+});
+test('[best-effort] reformatted contact echoes are found', () => {
+  const s = scrubber(); s.scrub('mail Alice@Example.com, call (415) 555-2671');
+  assert.deepEqual(s.echoes('ok alice@example.com and 415-555-2671').sort(), ['EMAIL', 'PHONE']);
+});

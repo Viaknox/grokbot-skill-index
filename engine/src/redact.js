@@ -106,7 +106,7 @@ function viewer() { let last = null, view = null; return (s) => (s === last ? vi
 // name ("PGPASSWORD", "dbSecret") or as a plural ("passwords:", "secrets:") but not as the prefix of an unrelated word
 // ("secretary", "tokenizer", "author"). A few storage suffixes glued on still count ("DBPASSWORDHASH", "MYSECRETVALUE";
 // PR #27 review).
-const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|file|env|var';
+const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|keys|token|tokens|file|env|var';   // BEARERTOKEN too (PR #27)
 const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?:${STORE_SUFFIX})?(?![a-z])`);
 // A compound must END at the end of a name part (optionally after a plural "s" or a storage suffix), so "cookiecutter"
 // is not a cookie; the generic-looking ones must also START at a part, so "monkeyvalue" and "hockeyname" stay plain,
@@ -126,8 +126,8 @@ function hasCompound(parts) {
   }
   return false;
 }
-const COMPOUND = /(apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
-const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid',   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
+const COMPOUND = /(seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
+const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid', 'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
   'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'zugangsdaten',
   'contraseña', 'contrasena', 'clave', 'secreto', 'credenciales', 'senha', 'chave', 'chiave', 'segreto', 'wachtwoord', 'sleutel',
@@ -265,7 +265,8 @@ function valueEnd(s, start) {
       const lineStart = i + 1;
       let lineEnd = s.indexOf('\n', lineStart); if (lineEnd < 0) lineEnd = s.length;
       const line = s.slice(lineStart, lineEnd);
-      if (line.trim() !== '' && (line.match(/^\s*/) || [''])[0].length <= indent) break;
+      // An indentless YAML sequence (password:\n- x) at the key's own indent still belongs to an empty value (PR #27).
+      if (line.trim() !== '' && (line.match(/^\s*/) || [''])[0].length <= indent && !(trimmed === '' && (line.match(/^\s*/) || [''])[0].length === indent && /^\s*-(?:\s|$)/.test(line))) break;
       i = lineEnd;
     }
     return i;
@@ -551,7 +552,7 @@ function scrubScopes(s, label, resolve) {
       while (j < s.length) {
         const ls = j + 1; let le = s.indexOf('\n', ls); if (le < 0) le = s.length; const l2 = s.slice(ls, le);
         // A blank line inside the record does not end it (PR #16 review); only a line at or above the key's indent does.
-        if (!l2.trim()) { j = le; continue; } if ((l2.match(/^[ \t]*/) || [''])[0].length <= base) break;
+        if (!l2.trim()) { j = le; continue; } { const ind2 = (l2.match(/^[ \t]*/) || [''])[0].length; if (ind2 < base || (ind2 === base && !/^[ \t]*-(?:[ \t]|$)/.test(l2))) break; }
         const c = YAML_CHILD.exec(l2);
         if (c && c[0].length < l2.replace(/[ \t\r]+$/, '').length) { const vs = ls + c[0].length, ve = valueEnd(s, vs); ivs.push([vs, ve, 'SECRET']); j = Math.max(le, ve); }
         else j = le;
@@ -693,7 +694,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     const tag = m[0], tagName = (tag.match(/^<([\w:.\-]+)/) || ['', ''])[1];
     let byAttr = false; ATTR_ANY.lastIndex = 0;
     // type="password" marks a password field on its own (PR #27 review).
-    for (let a; (a = ATTR_ANY.exec(tag));) { if (/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(a[3].replace(/^["']|["']$/g, '')); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
+    for (let a; (a = ATTR_ANY.exec(tag));) { if ((/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) || (/^autocomplete$/i.test(a[1]) && /^["']?(?:current-password|new-password|one-time-code)["']?$/i.test(a[3]))) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(a[3].replace(/^["']|["']$/g, '')); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
     const byTag = isCredentialName(resolve(tagName));
     if (!byAttr && !byTag) continue;
     // Every attribute value goes except the ones that identify the element (name, id, http-equiv, type, class).
@@ -892,8 +893,13 @@ function scrubXml(s, label, resolve) {
   for (let m; (m = XML_OPEN.exec(s));) {
     const name = resolve(m[1]);
     if (!isCredentialName(name)) continue;
-    const open = m.index + m[0].length, close = nextClose(open);
-    if (close < 0 || close - open > 65536 || !s.startsWith('</' + m[1] + '>', close)) continue;
+    const open = m.index + m[0].length;
+    // The matching closing tag may come after nested elements (<password><value>…</value></password>; PR #27 review):
+    // walk the closing tags inside the 64 KB window until this element's own one.
+    let ci = closes.length; { let lo = 0, hi = closes.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (closes[mid] < open) lo = mid + 1; else hi = mid; } ci = lo; }
+    let close = -1; const want = '</' + m[1] + '>';
+    for (let k = ci, n = 0; k < closes.length && closes[k] - open <= 65536 && n < 64; k++, n++) if (s.startsWith(want, closes[k])) { close = closes[k]; break; }
+    if (close < 0) continue;
     const content = s.slice(open, close);
     if (content.trim() && !isPlaceholderValue(content)) { out += s.slice(at, open) + label('SECRET', content); at = close; }
     XML_OPEN.lastIndex = close;
@@ -969,7 +975,7 @@ function scrubPhrase(s, label) {
 // after a backslash. curl's -u / --user take the whole user:pass. mysql's glued -pVALUE is handled first so its "p" is
 // not read as a flag name.
 const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
-const FLAG_USER = /(^|\s)(-u|--user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
+const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
 const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("[^"\n]*"|'[^'\n]*'|(?:\\\r?\n|[^\s'"])+)/g;
 function scrubFlags(s, label, V) {
   if (!s.includes('-')) return s;
@@ -1036,8 +1042,15 @@ const PATTERNS = [
   ['EMAIL', /(?<![\p{L}\p{N}])[\p{L}\p{N}._%+-]{1,64}@[\p{L}\p{N}.-]{1,253}\.\p{L}{2,63}(?![\p{L}\p{N}])/gu],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],
+  // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
+  ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
+  // Compact numbers: E.164 (+14155552671) anywhere, and 10–15 digits after a phone cue (PR #27 review).
+  ['PHONE', /(?<![\w+])\+\d{10,15}\b/g],
+  ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]*[:#=]?[ \t]*)\d{10,15}\b/gi],
   ['IP', /\b(?:\d{1,3}\.){3}\d{1,3}\b/g],
+  // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
+  ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])/gi],
 ];
 
 function luhn(digits) {
@@ -1198,6 +1211,7 @@ export function scrubber({ terms = [] } = {}) {
     for (const [kind, re] of PATTERNS) {
       s = s.replace(re, (m) => {
         if (kind === 'CARD') { const d = m.replace(/\D/g, ''); if (d.length < 13 || !luhn(d)) return m; }
+        if (kind === 'IP' && m.includes(':') && !(m.split(':').filter(Boolean).length >= 3 && /[0-9a-f]{3,4}/i.test(m))) return m;
         return label(kind, m.trim());
       });
     }
@@ -1249,7 +1263,16 @@ export function scrubber({ terms = [] } = {}) {
     // Values shorter than 4 characters are ignored. Never returns the values themselves.
     echoes(text) {
       const s = String(text ?? ''), kinds = new Set();
-      for (const { kind, value } of inventory) if (value && value.length >= 4 && s.includes(value)) kinds.add(kind);
+      // Contact details are compared normalised: emails without case, phones by their last ten digits, so a reformatted
+      // echo ((415) 555-2671 -> 415-555-2671, Alice@ -> alice@) still counts (PR #27 review).
+      const lower = s.toLowerCase();
+      const phones = (s.match(/\+?\d[\d\s().-]{6,}\d/g) || []).map(x => x.replace(/\D/g, '').slice(-10));
+      for (const { kind, value } of inventory) {
+        if (!value || value.length < 4) continue;
+        if (s.includes(value)) kinds.add(kind);
+        else if (kind === 'EMAIL' && lower.includes(value.toLowerCase())) kinds.add(kind);
+        else if (kind === 'PHONE') { const d = value.replace(/\D/g, '').slice(-10); if (d.length >= 7 && phones.includes(d)) kinds.add(kind); }
+      }
       return [...kinds];
     },
   };
