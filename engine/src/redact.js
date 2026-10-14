@@ -553,7 +553,12 @@ function braceEnd(s, open) {
 }
 function scrubScopes(s, label, resolve) {
   // A JSON manifest ("kind": "Secret") is a Kubernetes Secret too (PR #16 review).
-  const ivs = []; const k8s = K8S_SECRET.test(s) || /"kind"[ \t]*:[ \t]*"Secret"/.test(s);
+  const ivs = [];
+  // Kubernetes Secret scope is per YAML document ("---" separates them), so a ConfigMap after a Secret keeps its data
+  // (PR #27 review). `docs` holds [start, isSecret] for each document.
+  const docs = []; { let d0 = 0; const SEP = /^---[ \t]*(?:#.*)?$/gm; const add = (a, b) => { const t = s.slice(a, b); docs.push([a, K8S_SECRET.test(t) || /"kind"[ \t]*:[ \t]*"Secret"/.test(t)]); };
+    for (let m; (m = SEP.exec(s));) { add(d0, m.index); d0 = m.index + m[0].length; } add(d0, s.length); }
+  let di = 0, k8s = docs[0][1];
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
   // on a line: every scalar inside goes, nested objects included.
   if (s.includes('{')) { OBJ_KEY.lastIndex = 0; for (let m; (m = OBJ_KEY.exec(s));) if (isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
@@ -564,6 +569,7 @@ function scrubScopes(s, label, resolve) {
   while (i < s.length) {
     let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
     const line = s.slice(i, nl); let m;
+    while (di + 1 < docs.length && docs[di + 1][0] <= i) k8s = docs[++di][1];
     if ((m = INI_HEADER.exec(line))) ini = isCredentialName(resolve(m[2]));
     else if (ini && (m = INI_ASSIGN.exec(line))) { const vs = i + m[0].length; ivs.push([vs, valueEnd(s, vs), 'SECRET']); }
     // HCL / HOCON block "name { … }" (no separator before the brace): every assignment inside goes. Each brace on the
@@ -1082,7 +1088,7 @@ function scrubQuery(s, label, resolve) {
 // URL userinfo scheme://user:pass@host — the whole user:pass is replaced (a token-as-user form too). No length ceiling:
 // a 300-character generated password must go too, and the classes exclude whitespace, slash and @, so the scan stays
 // linear without one (PR #16 review).
-const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,30}:\/\/)([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // a scheme may be one letter (x://) (PR #16 review)
+const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,30}:\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
 
 const SCHEME_PROSE = /^(?:authentication|authorization|authorisation|credentials|tokens?|headers?|scheme|schemes|access|support|supported|login|logins)$/i;
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.

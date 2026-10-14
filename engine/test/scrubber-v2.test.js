@@ -693,3 +693,9 @@ test('[best-effort] tune-up PR #16 review backlog: no over-scrub of compass/bypa
   const e = scrubber(); e.sanitize('password=correct horse battery staple'); assert.deepEqual(e.echoes('That is correct.'), []);
   const m = scrubber(); m.sanitize('a@example.com'); assert.deepEqual(m.echoes('data@example.com'), []);
 });
+test('[promised] viaknox PR #27 round 15: scheme-relative URL userinfo; a ConfigMap after a Secret keeps its data', () => {
+  assert.ok(!scrubber().sanitize('see //alice:CorrectHorse22!@db.example/app').text.includes('CorrectHorse22'));
+  const t = scrubber().sanitize('kind: Secret\nstringData:\n  db: hunter22\n---\nkind: ConfigMap\ndata:\n  greeting: hello world\n').text;
+  assert.ok(!t.includes('hunter22')); assert.ok(t.includes('greeting: hello world'), t);
+  assert.equal(scrubber().sanitize('// TODO: ping bob\nx // y').text, '// TODO: ping bob\nx // y');
+});

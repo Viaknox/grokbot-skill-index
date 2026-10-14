@@ -55,9 +55,9 @@ const MEDIA_NOTE = /^\[(?:image|photo|file|screenshot|audio|voice note|voice mes
 // A file name has at most four words, so a typed request that ends in one ("…an image of cat.jpg") is not metadata (PR #27).
 // …and no word of it is an everyday request word ("please send report.pdf", "draw cat.png" are typed asks; PR #27).
 const ASK_WORD = String.raw`(?!(?:please|send|draw|make|show|give|get|create|write|find|open|me|a|an|the|of|can|you|could|would)\s)`;
-const ITEM = String.raw`(?:${ASK_WORD}[\w.()-]+(?: ${ASK_WORD}[\w.()-]+){0,3}\.(?=[0-9]{0,4}[a-z])[a-z0-9]{1,5}|\d+(?:\.\d+)?\s?(?:bytes|kb|mb|gb|b)|\d+x\d+|\d+:\d\d)`;
+const ITEM = String.raw`(?:${ASK_WORD}[\p{L}\p{N}\p{M}_.()-]+(?: ${ASK_WORD}[\p{L}\p{N}\p{M}_.()-]+){0,3}\.(?=[0-9]{0,4}[a-z])[a-z0-9]{1,5}|\d+(?:\.\d+)?\s?(?:bytes|kb|mb|gb|b)|\d+x\d+|\d+:\d\d)`;
 const LIST = String.raw`${ITEM}(?:\s*[,;]\s*${ITEM})*`;
-const METADATA = new RegExp(String.raw`^\s*(?:${LIST})?(?:\s*\(\s*${LIST}\s*\))?\s*$`, 'i');
+const METADATA = new RegExp(String.raw`^\s*(?:${LIST})?(?:\s*\(\s*${LIST}\s*\))?\s*$`, 'iu');
 const looksLikeMetadata = (rest) => rest.trim() !== '' && METADATA.test(rest);
 const isPlaceholderText = (t) => {
   if (ACTION.test(t)) return true;

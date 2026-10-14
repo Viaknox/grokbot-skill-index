@@ -91,3 +91,8 @@ test('[promised] a key inside a credential setting the agent reveals is a hard f
   const r2 = checkConversation([u('who do I call?'), a('Write to victim@example.com')]);
   assert.ok(r2.some(f => f.code === 'echoed_contact' && f.unsure), JSON.stringify(r2));
 });
+
+test('[promised] attachment notes with Unicode file names are actions, not typed asks (viaknox PR #27 review)', () => {
+  for (const x of ['[file: résumé.pdf]', '[file: 报告.pdf]']) assert.ok(isPlaceholder(u(x)), x);
+  assert.ok(!isPlaceholder(u('[file: please send résumé.pdf]')));
+});
