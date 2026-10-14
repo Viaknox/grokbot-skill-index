@@ -154,8 +154,14 @@ function nameParts(name) {
 }
 // Why exported: transcripts.js and tests reuse the exact same "is this a credential setting" decision.
 export function isCredentialName(name) {
-  const parts = nameParts(name);
-  if (!parts.length) return false;
+  const raw = nameParts(name);
+  if (!raw.length) return false;
+  // A compact version suffix (PASSWORDV2, APIKEYV3) splits as "passwordv" + "2": drop the "v" before a number part
+  // (viaknox PR #27 review). The unsplit form is checked too, so nothing that matched before stops matching.
+  const devers = raw.map((p, i) => (p.length > 1 && p.endsWith('v') && /^\d+$/.test(raw[i + 1] || '') ? p.slice(0, -1) : p));
+  return credParts(raw) || (devers.some((p, i) => p !== raw[i]) && credParts(devers));
+}
+function credParts(parts) {
   // Numbers split off by the letter/digit cut are glued back for the compound check too ("APIKEYB64"; PR #27 review).
   const glued = parts.reduce((a, p) => (/^\d+$/.test(p) && a.length ? (a[a.length - 1] += p, a) : (a.push(p), a)), []);
   if (hasCompound(parts) || hasCompound(glued)) return true;

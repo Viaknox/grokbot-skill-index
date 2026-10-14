@@ -699,3 +699,7 @@ test('[promised] viaknox PR #27 round 15: scheme-relative URL userinfo; a Config
   assert.ok(!t.includes('hunter22')); assert.ok(t.includes('greeting: hello world'), t);
   assert.equal(scrubber().sanitize('// TODO: ping bob\nx // y').text, '// TODO: ping bob\nx // y');
 });
+test('[promised] viaknox PR #27 round 16: compact version suffixes (PASSWORDV2, APIKEYV3, TOKENV2)', () => {
+  for (const x of ['PASSWORDV2=hunter22', 'APIKEYV3=hunter22', 'CLIENTSECRETV2=hunter22', 'TOKENV2=hunter22'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+});
