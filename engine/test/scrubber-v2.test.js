@@ -582,3 +582,16 @@ test('[promised] the residual term check is whole-word, like the scrubber', asyn
   assert.equal(residual('ask Ann today', { terms: ['Ann'] }).held, true);
   assert.equal(residual('the Anns agreed', { terms: ['Ann'] }).held, true);
 });
+test('[promised] any quoted key inside a credential object has its value scrubbed', () => {
+  for (const x of ['{"credentials":{"alice@example.com":"hunter2"}}', '{"credentials":{"my key":"hunter2"}}', '{"credentials":{"1st":"hunter2"}}'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
+});
+test('[promised] a brace-prefixed credential value ({noop}, {bcrypt}) goes whole', () => {
+  for (const x of ['PASSWORD={noop}hunter2', 'PASSWORD={bcrypt}$2a$10$abcdefghijklmnopqrstuv']) {
+    const t = scrubber().sanitize(x).text; assert.ok(!/hunter2|abcdefghij/.test(t), t);
+  }
+  assert.ok(!scrubber().sanitize('"credentials": {"user": "a", "password": "hunter2"}, "host": "db"').text.includes('hunter2'));
+});
+test('[best-effort] an echo of just the token is found after a credential with a trailing comment', () => {
+  const s = scrubber(); s.scrub('PASSWORD=hunter2 # temporary'); assert.deepEqual(s.echoes('your password is hunter2'), ['SECRET']);
+});

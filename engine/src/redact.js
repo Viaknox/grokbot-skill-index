@@ -321,7 +321,10 @@ function scrubAssignments(s, view, label, resolve) {
     // A credential-named field whose value is an object ("credentials": { … }), or an array of objects, is structural:
     // descend into it rather than blanking the brace, so the secret fields inside are found one by one. A plain array
     // ("api_keys": ["…", "…"]) is a list of secrets and goes whole, to its closing bracket.
-    if (isCredentialName(name) && s[sepEnd] !== '{') {
+    // A brace only opens a structure when it holds a key/value and closes the value; "{noop}hunter2" and
+    // "{bcrypt}$2a$…" are password-storage prefixes and the whole value goes (viaknox PR #27 review).
+    const structured = s[sepEnd] === '{' && (() => { const e = braceEnd(s, sepEnd); return /[:=]/.test(s.slice(sepEnd + 1, e)) && /^[ \t]*(?:[,;}\]\r\n]|$)/.test(s.slice(e + 1, e + 3)); })();
+    if (isCredentialName(name) && !structured) {
       let end;
       // An array under a credential name goes whole even when it holds objects: the fields inside (`value`, `key`) are
       // often not credential names themselves, so descending would leave them (PR #27 review).
@@ -456,7 +459,9 @@ const BLOCK_NAME = /(["']?)([\p{L}_][\p{L}\p{N}_.\-]{0,80})\1[ \t]*$/u;
 const GENERIC_ASSIGN = /(^|[\s{,;])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,60})\2[ \t]*[=:][ \t]*/gu;
 // A credential-named object or flow map: "credentials": { … }, credentials: { … }, "secret": { "metadata": { … } }.
 const OBJ_KEY = /(?<![\p{L}\p{N}_$.\-])(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*[:=][ \t]*\{/gu;
-const KV = /(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,160})\1[ \t]*[:=][ \t]*/gu;
+// Any quoted property counts as a key inside a credential container ("alice@example.com", "my key", "1st"), not only
+// identifier-shaped ones (viaknox PR #27 review).
+const KV = /("[^"\n]{0,400}"|'[^'\n]{0,400}'|[\p{L}_$][\p{L}\p{N}_$.\-]{0,160})[ \t]*[:=][ \t]*/gu;
 // Every scalar value between `open` ({) and `close` (its match): quoted strings whole, bare values up to , } ] or the
 // line end; a nested { or [ is simply scanned through, so nested keys are seen one by one.
 function objectScalars(s, open, close, ivs) {
@@ -1074,7 +1079,12 @@ export function scrubber({ terms = [] } = {}) {
       // A SECRET value may already hold a PRIVATE sentinel; store the value in public [KIND_n] form so unscrub nests.
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
       inventory.push({ kind, value });
-      if (kind === 'SECRET') { const core = value.trim().replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core }); }
+      if (kind === 'SECRET') {
+        const core = value.trim().replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
+        // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
+        // the token is still found (viaknox PR #27 review).
+        const tok = core.split(/[\s,;#]/)[0]; if (tok && tok !== core) inventory.push({ kind, value: tok });
+      }
     }
     return seen.get(k);
   };
