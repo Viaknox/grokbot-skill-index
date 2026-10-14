@@ -582,14 +582,19 @@ const YAML_MAP_KEY = /^([ \t]*)(-[ \t]+)?(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,16
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
 // A transcript role label may sit before the manifest's first line ("USER: kind: Secret"; PR #27 review).
 const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?kind:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\1[ \t]*(?:#.*)?$/m;   // quoted, tagged or commented kinds too (PR #27 review)
+// braceEnd work is budgeted per scrub (PR #27 review): many unclosed openers would otherwise each scan a 64 KB window.
+// Past the budget the scrub throws, and sanitize() holds the text back (fail closed) rather than spending seconds on it.
+let braceBudget = Infinity;
 function braceEnd(s, open) {
   let d = 0; const lim = Math.min(s.length, open + 65536);
-  for (let i = open; i < lim; i++) {
+  let i = open;
+  for (; i < lim; i++) {
     const c = s[i];
     if (c === '"' || c === "'") { for (i++; i < lim && s[i] !== c; i++) if (s[i] === '\\') i++; continue; }
-    if (c === '{') d++; else if (c === '}' && --d === 0) return i;
+    if (c === '{') d++; else if (c === '}' && --d === 0) break;
   }
-  return lim;
+  if ((braceBudget -= i - open + 1) < 0) throw new ScrubError('scrubbing took too long; holding back');
+  return i < lim ? i : lim;
 }
 // A JSON "kind": "Secret" pair, with JSON escapes in the key or value decoded ("\u0053ecret" is "Secret"; PR #16 review).
 const decJson = (x) => { if (!x.includes('\\')) return x; try { return JSON.parse(`"${x}"`); } catch { return x; } };
@@ -610,13 +615,17 @@ function scrubScopes(s, label, resolve) {
   let di = 0, k8s = docs[0][1];
   // In a JSON Secret, data/stringData may sit across lines from its colon and brace ({"data"\n:\n{…}}; PR #27 review).
   docs.forEach(([a, sec], d) => { if (!sec) return; const b = d + 1 < docs.length ? docs[d + 1][0] : s.length; const JD = /(["'])((?:\\.|(?!\1)[^\\\n])*)\1\s*:\s*\{/g; JD.lastIndex = a;
-    for (let j; (j = JD.exec(s)) && j.index < b;) { if (!/^(?:data|stringData)$/.test(j[1] === '"' ? decJson(j[2]) : j[2])) { JD.lastIndex = j.index + 1; continue; } const open = j.index + j[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } });
+    let covered = -1;
+    for (let j; (j = JD.exec(s)) && j.index < b;) { if (j.index + j[0].length - 1 <= covered) continue; if (!/^(?:data|stringData)$/.test(j[1] === '"' ? decJson(j[2]) : j[2])) { JD.lastIndex = j.index + 1; continue; } const open = j.index + j[0].length - 1, close = braceEnd(s, open); objectScalars(s, open, close, ivs); covered = close; } });
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
   // on a line: every scalar inside goes, nested objects included.
-  if (s.includes('{')) { OBJ_KEY.lastIndex = 0; for (let m; (m = OBJ_KEY.exec(s));) if (isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
-    // A credential object longer than the 64 KB scan window fails closed: everything after its brace goes (PR #16 review).
-    if (s[close] !== '}' && close < s.length) { ivs.push([open + 1, s.length, 'SECRET']); break; }
-    objectScalars(s, open, close, ivs); OBJ_KEY.lastIndex = open + 1; } }
+  // Each scope is parsed once (PR #27 review): an opener inside an object already walked is skipped (objectScalars covers
+  // nested objects), and an unclosed one ends the scan, so thousands of "credentials:{" stay linear.
+  if (s.includes('{')) { OBJ_KEY.lastIndex = 0; let covered = -1; for (let m; (m = OBJ_KEY.exec(s));) if (m.index + m[0].length - 1 > covered && isCredentialName(resolve(m[2]))) { const open = m.index + m[0].length - 1, close = braceEnd(s, open);
+    // A credential object with no closing brace in the 64 KB scan window (or before the end) fails closed: everything
+    // after its brace goes (PR #16 review).
+    if (s[close] !== '}') { ivs.push([open + 1, s.length, 'SECRET']); break; }
+    objectScalars(s, open, close, ivs); covered = close; OBJ_KEY.lastIndex = open + 1; } }
   let i = 0, ini = false;
   while (i < s.length) {
     let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
@@ -655,7 +664,7 @@ function scrubScopes(s, label, resolve) {
       }
     }
     // Flow-style maps under data:/stringData: ({username: admin, db: x}) lose every scalar too (viaknox PR #27 review).
-    if (k8s) { const FM = /(?:^|[\s{,])(["']?)(?:data|stringData)\1[ \t]*:[ \t]*\{/g; for (let f; (f = FM.exec(line));) { const open = i + f.index + f[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); } }
+    if (k8s) { const FM = /(?:^|[\s{,])(["']?)(?:data|stringData)\1[ \t]*:[ \t]*\{/g; let covered = -1; for (let f; (f = FM.exec(line));) { const open = i + f.index + f[0].length - 1; if (open <= covered) continue; covered = braceEnd(s, open); objectScalars(s, open, covered, ivs); } }   // each scope once (PR #27 review)
     if (k8s && (m = /^([ \t]*)(["']?)(?:data|stringData)\2:[ \t]*$/.exec(line))) {   // quoted keys too ("stringData":; PR #16 review)
       const ind = m[1].length; let j = nl;
       while (j < s.length) {
@@ -1405,6 +1414,7 @@ export function scrubber({ terms = [] } = {}) {
   const resolve = (name) => name.replace(SENT, (m, kind, n) => real.get(`[${kind}_${n}]`) ?? m);
 
   function scrubOnce(text) {
+    braceBudget = 8_000_000;
     let s = String(text ?? '').replace(/[\uE000\uE001]/g, '');
     // Protect placeholders that were ALREADY in the input: wrap them so no rule re-matches them, and reserve their
     // numbers so a placeholder this scrubber makes can never equal them. They reveal back unchanged and are not counted.

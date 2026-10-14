@@ -83,7 +83,8 @@ function unit() {
 const units = (ms) => (ms / unit()).toFixed(1);
 
 // Runs sanitize on a fresh scrubber (as a request would) with the never_send terms.
-const sanitizeOnce = (text) => () => scrubber({ terms: TERMS }).sanitize(text);
+// A ScrubError is the contract's fail-closed outcome past the caps (held, no call), so it counts as finishing.
+const sanitizeOnce = (text) => () => { try { scrubber({ terms: TERMS }).sanitize(text); } catch (e) { if (!(e instanceof Error) || e.name !== 'ScrubError') throw e; } };
 
 test(`[promised] perf: sanitize of a realistic 60k-character chat takes under ${SANITIZE_UNITS} units (100 ms on the reference machine)`, () => {
   needSanitize();
@@ -124,6 +125,8 @@ const PAYLOADS = {
   'PEM header x20000': () => ('-----BEGIN ' + 'PRIVATE KEY-----\n').repeat(20000),
   '{ x59000 on one line (HCL heads; PR #27 review)': () => 'AGENT: ' + '{'.repeat(59000),
   'a{ x29500 on one line': () => 'AGENT: ' + 'a{'.repeat(29500),
+  'credentials:{ x4000 unclosed (PR #27 review)': () => 'AGENT: ' + 'credentials:{a:'.repeat(4000),
+  'JSON Secret data:{ x4000 unclosed': () => 'kind: Secret\n' + '{"data":{"a":'.repeat(4000),
   'double quote x50000': () => '"'.repeat(50000),
   'backslash x50000': () => '\\'.repeat(50000),
   'open bracket x50000': () => '['.repeat(50000),
