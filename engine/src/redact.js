@@ -1507,6 +1507,15 @@ export function scrubber({ terms = [] } = {}) {
         // ("correct horse battery staple" must not make "correct" a secret; PR #16 review).
         const tm = /^([^\s,;#]+)(?:[ \t]+#|[ \t]*[,;][ \t]*[\p{L}_][\p{L}\p{N}_.\-]*[ \t]*[=:])/u.exec(core), tok = tm && tm[1];
         if (tok && tok !== core) inventory.push({ kind, value: tok });
+        // A literal inside a wrapper (password = ("hunter2"), ["hunter2"], String("hunter2"), (hunter2)) is inventoried
+        // too, so a bare repeat later is still caught (PR #27 review). Bounded: the first 16 quoted literals of 3+ chars,
+        // or the single bare token a bracket or call wraps.
+        const lits = []; const LIT = /(["'`])((?:\\.|(?!\1)[^\\\n]){3,4096})\1/g;
+        const head = value.slice(0, 8192);   // bounded work on a huge value
+        for (let lm; lits.length < 16 && (lm = LIT.exec(head));) lits.push(lm[2]);
+        const wm = /^[ \t]*[\p{L}_$][\p{L}\p{N}_$.]{0,80}[ \t]*\([ \t]*([^\s()\[\]{},"'`]{3,4096})[ \t]*\)[ \t]*;?[ \t]*$|^[ \t]*[(\[{][ \t]*([^\s()\[\]{},"'`]{3,4096})[ \t]*[)\]}][ \t]*;?[ \t]*$/u.exec(head);
+        if (wm) lits.push(wm[1] || wm[2]);
+        for (const lit of lits) if (lit !== value && lit !== core && lit.trim().length >= 3) inventory.push({ kind, value: lit });
       }
     }
     return seen.get(k);

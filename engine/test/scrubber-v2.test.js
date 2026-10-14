@@ -923,3 +923,11 @@ test('r45: --password-stdin fed by a here-string or a heredoc', () => {
   }
   assert.ok(r45s.sanitize('docker login --password-stdin <<EOF\nhunter2\nEOF\nafter').text.endsWith('EOF\nafter'));
 });
+
+// Round 46 (viaknox PR #27 security review of f8e0634).
+test('r46: a literal inside an assignment wrapper is inventoried, so a bare repeat is scrubbed', () => {
+  const sc = scrubber({ terms: [] });
+  for (const t of ['password = ("hunter2")\nThen use hunter2', 'password = ["hunter2"]\nuse hunter2', 'password = String("hunter2")\nuse hunter2', 'password = (hunter2)\nuse hunter2']) {
+    assert.ok(!sc.sanitize(t).text.includes('hunter2'), t);
+  }
+});
