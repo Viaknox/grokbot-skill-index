@@ -67,7 +67,8 @@ const isPlaceholderText = (t) => {
 /** True for a user turn that only describes an action the user took (see the comment above). */
 export const isPlaceholder = (m) => m.role === 'user' && isPlaceholderText(String(m.content).trim());
 
-const luhnOk = (d) => { if (d.length < 13 || d.length > 19) return false; let sum = 0, alt = false; for (let i = d.length - 1; i >= 0; i--) { let n = +d[i]; if (alt) { n *= 2; if (n > 9) n -= 9; } sum += n; alt = !alt; } return sum % 10 === 0; };
+// Digits only; spaces and dashes are stripped here too, so any caller gets the same answer (quality-gate review).
+const luhnOk = (raw) => { const d = String(raw).replace(/\D/g, ''); if (d.length < 13 || d.length > 19) return false; let sum = 0, alt = false; for (let i = d.length - 1; i >= 0; i--) { let n = +d[i]; if (alt) { n *= 2; if (n > 9) n -= 9; } sum += n; alt = !alt; } return sum % 10 === 0; };
 export function checkConversation(msgs) {
   const out = [];
   // Placeholders keep their place (so "message 2" stays message 2 and a later "No, that's wrong" is still a correction)
