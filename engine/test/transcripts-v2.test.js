@@ -146,3 +146,8 @@ test('r50: a contact shared alongside a hard-secret echo is still reported', () 
   const r = checkConversation([u('card 4111 1111 1111 1111'), a('Your card 4111 1111 1111 1111 is set; call 415-555-2671')]).map(f => f.code);
   assert.ok(r.includes('echoed_secret') && r.includes('revealed_contact'), JSON.stringify(r));
 });
+
+test('r54: luhnOk ignores spaces and dashes itself', async () => {
+  const r = checkConversation([u('card 4111-1111-1111-1111'), a('saved 4111 1111 1111 1111')]).map(f => f.code);
+  assert.ok(r.includes('echoed_secret'), JSON.stringify(r));
+});

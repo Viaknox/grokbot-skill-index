@@ -45,7 +45,8 @@ if (cmd === 'check') {
     const findings = [...checkConversation(msgs), ...(or ? await judgeHeld(scrub, chatState(instructions, msgs), (san) => judgeConversation(or, san, { hasInstructions: !!instructions })) : [])];
     // Report text is scrubbed again for display; past the scrubber's cap it is withheld rather than crashing the command
     // (PR #16 review).
-    const shown = (t) => { try { return scrub.scrub(t); } catch (e) { if (e instanceof ScrubError) return '[held back: too large to scrub safely]'; throw e; } };
+    // The report goes through the same fail-closed check as the judge: residual-only secrets are held, not written out (PR #16 review).
+    const shown = (t) => { try { const z = scrub.sanitize(t); return z.held ? '[held back: secret-like content]' : z.text; } catch (e) { if (e instanceof ScrubError) return '[held back: too large to scrub safely]'; throw e; } };
     return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: shown(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });

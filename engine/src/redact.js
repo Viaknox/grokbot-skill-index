@@ -418,7 +418,10 @@ const ASSIGN_START = new RegExp(
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
   // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review).
-  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?(?:(?<=["\'])[ \\t\\r\\n]{0,40}|[ \\t]*)\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  // Each whitespace run is matched atomically ((?=(x*))\N), so a credential word followed by thousands of spaces is
+  // read once instead of being re-split between adjacent runs (that was cubic; PR #16 review). Groups 3-6 are only
+  // these runs; callers use m[0], m[1] and m[2].
+  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -468,7 +471,7 @@ function scrubAssignments(s, view, label, resolve) {
 // A quoted key that is not identifier-shaped ("api key": …, 'password field': …) is read whole and judged like any
 // other setting name (PR #27 review). Identifier-shaped keys are left to scrubAssignments.
 // JSON allows a line break before the colon too ({"api key"\n:"x"}; PR #16 review).
-const QUOTED_KEY = /(["'])([^"'\n]{1,80})\1[ \t\r\n]{0,40}[:=][ \t]*/gu;
+const QUOTED_KEY = /(["'])([^"'\n]{1,80})\1[ \t\r\n]*[:=][ \t]*/gu;
 function scrubQuotedKeys(s, label, resolve) {
   let out = '', at = 0; QUOTED_KEY.lastIndex = 0;
   for (let m; (m = QUOTED_KEY.exec(s));) {
@@ -1359,7 +1362,7 @@ function scrubQuery(s, label, resolve) {
 // URL userinfo scheme://user:pass@host — the whole user:pass is replaced (a token-as-user form too). No length ceiling:
 // a 300-character generated password must go too, and the classes exclude whitespace, slash and @, so the scan stays
 // linear without one (PR #16 review).
-const URL_USERINFO = /([a-z][a-z0-9+.\-]{0,128}:\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
+const URL_USERINFO = /((?<![a-z0-9+.\-])[a-z][a-z0-9+.\-]*:\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
 
 const SCHEME_PROSE = /^(?:authentication|authorization|authorisation|credentials|tokens?|headers?|scheme|schemes|access|support|supported|login|logins)$/i;
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.
@@ -1403,14 +1406,18 @@ const PATTERNS = [
   ['CARD', /(?<![\p{L}\p{N}])(?:\d[ -]?){12,18}\d(?![\p{L}\p{N}])/gu],   // not \b: "id_4111…" must match (PR #16 review)
   ['SSN', /(?<![\p{L}\p{N}])(?<!\p{N}-)(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/gu],   // a sentence-ending \".\" is not part of the number (PR #16 review)   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
-  ['SSN', /(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
-  ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
+  // Cue-led shapes check for a digit first and bound the gaps, so the lookbehind never rescans long runs of spaces
+  // ("password" followed by thousands of spaces was cubic; PR #16 review).
+  ['SSN', /(?=\+?\d)(?<=\b(?:ssn|social[ \t]{1,20}security)(?:[ \t]{1,20}(?:number|no\.?|#))?[ \t]{1,20}(?:is|was)[ \t]{1,20})\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
+  ['SSN', /(?=\+?\d)(?<=\b(?:ssn|SSN|social[ \t]{1,20}security(?:[ \t]{1,20}(?:number|no\.?|#))?)[ \t]{0,20}[:#=-]?[ \t]{0,20})\d{9}\b/gi],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
   // Compact numbers: E.164 (+14155552671) anywhere, and 10–15 digits after a phone cue (PR #27 review).
-  ['PHONE', /(?<![A-Za-z0-9+])\+\d{10,15}(?!\d)/g],   // \"id_+14155552671\" too (PR #16 review)
-  ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]*[:#=]?[ \t]*)\d{10,15}\b/gi],
+  ['PHONE', /(?<![A-Za-z0-9+])\+\d{10,15}(?!\d)/g],
+  // International numbers with longer groups (+91-98765-43210, +49 1512 3456789): 8-15 digits in total (PR #16 review).
+  ['PHONE', /(?<![\w+])\+\d{1,3}(?:[ .-]\d{2,8}){1,5}(?![\w-])/g],   // \"id_+14155552671\" too (PR #16 review)
+  ['PHONE', /(?=\+?\d)(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]{0,20}[:#=]?[ \t]{0,20})\d{10,15}\b/gi],
   // …and after "phone (number) is/was" (my phone is 4155552671; PR #27 review).
-  ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was|are)[ \t]+)\+?\d{10,15}\b/gi],
+  ['PHONE', /(?=\+?\d)(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]{1,20}(?:number|no\.?|#))?[ \t]{1,20}(?:is|was|are)[ \t]{1,20})\+?\d{10,15}\b/gi],
   ['IP', /(?<![A-Za-z0-9])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9])/g],   // not \b: "host_192.168.1.1" must match (PR #16 review)
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])|(?<![\w:])::(?:[0-9a-f]{1,4}:){1,6}[0-9a-f]{1,4}(?![\w:])/gi],   // ::ffff:c000:0280 (leading compression; PR #27 review)
@@ -1435,7 +1442,8 @@ const PREFIX_SHAPES = [
   ['http auth header', /\b(?:Authorization|Proxy-Authorization)[ \t]*:[ \t]*(?![\-\uE000])[^\s"'()\[\]{},;\uE000]{6,}/i],
   // A plain lowercase word after the scheme is prose ("Basic authentication"), as in the main pass (PR #27 review).
   ['auth scheme token', /(?<![A-Za-z0-9])(?:Basic|Bearer)[ \t]+(?![a-z]+(?![A-Za-z0-9._~+/\-]))[A-Za-z0-9._~+/\-]{12,}/],
-  ['credential assignment', new RegExp('(?<![\\p{L}\\p{N}])(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|mot de passe|mdp|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|пароль|パスワード|密码|비밀번호)(?![\\p{L}\\p{N}])[ \\t]*["\']?[ \\t]*[:=][ \\t]*["\']?(?![\\-\\uE000])[^\\s"\'()\\[\\]{},;\\uE000]{3,}', 'iu')],
+  // Whitespace runs are atomic ((?=(x*))\N) so a long run of spaces after the word is read once (PR #16 review).
+  ['credential assignment', new RegExp('(?<![\\p{L}\\p{N}])(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|mot de passe|mdp|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|пароль|パスワード|密码|비밀번호)(?![\\p{L}\\p{N}])(?=([ \\t]*))\\1["\']?(?=([ \\t]*))\\2[:=][ \\t]*["\']?(?![\\-\\uE000])[^\\s"\'()\\[\\]{},;\\uE000]{3,}', 'iu')],
   ['spaced hex groups', /\b(?:[0-9a-f]{4}[ -]){5,}[0-9a-f]{4}\b/i],   // recovery codes written as groups of four
 ];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -1620,6 +1628,7 @@ export function scrubber({ terms = [] } = {}) {
     for (const [kind, re] of PATTERNS) {
       s = s.replace(re, (m) => {
         if (kind === 'CARD') { const d = m.replace(/\D/g, ''); if (d.length < 13 || !luhn(d)) return m; }
+        if (kind === 'PHONE' && m.startsWith('+')) { const d = m.replace(/\D/g, '').length; if (d < 8 || d > 15) return m; }
         // A two-group compressed address counts when its first group is a real IPv6 prefix (fe80::1 link-local, fd00::,
         // 2001::, ff02::; RFC 4291), so times (10::30) and short scopes still stay (PR #27 review).
         if (kind === 'IP' && m.includes(':') && !(m.split(':').filter(Boolean).length >= 3 && /[0-9a-f]{3,4}/i.test(m)) && !(m.includes('::') && /^(?:fe[89ab][0-9a-f]|f[cd][0-9a-f]{2}|2[0-9a-f]{3}|ff[0-9a-f]{2})$/i.test(m.split(':')[0]))) return m;

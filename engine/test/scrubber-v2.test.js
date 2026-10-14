@@ -999,3 +999,20 @@ test('r52: copula punctuation, dotted TOML headers, Java escapes, multiline bloc
     assert.ok(r.held || !r.text.includes('hunter2'), t + ' -> ' + r.text);
   }
 });
+
+// Round 54 (tune-up PR #16 review of 3f71d4f / 866e473).
+test('r54: long JSON whitespace before a colon, international phones with long groups, unbounded URL schemes, list-hyphen SSNs', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['{"password"' + '\n'.repeat(41) + ':"huntertwo"}', 'a' + '1'.repeat(129) + '://alice:huntertwo@localhost']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('huntertwo'), r.text);
+  }
+  for (const x of ['Phone: +91-98765-43210', 'Phone: +49 1512 3456789']) assert.ok(t(x).text.includes('[PHONE_'), x);
+  assert.equal(t('version +1.2.3').text, 'version +1.2.3');
+  assert.ok(!t('-123-45-6789').text.includes('6789'));
+});
+
+test('r54: a credential word followed by a long run of whitespace stays fast (was cubic)', () => {
+  for (const x of ['"password"' + ' '.repeat(300000), 'password' + ' '.repeat(300000) + 'x', 'phone' + ' '.repeat(5000) + '4155552671', 'secret' + '\t'.repeat(300000) + ':']) {
+    const t0 = Date.now(); scrubber({ terms: [] }).sanitize(x); assert.ok(Date.now() - t0 < 1500, String(Date.now() - t0));
+  }
+});

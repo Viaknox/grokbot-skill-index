@@ -200,7 +200,10 @@ test('[promised] judgeHeld turns a ScrubError into the judge:held finding for th
   const ok = await judgeHeld(real, state, (s) => judgeConversation(or, s, { hasInstructions: false }));
   assert.ok(ok.length > 1 && ok.every(x => x.code !== 'judge:held'), JSON.stringify(ok));
   const cli = readFileSync(fileURLToPath(new URL('../cli.js', import.meta.url)), 'utf8');
-  assert.ok(/\bjudgeHeld\(/.test(cli) && !/scrub\.sanitize\(/.test(cli), 'cli.js check mode must sanitize through judgeHeld');
+  // The judge call goes through judgeHeld; the only direct sanitize() allowed is the local report's `shown` helper,
+  // which holds residual-only secrets out of report.json (PR #16 review).
+  const direct = cli.split('\n').filter(l => /scrub\.sanitize\(/.test(l));
+  assert.ok(/\bjudgeHeld\(/.test(cli) && direct.every(l => /const shown = /.test(l)), 'cli.js check mode must sanitize through judgeHeld');
 });
 
 test('[promised] cli check --consent on a conversation over the size cap exits 0 with a judge:held finding', () => {
