@@ -574,7 +574,8 @@ const YAML_MAP_KEY = /^([ \t]*)(-[ \t]+)?(["']?)([\p{L}_$][\p{L}\p{N}_$.\-]{0,16
 // A child line inside a credential block: `key: …`, `- key: …` or a bare list item `- …`; the match is the prefix before
 // the scalar. A map head (`nested:` with nothing after it) matches too and is told apart by having no value.
 const YAML_CHILD = /^[ \t]*(?:(?:-[ \t]+)?(["']?)[^\s:#"'\-][^:\n]{0,160}\1:[ \t]*|-[ \t]+)/;
-const K8S_SECRET = /^[ \t]*kind:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\1[ \t]*(?:#.*)?$/m;   // quoted, tagged or commented kinds too (PR #27 review)
+// A transcript role label may sit before the manifest's first line ("USER: kind: Secret"; PR #27 review).
+const K8S_SECRET = /^[ \t]*(?:(?:USER|AGENT|User|Bot|Assistant|Human|AI)[ \t]*:[ \t]*)?kind:[ \t]*(?:!\S+[ \t]+)?(["']?)Secret\1[ \t]*(?:#.*)?$/m;   // quoted, tagged or commented kinds too (PR #27 review)
 function braceEnd(s, open) {
   let d = 0; const lim = Math.min(s.length, open + 65536);
   for (let i = open; i < lim; i++) {
@@ -1128,6 +1129,9 @@ const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
 function scrubFlags(s, label, V) {
   if (!s.includes('-')) return s;
   s = s.replace(/^.*\bsshpass\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));   // sshpass -p x (PR #27)
+  // htpasswd -b … user password: the last argument is the password; smbclient/rpcclient/smbmap -U user%password (PR #27).
+  s = s.replace(/^(.*\bhtpasswd\b.*[ \t]-\w*b\w*\b.*[ \t])("[^"\n]*"|'[^'\n]*'|[^\s"']+)[ \t]*$/gim, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v));
+  s = s.replace(/^.*\b(?:smbclient|rpcclient|smbmap|smbget|smbcacls|net|mount\.cifs)\b.*$/gim, (line) => line.replace(/((?:^|\s)(?:-U|--user(?:name)?)(?:=|[ \t]+)["']?[^\s%"']*%)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
   s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
   s = s.replace(/^.*\bvault[ \t]+login\b.*$/gim, (line) => line.replace(/(\bvault[ \t]+login(?:[ \t]+-\S+)*[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"'=-][^\s"'=]*)(?=[ \t]*$)/i, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));   // vault login <token> (PR #27)
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
@@ -1494,6 +1498,7 @@ export function scrubber({ terms = [] } = {}) {
       // echo ((415) 555-2671 -> 415-555-2671, Alice@ -> alice@) still counts (PR #27 review).
       const lower = s.toLowerCase();
       const phones = (s.match(/\+?\d[\d\s().-]{6,}\d/g) || []).map(x => x.replace(/\D/g, '').slice(-10));
+      const digitRuns = (s.match(/\d(?:[ \t.-]?\d){8,18}/g) || []).map(x => x.replace(/\D/g, ''));
       for (const { kind, value } of inventory) {
         if (!value || value.length < 4) continue;
         // A value that begins or ends with a letter or digit counts only as a whole occurrence, so PASSWORD=pass is not
@@ -1501,6 +1506,8 @@ export function scrubber({ terms = [] } = {}) {
         if (kind !== 'EMAIL' && s.includes(value) && (!/^[\p{L}\p{N}]|[\p{L}\p{N}]$/u.test(value) || new RegExp((/^[\p{L}\p{N}]/u.test(value) ? '(?<![\\p{L}\\p{N}])' : '') + value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (/[\p{L}\p{N}]$/u.test(value) ? '(?![\\p{L}\\p{N}])' : ''), 'u').test(s))) kinds.add(kind);
         else if (kind === 'EMAIL' && new RegExp(`(?<![\\p{L}\\p{M}\\p{N}._%+-])${value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`, 'u').test(lower)) kinds.add(kind);   // the whole address, not a suffix of data@… (PR #16 review)
         else if (kind === 'PHONE') { const d = value.replace(/\D/g, '').slice(-10); if (d.length >= 7 && phones.includes(d)) kinds.add(kind); }
+        // Cards and SSNs are compared by their digits, so 123-45-6789 echoed as 123 45 6789 still counts (PR #27 review).
+        else if (kind === 'CARD' || kind === 'SSN') { const d = value.replace(/\D/g, ''); if (d.length >= 9 && digitRuns.includes(d)) kinds.add(kind); }
       }
       return [...kinds];
     },

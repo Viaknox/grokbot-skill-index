@@ -771,3 +771,8 @@ test('[promised] round 26: key shapes after _, hyphenated PEM labels, JSON non-s
     assert.ok(!/huntertwo|654321|xxxxxxxxxx/.test(scrubber().sanitize(x).text), x);
   assert.equal(scrubber().sanitize('merged commit e79bc9f0d7039e11a1e0258fd217cb109c397329 today').held, false);
 });
+test('[best-effort] round 27: role-prefixed Secret manifests, htpasswd -b, smbclient user%pass; card/SSN echoes by digits', () => {
+  for (const x of ['USER: kind: Secret\ndata:\n  foo: aHVudGVyMjI=', 'htpasswd -b .htpasswd alice hunter22', 'smbclient //server/share -U alice%hunter22'])
+    assert.ok(!/aHVudGVyMjI|hunter22/.test(scrubber().sanitize(x).text), x);
+  const s = scrubber(); s.sanitize('my ssn 123-45-6789'); assert.deepEqual(s.echoes('got 123 45 6789'), ['SSN']);
+});
