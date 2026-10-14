@@ -626,8 +626,13 @@ function scrubScopes(s, label, resolve) {
     else if (ini && (m = INI_ASSIGN.exec(line))) { const vs = i + m[0].length; ivs.push([vs, valueEnd(s, vs), 'SECRET']); }
     // HCL / HOCON block "name { … }" (no separator before the brace): every assignment inside goes. Each brace on the
     // line is tried, since the block name may follow an outer brace.
-    for (let bo = line.indexOf('{'); bo >= 0; bo = line.indexOf('{', bo + 1)) {
-      const head = line.slice(0, bo);
+    // Linear per line (PR #27 review): a brace not preceded (past spaces) by a name or label character is skipped at once,
+    // and at most the 512 characters since the previous brace are looked at, so a line of 59 000 "{" costs no rescans.
+    // The head never reaches back past the previous brace, so the scan over a line is linear overall.
+    for (let bo = line.indexOf('{'), prev = -1; bo >= 0; prev = bo, bo = line.indexOf('{', bo + 1)) {
+      let pb = bo - 1; while (pb > prev && (line[pb] === ' ' || line[pb] === '\t')) pb--;
+      if (pb <= prev || !/[\p{L}\p{N}_.\-"']/u.test(line[pb])) continue;
+      const head = line.slice(Math.max(prev + 1, bo - 512), bo);
       if (/[:=][ \t]*$/.test(head) || !(m = BLOCK_NAME.exec(head)) || ![m[2], ...(m[3].match(/"[^"\n]*"/g) || []).map(l => l.slice(1, -1))].some(n => n && isCredentialName(resolve(n)))) continue;
       const open = i + bo, close = braceEnd(s, open), body = s.slice(open + 1, close); GENERIC_ASSIGN.lastIndex = 0;
       for (let g; (g = GENERIC_ASSIGN.exec(body));) { const vs = open + 1 + g.index + g[0].length; if (s[vs] !== '{') ivs.push([vs, Math.min(valueEnd(s, vs), close), 'SECRET']); }
