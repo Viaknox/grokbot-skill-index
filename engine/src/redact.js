@@ -1362,7 +1362,7 @@ function scrubQuery(s, label, resolve) {
 // URL userinfo scheme://user:pass@host — the whole user:pass is replaced (a token-as-user form too). No length ceiling:
 // a 300-character generated password must go too, and the classes exclude whitespace, slash and @, so the scan stays
 // linear without one (PR #16 review).
-const URL_USERINFO = /((?<![a-z0-9+.\-])[a-z][a-z0-9+.\-]*:\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
+const URL_USERINFO = /((?=:\/\/)(?<=[a-z][a-z0-9+.\-]*):\/\/|(?<![\w:\/])\/\/(?=[^\s/@:]*:[^\s/@]+@))([^\s/@:]*:[^\s/@]+|[^\s/@:]{8,})@/gi;   // and scheme-relative //user:pass@host (RFC 3986 network-path; PR #27 review)   // a scheme may be one letter (x://) (PR #16 review)
 
 const SCHEME_PROSE = /^(?:authentication|authorization|authorisation|credentials|tokens?|headers?|scheme|schemes|access|support|supported|login|logins)$/i;
 // Bare auth scheme tokens anywhere (inside a value or a curl -H string): Basic/Bearer + token, or Digest + its params.
@@ -1406,18 +1406,18 @@ const PATTERNS = [
   ['CARD', /(?<![\p{L}\p{N}])(?:\d[ -]?){12,18}\d(?![\p{L}\p{N}])/gu],   // not \b: "id_4111…" must match (PR #16 review)
   ['SSN', /(?<![\p{L}\p{N}])(?<!\p{N}-)(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/gu],   // a sentence-ending \".\" is not part of the number (PR #16 review)   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
-  // Cue-led shapes check for a digit first and bound the gaps, so the lookbehind never rescans long runs of spaces
-  // ("password" followed by thousands of spaces was cubic; PR #16 review).
-  ['SSN', /(?=\+?\d)(?<=\b(?:ssn|social[ \t]{1,20}security)(?:[ \t]{1,20}(?:number|no\.?|#))?[ \t]{1,20}(?:is|was)[ \t]{1,20})\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
-  ['SSN', /(?=\+?\d)(?<=\b(?:ssn|SSN|social[ \t]{1,20}security(?:[ \t]{1,20}(?:number|no\.?|#))?)[ \t]{0,20}[:#=-]?[ \t]{0,20})\d{9}\b/gi],
+  // Cue-led shapes check for a digit first, and their gaps are unambiguous ([ \t]*(?:[:#=][ \t]*)?), so a long run of
+  // spaces is walked once ("password" followed by thousands of spaces was cubic; PR #16 review).
+  ['SSN', /(?=\+?\d)(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
+  ['SSN', /(?=\+?\d)(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*(?:[:#=-][ \t]*)?)\d{9}\b/gi],
   ['PHONE', /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b/g],
   // Compact numbers: E.164 (+14155552671) anywhere, and 10–15 digits after a phone cue (PR #27 review).
   ['PHONE', /(?<![A-Za-z0-9+])\+\d{10,15}(?!\d)/g],
   // International numbers with longer groups (+91-98765-43210, +49 1512 3456789): 8-15 digits in total (PR #16 review).
-  ['PHONE', /(?<![\w+])\+\d{1,3}(?:[ .-]\d{2,8}){1,5}(?![\w-])/g],   // \"id_+14155552671\" too (PR #16 review)
-  ['PHONE', /(?=\+?\d)(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]{0,20}[:#=]?[ \t]{0,20})\d{10,15}\b/gi],
+  ['PHONE', /(?<![A-Za-z0-9+])\+\d{1,3}(?:[ .-]\d{2,8}){1,5}(?![\w-])/g],   // \"id_+14155552671\" too (PR #16 review)
+  ['PHONE', /(?=\+?\d)(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]*(?:[:#=][ \t]*)?)\d{10,15}\b/gi],
   // …and after "phone (number) is/was" (my phone is 4155552671; PR #27 review).
-  ['PHONE', /(?=\+?\d)(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]{1,20}(?:number|no\.?|#))?[ \t]{1,20}(?:is|was|are)[ \t]{1,20})\+?\d{10,15}\b/gi],
+  ['PHONE', /(?=\+?\d)(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was|are)[ \t]+)\+?\d{10,15}\b/gi],
   ['IP', /(?<![A-Za-z0-9])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9])/g],   // not \b: "host_192.168.1.1" must match (PR #16 review)
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])|(?<![\w:])::(?:[0-9a-f]{1,4}:){1,6}[0-9a-f]{1,4}(?![\w:])/gi],   // ::ffff:c000:0280 (leading compression; PR #27 review)
