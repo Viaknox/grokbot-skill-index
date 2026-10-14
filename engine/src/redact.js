@@ -49,7 +49,8 @@ function decodeName(name) {
   name = name.replace(/&(amp|lt|gt|quot|apos|nbsp);/gi, (m, n) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' })[n.toLowerCase()])
     .replace(/&([A-Za-z])(acute|grave|circ|uml|tilde|ring|cedil|caron);/g, (m, c, k) => (c + { acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', ring: '\u030A', cedil: '\u0327', caron: '\u030C' }[k]).normalize('NFC'));
   name = name.replace(/&#(\d{1,7});/g, (m, d) => String.fromCodePoint(Math.min(Number(d), 0x10FFFF))).replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)));
-  return name.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+  return name.replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)))   // \u{61} (PR #27 review)
+    .replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/\\x([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))   // JS/Python \xNN (PR #27 review)
     // A run of %HH bytes is UTF-8 (contrase%C3%B1a is contraseña; PR #27 review); a run that is not valid UTF-8 falls
     // back to one character per byte.
@@ -392,10 +393,10 @@ function applyOnView(s, view, re, label, pick) {
 // already turned into a placeholder is resolved back). Bounded classes only, so hostile input stays linear.
 const ASSIGN_START = new RegExp(
   '(?<![\\p{L}\\p{N}_$.\\-])' +
-  '(["\']?)((?:\\\\u[0-9A-Fa-f]{4}|\\\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF])[\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
+  '(["\']?)((?:\\\\u\\{[0-9A-Fa-f]{1,6}\\}|\\\\u[0-9A-Fa-f]{4}|\\\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF])(?:\\\\u\\{[0-9A-Fa-f]{1,6}\\}|[\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]){0,160})\\1' +
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review).
-  '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:[ \\t]*(?:/\\*(?:[^*\\n]|\\*(?!/)){0,80}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -836,8 +837,8 @@ const CUE_TAG = /<[A-Za-z][\w:.\-]{0,40}(?=[\s/>])[^<>]{0,300}?(?<![\w-])(?:name
 const TAG = /<[A-Za-z](?:"[^"\n]{0,2000}"|'[^'\n]{0,2000}'|[^<>"']){0,2000}>/g;
 // Attributes that say what a field IS (name, id, http-equiv, aria-label, placeholder, data-field, data-name,
 // data-key, title, for): when one of them names a credential, the element's other attribute values and text go.
-const CUE_ATTR = /^(?:name|id|http-equiv|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
-const IDENT_ATTR = /^(?:name|id|http-equiv|type|class|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
+const CUE_ATTR = /^(?:name|id|key|http-equiv|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
+const IDENT_ATTR = /^(?:name|id|key|http-equiv|type|class|aria-label|placeholder|data-field|data-name|data-key|title|for)$/i;
 const ATTR_VALUE = /\b(value|content)([ \t]*=[ \t]*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
 const ATTR_ANY = /([A-Za-z_:][\w:.\-]{0,60})(\s*=\s*)("[^"]*"|'[^']*'|[^\s>"']+)/g;
 const CHILD_VALUE = /^[\s]*<([\w:.\-]*Value)\b[^<>]*>([^<]{1,4000})<\//i;
@@ -1131,7 +1132,7 @@ function scrubCallArg(s, label, resolve) {
   // (PR #27 review).
   s = s.replace(/\b(?:db\.auth|auth|login|signIn|authenticate)[ \t]*\([ \t]*("[^"\n]*"|'[^'\n]*')[ \t]*,[ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, u, v) =>
     isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  return s.replace(/\b([\p{L}_$\uE000][\p{L}\p{N}_$.\uE000\uE001]{0,60})[ \t]*\([ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, name, v) =>
+  return s.replace(/\b([\p{L}_$\uE000][\p{L}\p{N}_$.\uE000\uE001]{0,60})[ \t]*[({][ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, name, v) =>
     (!isCredentialName(resolve(name)) || isPlaceholderValue(v)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
 }
 

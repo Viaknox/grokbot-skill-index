@@ -868,3 +868,8 @@ test('[best-effort] round 42: SSN before a full stop, +E.164 after "_", PowerShe
   const pem = '{"key":"-----BEGIN PRIVATE KEY-----\\nMIIB\\n-----END PRIVATE KEY-----\\\\","after":"KEEP"}';
   assert.ok(scrubber().sanitize(pem).text.includes('"after":"KEEP"'));
 });
+test('[best-effort] round 43: \\u{…} identifier escapes, C++ brace initializers, XML key= attributes, comments before the assignment operator', () => {
+  for (const x of ['const p\\u{61}ssword = "hunter22";', 'std::string password{"hunter22"};', '<entry key="password">hunter22</entry>', 'const password /* production */ = "hunter22";'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+  assert.equal(scrubber().sanitize('<entry key="color">blue</entry>').text, '<entry key="color">blue</entry>');
+});
