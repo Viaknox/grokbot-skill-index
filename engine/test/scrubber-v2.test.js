@@ -850,3 +850,8 @@ test('[best-effort] round 40: echoes() of a very long value does not build an ov
   const s = scrubber(); const v = '{"data":{"a":'.repeat(4000); s.sanitize('kind: Secret\n' + v);
   assert.doesNotThrow(() => s.echoes('kind: Secret\n' + v));
 });
+test('[best-effort] round 41: \\xNN names, unindented assignment continuations, CSV/DELIMITER COPY rows, quoted TOML tables with spaces, sibling HOCON blocks', () => {
+  for (const x of ['{"\\x70assword":"hunter22"}', 'const password =\n"hunter22";', 'COPY users (username,password) FROM stdin WITH (FORMAT csv);\nalice,hunter22\n\\.',
+    "COPY users (username, password) FROM stdin DELIMITER '|';\nalice|hunter22\n\\.", '["database credentials"]\nvalue = "hunter22"', 'credentials { value = "x1" }, auth { value = "hunter22" }'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x);
+});

@@ -50,6 +50,7 @@ function decodeName(name) {
     .replace(/&([A-Za-z])(acute|grave|circ|uml|tilde|ring|cedil|caron);/g, (m, c, k) => (c + { acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', ring: '\u030A', cedil: '\u0327', caron: '\u030C' }[k]).normalize('NFC'));
   name = name.replace(/&#(\d{1,7});/g, (m, d) => String.fromCodePoint(Math.min(Number(d), 0x10FFFF))).replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)));
   return name.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))   // JS/Python \xNN (PR #27 review)
     // A run of %HH bytes is UTF-8 (contrase%C3%B1a is contraseña; PR #27 review); a run that is not valid UTF-8 falls
     // back to one character per byte.
     .replace(/(?:%[0-9a-fA-F]{2})+/g, (m) => { try { return decodeURIComponent(m); } catch { return m.replace(/%([0-9a-fA-F]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))); } });
@@ -316,6 +317,13 @@ function valueEnd(s, start) {
     // made thousands of empty "password:" lines quadratic).
     const lineStart0 = s.lastIndexOf('\n', start - 1) + 1;
     let indent = 0; while (s[lineStart0 + indent] === ' ' || s[lineStart0 + indent] === '\t') indent++;
+    // An assignment whose value starts on the next, unindented line (const password =\n"x";) takes that quoted string
+    // (PR #27 review); an indented block below is handled by the walk that follows.
+    if (trimmed === '' && nl < s.length) {
+      const ls = nl + 1; let le = s.indexOf('\n', ls); if (le < 0) le = s.length;
+      const q = /^([ \t]*)(["'`])/.exec(s.slice(ls, le));
+      if (q && q[1].length <= indent) { let k = ls + q[0].length; for (; k < le; k++) { if (s[k] === '\\') { k++; continue; } if (s[k] === q[2]) break; } if (k < le) return k + 1; }
+    }
     let i = nl;
     while (i < s.length) {
       const lineStart = i + 1;
@@ -547,7 +555,8 @@ function scrubLineForms(s, label, resolve) {
 // Inside such a scope EVERY scalar value goes (plan: when in doubt, remove more), nested objects are descended and their
 // scalars go too; only the sibling text outside the scope survives.
 // [section], [[table]], and git-config's [section "subsection"]: the section name before the quoted part decides.
-const INI_HEADER = /^[ \t]*\[\[?[ \t]*(["']?)([^\]"'\n\s]{1,120})\1(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*$/;
+// A quoted TOML table name may hold spaces (["database credentials"]; PR #27 review): groups 2-4 are the name.
+const INI_HEADER = /^[ \t]*\[\[?[ \t]*(?:"([^"\n]{1,120})"|'([^'\n]{1,120})'|([^\]"'\n\s]{1,120}))(?:[ \t]+"[^"\n]*")?[ \t]*\]\]?[ \t]*$/;
 const INI_ASSIGN = /^[ \t]*(["']?)([A-Za-z_][\w.\-]{0,60})\1[ \t]*[=:][ \t]*/;
 // An HCL block type may carry string labels before its brace (credentials "prod" { … }; HCL spec, PR #27 review):
 // group 2 is the type, group 3 the labels.
@@ -643,7 +652,7 @@ function scrubScopes(s, label, resolve) {
     let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
     const line = s.slice(i, nl).replace(/\r$/, ''); let m;   // CRLF behaves like LF (PR #16 review)
     while (di + 1 < docs.length && docs[di + 1][0] <= i) k8s = docs[++di][1];
-    if ((m = INI_HEADER.exec(line))) ini = isCredentialName(resolve(m[2]));
+    if ((m = INI_HEADER.exec(line))) ini = isCredentialName(resolve(m[1] ?? m[2] ?? m[3]));
     else if (ini && (m = INI_ASSIGN.exec(line))) { const vs = i + m[0].length; ivs.push([vs, valueEnd(s, vs), 'SECRET']); }
     // HCL / HOCON block "name { … }" (no separator before the brace): every assignment inside goes. Each brace on the
     // line is tried, since the block name may follow an outer brace.
@@ -657,6 +666,8 @@ function scrubScopes(s, label, resolve) {
       if (/[:=][ \t]*$/.test(head) || !(m = BLOCK_NAME.exec(head)) || ![m[2], ...(m[3].match(/"[^"\n]*"/g) || []).map(l => l.slice(1, -1))].some(n => n && isCredentialName(resolve(n)))) continue;
       const open = i + bo, close = braceEnd(s, open), body = s.slice(open + 1, close); GENERIC_ASSIGN.lastIndex = 0;
       for (let g; (g = GENERIC_ASSIGN.exec(body));) { const vs = open + 1 + g.index + g[0].length; if (s[vs] !== '{') ivs.push([vs, Math.min(valueEnd(s, vs), close), 'SECRET']); }
+      // A sibling block later on the same line (credentials { … }, auth { … }) is looked at too (PR #27 review).
+      if (s[close] === '}' && close < i + line.length) { bo = close - i; continue; }
       break;
     }
     // A YAML block map under a credential key (an OpenAPI ApiKeyAuth: block, a credentials: record) is a credential
@@ -730,11 +741,17 @@ function scrubTables(s, label, resolve) {
     SQL_COPY.lastIndex = 0;
     for (let m; (m = SQL_COPY.exec(s));) {
       const cols = colIndexes(m[1], resolve); if (!cols.length) continue;
+      // The COPY options pick the row format: CSV (quotes honoured) or a declared DELIMITER; text format is tab-separated
+      // (postgresql.org COPY; PR #27 review).
+      const opts = m[0], dm = /DELIMITER[ \t]+(?:AS[ \t]+)?E?'(\\t|[^'\\])'/i.exec(opts);
+      const csvCopy = /\bCSV\b|FORMAT[ \t]+["']?csv/i.test(opts) && (!dm || dm[1] === ',');
+      const delim = dm ? (dm[1] === '\\t' ? '\t' : dm[1]) : '\t';
       let i = m.index + m[0].length;
       while (i < s.length) {
         let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
         const line = s.slice(i, nl); if (/^\\\.[ \t\r]*$/.test(line)) break;
-        let pos = i; line.split('\t').forEach((cell, k) => { if (cols.includes(k) && cell.trim()) ivs.push([pos, pos + cell.length, 'SECRET']); pos += cell.length + 1; });
+        if (csvCopy) { csvRow(s, i).cells.forEach(([a, b], k) => { if (cols.includes(k) && s.slice(a, b).trim()) ivs.push([a, b, 'SECRET']); }); }
+        else { let pos = i; line.split(delim).forEach((cell, k) => { if (cols.includes(k) && cell.trim()) ivs.push([pos, pos + cell.length, 'SECRET']); pos += cell.length + 1; }); }
         i = nl + 1;
       }
     }
