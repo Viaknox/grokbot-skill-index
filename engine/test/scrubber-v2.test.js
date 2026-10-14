@@ -1026,3 +1026,15 @@ test('r54: a credential word followed by a long run of whitespace stays fast (wa
     const t0 = Date.now(); scrubber({ terms: [] }).sanitize(x); assert.ok(Date.now() - t0 < 1500, String(Date.now() - t0));
   }
 });
+
+// Round 55 (tune-up PR #16 review of 6d939a4).
+test('r55: underscore-prefixed international phones, long gaps after SSN/phone cues, URLs after a hyphen', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x).text;
+  assert.ok(t('id_+91-98765-43210').includes('[PHONE_'));
+  assert.ok(t('SSN:' + ' '.repeat(30) + '123456789').includes('[SSN_'));
+  assert.ok(t('Phone:' + ' '.repeat(30) + '4155552671').includes('[PHONE_'));
+  assert.ok(!t('-https://alice:hunter2@host').includes('hunter2'));
+  for (const x of ['phone' + ' '.repeat(300000) + '4155552671', 'a-'.repeat(200000) + 'x', '1'.repeat(300000) + '://a:b@c']) {
+    const t0 = Date.now(); scrubber({ terms: [] }).sanitize(x); assert.ok(Date.now() - t0 < 1500, String(Date.now() - t0));
+  }
+});
