@@ -27,10 +27,17 @@ const ZERO_WIDTH = /[\u200B-\u200D\u2060\uFEFF\u00AD]/g;
 const CONFUSABLE = { 'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y', 'і': 'i', 'ѕ': 's', 'ј': 'j', 'α': 'a', 'ο': 'o', 'ρ': 'p', 'ϲ': 'c',
   'А': 'A', 'В': 'B', 'Е': 'E', 'К': 'K', 'М': 'M', 'Н': 'H', 'О': 'O', 'Р': 'P', 'С': 'C', 'Т': 'T', 'Х': 'X', 'І': 'I',
   'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K', 'Μ': 'M', 'Ν': 'N', 'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X' };
-// A Cyrillic or Greek look-alike is mapped to its Latin twin only when it sits next to a Latin letter ("p\u0430ssword" with
-// one Cyrillic \u0430), never inside a genuine Cyrillic or Greek word ("\u043F\u0430\u0440\u043E\u043B\u044C" must stay itself to match its own entry).
-const LATIN = /[A-Za-z]/;
-const confusableAt = (c, idx, str) => (CONFUSABLE[c] && (LATIN.test(str[idx - 1] || '') || LATIN.test(str[idx + 1] || ''))) ? CONFUSABLE[c] : c;
+// A Cyrillic or Greek look-alike is mapped to its Latin twin when the word it sits in (its run of letters) also holds a
+// Latin letter ("p\u0430ssword", and "\u0455\u0435\u0441ret" with three look-alikes side by side; PR #27 review), never inside a
+// genuine Cyrillic or Greek word ("\u043F\u0430\u0440\u043E\u043B\u044C" must stay itself to match its own entry). The scan looks at most
+// 64 letters each way, so a long Cyrillic text stays linear.
+const LATIN = /[A-Za-z]/, LETTER = /\p{L}/u;
+const confusableAt = (c, idx, str) => {
+  if (!CONFUSABLE[c]) return c;
+  for (let j = idx - 1, k = 0; j >= 0 && k < 64 && LETTER.test(str[j]); j--, k++) if (LATIN.test(str[j])) return CONFUSABLE[c];
+  for (let j = idx + 1, k = 0; j < str.length && k < 64 && LETTER.test(str[j]); j++, k++) if (LATIN.test(str[j])) return CONFUSABLE[c];
+  return c;
+};
 function foldName(name) {
   let s = String(name).replace(ZERO_WIDTH, '').normalize('NFKC');
   return s.replace(/[\u0400-\u04FF\u0370-\u03FF]/g, confusableAt);
@@ -1308,7 +1315,9 @@ export function scrubber({ terms = [] } = {}) {
     for (const [kind, re] of PATTERNS) {
       s = s.replace(re, (m) => {
         if (kind === 'CARD') { const d = m.replace(/\D/g, ''); if (d.length < 13 || !luhn(d)) return m; }
-        if (kind === 'IP' && m.includes(':') && !(m.split(':').filter(Boolean).length >= 3 && /[0-9a-f]{3,4}/i.test(m))) return m;
+        // A two-group compressed address counts when its first group is a real IPv6 prefix (fe80::1 link-local, fd00::,
+        // 2001::, ff02::; RFC 4291), so times (10::30) and short scopes still stay (PR #27 review).
+        if (kind === 'IP' && m.includes(':') && !(m.split(':').filter(Boolean).length >= 3 && /[0-9a-f]{3,4}/i.test(m)) && !(m.includes('::') && /^(?:fe[89ab][0-9a-f]|f[cd][0-9a-f]{2}|2[0-9a-f]{3}|ff[0-9a-f]{2})$/i.test(m.split(':')[0]))) return m;
         return label(kind, m.trim());
       });
     }

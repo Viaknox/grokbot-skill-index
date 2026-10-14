@@ -703,3 +703,9 @@ test('[promised] viaknox PR #27 round 16: compact version suffixes (PASSWORDV2, 
   for (const x of ['PASSWORDV2=hunter22', 'APIKEYV3=hunter22', 'CLIENTSECRETV2=hunter22', 'TOKENV2=hunter22'])
     assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
 });
+test('[promised] viaknox PR #27 round 17: adjacent look-alikes in a Latin name; [best-effort] two-group IPv6 with a real prefix', () => {
+  assert.ok(!scrubber().sanitize('ѕесret=hunter22').text.includes('hunter22'));
+  assert.ok(!scrubber().sanitize('пароль: hunter22').text.includes('hunter22'));
+  assert.ok(!scrubber().sanitize('connect fe80::1 now').text.includes('fe80'));
+  assert.equal(scrubber().sanitize('meet 10::30 then std::vector').text, 'meet 10::30 then std::vector');
+});

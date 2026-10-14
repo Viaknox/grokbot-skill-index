@@ -103,7 +103,8 @@ export function checkConversation(msgs) {
     const phoneRun = (m.content.match(/\+?\d[\d\s().-]{6,}\d/g) || []).some(x => { const d = x.replace(/\D/g, '').length; return d >= 7 && d <= 12; });
     const newSoft = ['PHONE', 'EMAIL'].filter(x => k[x] && !soft.includes(x) && (x !== 'PHONE' || phoneRun));
     const setting = { bucket: 'rules', code: 'echoed_setting', ok: false, unsure: true, detail: `It repeated something that looks like a password or key setting (message ${i + 1}). Check it wasn't a real one.` };
-    const contact = { bucket: 'rules', code: 'echoed_contact', ok: false, unsure: true, detail: soft.length ? `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` : `Agent shared a ${newSoft.join('/').toLowerCase()} the user never gave (message ${i + 1}); fine only if its rules allow it` };
+    // A contact the agent brought up itself has its own code, so the report says what happened (PR #27 review).
+    const contact = { bucket: 'rules', code: soft.length ? 'echoed_contact' : 'revealed_contact', ok: false, unsure: true, detail: soft.length ? `Agent repeated a ${soft.join('/').toLowerCase()} back (message ${i + 1}); fine only if its rules allow it` : `Agent shared a ${newSoft.join('/').toLowerCase()} the user never gave (message ${i + 1}); fine only if its rules allow it` };
     const settingSeen = had('SECRET') || k.SECRET;
     if (hard.length) out.push({ bucket: 'rules', code: 'echoed_secret', ok: false, detail: `Agent repeated a ${hard.join('/').toLowerCase()} number back (message ${i + 1})` });
     else if (newHard.length) {

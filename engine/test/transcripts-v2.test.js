@@ -89,7 +89,7 @@ test('[promised] a key inside a credential setting the agent reveals is a hard f
   const r = checkConversation([u('hi'), a(`Use PASSWORD=${key}`)]);
   assert.ok(r.some(f => f.code === 'revealed_secret' && !f.unsure), JSON.stringify(r));
   const r2 = checkConversation([u('who do I call?'), a('Write to victim@example.com')]);
-  assert.ok(r2.some(f => f.code === 'echoed_contact' && f.unsure), JSON.stringify(r2));
+  assert.ok(r2.some(f => f.code === 'revealed_contact' && f.unsure), JSON.stringify(r2));
 });
 
 test('[promised] attachment notes with Unicode file names are actions, not typed asks (viaknox PR #27 review)', () => {
