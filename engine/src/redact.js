@@ -129,6 +129,7 @@ const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|crede
 // while "DBAPIKEY" and "OPENAI_API_KEY" still count (viaknox PR #27 review).
 const COMPOUND_TAIL = new RegExp(`^s?(?:${STORE_SUFFIX})?$`);
 const COMPOUND_HEAD = /^(?:cookie|setcookie|keyname|keyvalue)$/;
+const COMPOUND_LOOSE = /^(?:cookie|setcookie|keyname|keyvalue|authorization|proxyauthorization|sessionid|jsessionid|phpsessid|x509data|derencodedkeyvalue)$/;
 function hasCompound(parts) {
   const joined = parts.join(''), starts = new Set(), ends = [];
   let at = 0; for (const p of parts) { starts.add(at); at += p.length; ends.push(at); }
@@ -136,7 +137,9 @@ function hasCompound(parts) {
   for (let i = 0; i < joined.length; i++) {
     re.lastIndex = i; const m = re.exec(joined); if (!m) break; i = m.index;
     const end = m.index + m[0].length, partEnd = ends.find(e => e >= end);
-    if (!COMPOUND_TAIL.test(joined.slice(end, partEnd))) continue;
+    // A distinctive compound (authtoken, apikey, clientsecret, …) counts whatever follows it in its part (AUTHTOKENJWT;
+    // PR #16 review); the generic-looking ones still need a known storage suffix or the part's end.
+    if (!COMPOUND_TAIL.test(joined.slice(end, partEnd)) && COMPOUND_LOOSE.test(m[0])) continue;
     if (COMPOUND_HEAD.test(m[0]) && !starts.has(m.index)) continue;
     return true;
   }
@@ -244,7 +247,10 @@ const SIBLING_AFTER = /^[\s"'`)\]}]*[,;][\s"']*(?:\uE000[A-Z]+_\d+\uE001|(?:"[^"
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);
   if (!m) return false;
-  const rest = t.slice(m[0].length).split('\n')[0];
+  const [rest, ...more] = t.slice(m[0].length).split('\n');
+  // Live data on any later line of the same value (password="[SECRET_1]\nhuntertwo") means it is not already scrubbed
+  // (PR #16 review).
+  if (more.some(l => !/^[\s"'`)\]},;.]*$/.test(l))) return false;
   return /^[\s"'`)\]},;.]*$/.test(rest) || SIBLING_AFTER.test(rest);
 };
 
@@ -305,7 +311,7 @@ function valueEnd(s, start) {
   // A comment-only first line (password: # prod) and a bare scheme word (Authorization: Bearer, folded onto the next
   // line) are empty values too: the deeper-indented lines below hold the credential (PR #16 review).
   const emptyish = trimmed === '' || /^#/.test(trimmed) || /^(?:basic|bearer|digest)$/i.test(trimmed);
-  if (emptyish || /^(?:!\S*[ \t]+)?[|>](?:[+-]?\d*|\d+[+-])$/.test(trimmed)) {
+  if (emptyish || /^(?:!\S*[ \t]+)?[|>](?:[+-]?\d*|\d+[+-])(?:[ \t]+#.*)?$/.test(trimmed)) {
     // The key's own indent, read from its line start (a lastIndexOf, not a slice-and-match over the whole prefix, which
     // made thousands of empty "password:" lines quadratic).
     const lineStart0 = s.lastIndexOf('\n', start - 1) + 1;
@@ -366,8 +372,9 @@ function applyOnView(s, view, re, label, pick) {
 const ASSIGN_START = new RegExp(
   '(?<![\\p{L}\\p{N}_$.\\-])' +
   '(["\']?)([\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF][\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
-  // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:".
-  '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{1,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
+  // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review).
+  '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -618,7 +625,10 @@ function scrubScopes(s, label, resolve) {
   // In a JSON Secret, data/stringData may sit across lines from its colon and brace ({"data"\n:\n{…}}; PR #27 review).
   docs.forEach(([a, sec], d) => { if (!sec) return; const b = d + 1 < docs.length ? docs[d + 1][0] : s.length; const JD = /(["'])((?:\\.|(?!\1)[^\\\n])*)\1\s*:\s*\{/g; JD.lastIndex = a;
     let covered = -1;
-    for (let j; (j = JD.exec(s)) && j.index < b;) { if (j.index + j[0].length - 1 <= covered) continue; if (!/^(?:data|stringData)$/.test(j[1] === '"' ? decJson(j[2]) : j[2])) { JD.lastIndex = j.index + 1; continue; } const open = j.index + j[0].length - 1, close = braceEnd(s, open); objectScalars(s, open, close, ivs); covered = close; } });
+    for (let j; (j = JD.exec(s)) && j.index < b;) { if (j.index + j[0].length - 1 <= covered) continue; if (!/^(?:data|stringData)$/.test(j[1] === '"' ? decJson(j[2]) : j[2])) { JD.lastIndex = j.index + 1; continue; } const open = j.index + j[0].length - 1, close = braceEnd(s, open);
+      // No closing brace inside the 64 KB window (or before the end): the rest of the text goes (PR #16 review).
+      if (s[close] !== '}') { ivs.push([open + 1, s.length, 'SECRET']); covered = s.length; break; }
+      objectScalars(s, open, close, ivs); covered = close; } });
   // JSON objects and YAML flow maps under a credential key ("credentials": { … }, credentials: { … }), wherever they sit
   // on a line: every scalar inside goes, nested objects included.
   // Each scope is parsed once (PR #27 review): an opener inside an object already walked is skipped (objectScalars covers
@@ -666,7 +676,7 @@ function scrubScopes(s, label, resolve) {
       }
     }
     // Flow-style maps under data:/stringData: ({username: admin, db: x}) lose every scalar too (viaknox PR #27 review).
-    if (k8s) { const FM = /(?:^|[\s{,])(["']?)(?:data|stringData)\1[ \t]*:[ \t]*\{/g; let covered = -1; for (let f; (f = FM.exec(line));) { const open = i + f.index + f[0].length - 1; if (open <= covered) continue; covered = braceEnd(s, open); objectScalars(s, open, covered, ivs); } }   // each scope once (PR #27 review)
+    if (k8s) { const FM = /(?:^|[\s{,])(["']?)(?:data|stringData)\1[ \t]*:[ \t]*\{/g; let covered = -1; for (let f; (f = FM.exec(line));) { const open = i + f.index + f[0].length - 1; if (open <= covered) continue; covered = braceEnd(s, open); if (s[covered] !== '}') { ivs.push([open + 1, s.length, 'SECRET']); covered = s.length; break; } objectScalars(s, open, covered, ivs); } }   // each scope once (PR #27 review)
     if (k8s && (m = /^([ \t]*)(["']?)(?:data|stringData)\2:[ \t]*$/.exec(line))) {   // quoted keys too ("stringData":; PR #16 review)
       const ind = m[1].length; let j = nl;
       while (j < s.length) {
@@ -674,7 +684,10 @@ function scrubScopes(s, label, resolve) {
         const l2 = s.slice(ls, le); if (l2.trim() === '') { j = le; continue; }
         if ((l2.match(/^[ \t]*/) || [''])[0].length <= ind) break;
         const km = /^[ \t]*[^\s:]+:[ \t]*/.exec(l2);
-        if (km && km[0].length < l2.length) { const vs = ls + km[0].length, ve = valueEnd(s, vs); ivs.push([vs, ve, 'SECRET']); j = Math.max(le, ve); } else j = le;
+        if (km && km[0].length < l2.length) { const vs = ls + km[0].length, ve = valueEnd(s, vs); ivs.push([vs, ve, 'SECRET']); j = Math.max(le, ve); }
+        // Any other content line inside a Secret's data block (explicit "? key" / ": value" pairs, flow sequences, bare
+        // continuation text) goes too, after its indicator (PR #16 review): every scalar here is Secret data.
+        else { const xm = /^[ \t]*(?:[?:-][ \t]*)?/.exec(l2); const vs = ls + xm[0].length; if (vs < le && s[vs] !== '#') { const ve = valueEnd(s, vs); ivs.push([vs, ve, 'SECRET']); j = Math.max(le, ve); } else j = le; }
       }
     }
     i = nl + 1;
@@ -803,7 +816,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     if (last && from >= last.from && last.found < 0) return -1;
     const re = new RegExp('<(/?)' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[\\s>/])', 'g'); re.lastIndex = from;
     let depth = 1, steps = 0, m;
-    for (; (m = re.exec(lower)) && m.index - from <= 65536 && steps < 256; steps++) { if (m[1]) { if (--depth === 0) return m.index; } else depth++; }
+    for (; (m = re.exec(lower)) && m.index - from <= 65536 && steps < 256; steps++) { if (m[1]) { if (--depth === 0) return m.index; } else { const gt = lower.indexOf('>', m.index); if (gt < 0 || lower[gt - 1] !== '/') depth++; } }   // <x/> opens nothing (PR #16 review)
     // Past the window the rest of the text goes, not just the window: the real closer may lie beyond it (PR #16 review).
     if (steps >= 256 || (m && m.index - from > 65536)) return s.length;
     lastClose.set(key, { from, found: -1 }); return -1;
@@ -1031,7 +1044,8 @@ function scrubXml(s, label, resolve) {
     let depth = 1, from = open;
     for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) {
       if (!isEnd(closes[k])) continue;
-      openRe.lastIndex = from; for (let o; (o = openRe.exec(s)) && o.index < closes[k];) depth++;
+      // A self-closing same-name element (<password/>) opens nothing (PR #16 review).
+      openRe.lastIndex = from; for (let o; (o = openRe.exec(s)) && o.index < closes[k];) { const gt = s.indexOf('>', o.index); if (gt < 0 || s[gt - 1] !== '/') depth++; }
       from = closes[k];
       if (--depth === 0) { close = closes[k]; break; }
     }
@@ -1209,8 +1223,8 @@ const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token',
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
   // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review), and "+" is a space
-  // as in form encoding (?api+key=…; PR #27 review).
-  return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})=)([^&\s#\]]+)/g, (m, pre, name, v) => {
+  // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
+  return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
     return (!QUERY_NAMES.has(n.toLowerCase()) && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
   });
@@ -1233,10 +1247,10 @@ function scrubBareAuth(s, label) {
   // "Basic auth") is prose about the scheme, not a token, and stays.
   // Words that name the scheme in prose ("Basic authentication", "Bearer tokens") stay too, at any length; a Digest
   // credential always carries name=value parameters, so Digest without an "=" is prose (PR #27 review).
-  // Scheme names are case-insensitive (bearer, BASIC; PR #16 review). After a scheme not written as "Basic"/"Bearer", a
+  // Scheme names are case-insensitive (bearer, BASIC; PR #16 review), and count after "_" too (id_Basic …; PR #16 review). After a scheme not written as "Basic"/"Bearer", a
   // plain lowercase word of any length is prose ("basic understanding"), so only a token-looking value goes.
-  let out = s.replace(/\b(basic|bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/gi, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || (!/^(?:Basic|Bearer)$/.test(sch) && SCHEME_LOWER_PROSE.test(v.replace(/\.+$/, ''))) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
-  return out.replace(/\b(digest)[ \t]+(?=[^\n]*=)([^\n]*=[^\n]*)/gi, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
+  let out = s.replace(/(?<![A-Za-z0-9])(basic|bearer)[ \t]+([A-Za-z0-9._~+/\-]+={0,2})/gi, (m, sch, v) => (isPlaceholderValue(v) || (v.length < 8 && /^[a-z]+$/.test(v)) || (!/^(?:Basic|Bearer)$/.test(sch) && SCHEME_LOWER_PROSE.test(v.replace(/\.+$/, ''))) || SCHEME_PROSE.test(v.replace(/\.+$/, ''))) ? m : `${sch} ${label('KEY', v)}`);
+  return out.replace(/(?<![A-Za-z0-9])(digest)[ \t]+(?=[^\n]*=)([^\n]*=[^\n]*)/gi, (m, sch, v) => isPlaceholderValue(v) ? m : `${sch} ${label('KEY', v)}`);
 }
 
 // Known token shapes, shared by the main pass (KEY, matched on the folded view) and the residual scan. Assembled from
@@ -1270,7 +1284,7 @@ const PATTERNS = [
   ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|call|text|whatsapp|sms)[ \t]*[:#=]?[ \t]*)\d{10,15}\b/gi],
   // …and after "phone (number) is/was" (my phone is 4155552671; PR #27 review).
   ['PHONE', /(?<=\b(?:phone|tel|telephone|mobile|cell|whatsapp)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was|are)[ \t]+)\+?\d{10,15}\b/gi],
-  ['IP', /\b(?:\d{1,3}\.){3}\d{1,3}\b/g],
+  ['IP', /(?<![A-Za-z0-9])(?:\d{1,3}\.){3}\d{1,3}(?![A-Za-z0-9])/g],   // not \b: "host_192.168.1.1" must match (PR #16 review)
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])/gi],
 ];
@@ -1293,7 +1307,7 @@ const PREFIX_SHAPES = [
   ['pem private key', new RegExp('-----BEGIN[ \\t]+(?:[A-Z0-9][A-Z0-9_.-]*[ \\t]+){0,32}PRIVATE[ \\t]+KEY')],
   ['http auth header', /\b(?:Authorization|Proxy-Authorization)[ \t]*:[ \t]*(?![\-\uE000])[^\s"'()\[\]{},;\uE000]{6,}/i],
   // A plain lowercase word after the scheme is prose ("Basic authentication"), as in the main pass (PR #27 review).
-  ['auth scheme token', /\b(?:Basic|Bearer)[ \t]+(?![a-z]+(?![A-Za-z0-9._~+/\-]))[A-Za-z0-9._~+/\-]{12,}/],
+  ['auth scheme token', /(?<![A-Za-z0-9])(?:Basic|Bearer)[ \t]+(?![a-z]+(?![A-Za-z0-9._~+/\-]))[A-Za-z0-9._~+/\-]{12,}/],
   ['credential assignment', new RegExp('(?<![\\p{L}\\p{N}])(?:password|passwd|secret|api[_-]?key|access[_-]?key|private[_-]?key|auth[_-]?token|mot de passe|mdp|passwort|kennwort|contrase[ñn]a|senha|wachtwoord|пароль|パスワード|密码|비밀번호)(?![\\p{L}\\p{N}])[ \\t]*["\']?[ \\t]*[:=][ \\t]*["\']?(?![\\-\\uE000])[^\\s"\'()\\[\\]{},;\\uE000]{3,}', 'iu')],
   ['spaced hex groups', /\b(?:[0-9a-f]{4}[ -]){5,}[0-9a-f]{4}\b/i],   // recovery codes written as groups of four
 ];

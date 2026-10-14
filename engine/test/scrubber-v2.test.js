@@ -825,3 +825,14 @@ test('[best-effort] round 37: glued repeat/confirm password fields', () => {
   for (const x of ['passwordrepeat=letmein22', 'passwordconfirm=letmein22', 'PASSWORDCURRENT=letmein22'])
     assert.ok(!/letmein22/.test(scrubber().sanitize(x).text), x);
 });
+test('[best-effort] round 38: distinctive compounds with any tail, multiline values after a placeholder, commented YAML block headers, oversized JSON Secret maps, explicit YAML keys in Secrets, self-closing same-name tags, schemes and IPv4 after "_", array-style names', () => {
+  const big = '{"kind":"Secret","stringData":{' + ' '.repeat(65540) + '"foo":"hunter22"}}';
+  for (const x of ['AUTHTOKENJWT = hunter22', 'password="[SECRET_1]\nhunter22"', 'password: >- # folded\n  hunter22', big, 'kind: Secret\nstringData:\n  ? foo\n  : hunter22',
+    '<password><password/>hunter22</password>', '<textarea name="password"><textarea/>hunter22</textarea>', 'id_Digest username="bob", response="hunter22"',
+    'https://x.test/?password[]=hunter22', 'password[]=hunter22'])
+    assert.ok(!/hunter22/.test(scrubber().sanitize(x).text), x.slice(0, 60));
+  assert.ok(!/YTpiYzEy/.test(scrubber().sanitize('id_Basic YTpiYzEy').text));
+  assert.ok(!/192\.168\.1\.1/.test(scrubber().sanitize('host_192.168.1.1').text));
+  assert.equal(isCredentialName('cookiecutter'), false);
+  assert.equal(scrubber().sanitize('items[]=apple').text, 'items[]=apple');
+});
