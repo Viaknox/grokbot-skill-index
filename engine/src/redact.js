@@ -131,6 +131,9 @@ export function isCredentialName(name) {
   if (parts.length >= 2 && /^keys?$/.test(parts[parts.length - 1]) && !STRUCTURAL_KEY.has(parts[parts.length - 2])) return true;
   return parts.some((p, i) => {
     if (STRONG.test(p) || WHOLE.has(p)) return true;
+    // The letter/digit split cuts "dbpasswordb64" into "dbpasswordb" + "64"; glue a number back on so the b64 suffix is
+    // still seen (viaknox PR #27 review).
+    if (/^\d+$/.test(parts[i + 1] || '') && STRONG.test(p + parts[i + 1])) return true;
     if (/^tokens?$/.test(p)) return !USAGE.has(parts[i + 1] || '') && !USAGE.has(parts[i - 1] || '');
     return false;
   });

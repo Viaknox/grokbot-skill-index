@@ -565,3 +565,7 @@ test('[promised] prose about auth schemes stays; real Basic and Digest credentia
   assert.ok(!scrubber().scrub('use Basic YWxhZGRpbjpvcGVuc2VzYW1l').includes('YWxhZGRp'));
   assert.ok(!scrubber().scrub('Authorization: Digest username="a", response="zz9secret"').includes('zz9secret'));
 });
+test('[promised] a compact name ending in b64 is a credential (DBPASSWORDB64)', () => {
+  const r = scrubber().sanitize('DBPASSWORDB64: "aHVudGVyMg=="'); assert.ok(!r.text.includes('aHVudGVyMg'), r.text);
+  assert.equal(isCredentialName('secretary2'), false);
+});
