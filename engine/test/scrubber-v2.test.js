@@ -641,3 +641,12 @@ test('[promised] viaknox PR #27 round 9: environment-suffixed compact names, mul
     assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x.slice(0, 40));
   assert.ok(!scrubber().sanitize('"john doe"@example.com wrote').text.includes('john doe'));
 });
+test('[promised] viaknox PR #27 round 10: quoted multipart names, percent-encoded query names, XML end-tag whitespace, nested credential elements, reformatted SSN echoes, sqlcmd -P, pgpass', () => {
+  for (const x of ['--b\nContent-Disposition: form-data; name="api key"\n\nhunter22\n--b--', 'https://x/?%70assword=hunter22&a=1', '<password>hunter22</password >',
+    '<div data-field="password"><span>hunter22</span></div>', '<textarea name="password"><b>hunter22</b></textarea>', 'sqlcmd -S db -U alice -P hunter22', 'sqlcmd -S db -Phunter22',
+    'db.example.com:5432:mydb:alice:hunter22'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+  assert.ok(!scrubber().sanitize('User: 123-45-6789\nBot: got 123456789').text.includes('123456789'));
+  assert.equal(scrubber().sanitize('mysql -h db -P 3306 -u x').text, 'mysql -h db -P 3306 -u x');
+  assert.equal(scrubber().sanitize('meeting 10:30:00').text, 'meeting 10:30:00');
+});

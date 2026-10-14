@@ -709,7 +709,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     // <… Name="password"><…Value>text</…Value>: the next *Value child's text is the credential; and the element's own
     // text (<textarea name="password">…</textarea>) when the tag is not self-closing.
     if (!hit && byAttr) { const c = CHILD_VALUE.exec(s.slice(m.index + tag.length, m.index + tag.length + 4200)); if (c) { const vs = m.index + tag.length + c[0].length - c[2].length - 2; ivs.push([vs, vs + c[2].length, 'SECRET']); } }
-    if (byAttr && !tag.endsWith('/>') && tagName) { const open = m.index + tag.length, close = closeOf(tagName, open); if (close > open && close - open <= 65536 && !s.slice(open, close).includes('<') && s.slice(open, close).trim()) ivs.push([open, close, 'SECRET']); }
+    if (byAttr && !tag.endsWith('/>') && tagName) { const open = m.index + tag.length, close = closeOf(tagName, open); if (close > open && close - open <= 65536 && s.slice(open, close).trim()) ivs.push([open, close, 'SECRET']); }   // nested markup goes too (PR #27)
   }
   return applyIntervals(s, ivs, label);
 }
@@ -862,12 +862,13 @@ function scrubPathSegments(s, label, resolve) {
 
 // Multipart form data: a part whose Content-Disposition names a credential field; its body (after the blank line, up to
 // the next boundary line starting with "--" or the end) goes.
-const PART_HEADER = /Content-Disposition:[^\n]*\bname=["']?([^"'\s;\n]{1,160})/gi;
+// The whole quoted name is read ("api key"; PR #27 review); an unquoted one runs to a space or semicolon.
+const PART_HEADER = /Content-Disposition:[^\n]*\bname=(?:"([^"\n]{1,160})"|'([^'\n]{1,160})'|([^"'\s;\n]{1,160}))/gi;
 function scrubMultipart(s, label, resolve) {
   if (!/Content-Disposition/i.test(s)) return s;
   const ivs = []; PART_HEADER.lastIndex = 0;
   for (let m; (m = PART_HEADER.exec(s));) {
-    if (!isCredentialName(resolve(m[1]))) continue;
+    if (!isCredentialName(resolve(m[1] ?? m[2] ?? m[3]))) continue;
     const blank = s.indexOf('\n\n', m.index), blankCr = s.indexOf('\r\n\r\n', m.index);
     const start = blank < 0 ? (blankCr < 0 ? -1 : blankCr + 4) : (blankCr >= 0 && blankCr < blank ? blankCr + 4 : blank + 2);
     if (start < 0 || start - m.index > 4000) continue;
@@ -901,9 +902,10 @@ function scrubXml(s, label, resolve) {
     // The matching closing tag may come after nested elements (<password><value>…</value></password>; PR #27 review):
     // walk the closing tags inside the 64 KB window until this element's own one.
     let ci = closes.length; { let lo = 0, hi = closes.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (closes[mid] < open) lo = mid + 1; else hi = mid; } ci = lo; }
-    let close = -1; const want = '</' + m[1] + '>';
+    // XML allows whitespace before the end tag's ">" (</password >; PR #27 review).
+    let close = -1; const want = '</' + m[1], isEnd = (at) => s.startsWith(want, at) && /^[ \t\r\n]*>/.test(s.slice(at + want.length, at + want.length + 40));
     let k = ci, n = 0;
-    for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) if (s.startsWith(want, closes[k])) { close = closes[k]; break; }
+    for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) if (isEnd(closes[k])) { close = closes[k]; break; }
     // Too many nested closing tags to walk: take the rest of the 64 KB window rather than risk leaving the value (PR #27).
     if (close < 0 && n >= 256) close = Math.min(s.length, open + 65536);
     if (close < 0) continue;
@@ -919,6 +921,14 @@ function scrubXml(s, label, resolve) {
 function scrubCallArg(s, label, resolve) {
   return s.replace(/\b([\p{L}_$\uE000][\p{L}\p{N}_$.\uE000\uE001]{0,60})[ \t]*\([ \t]*("[^"\n]*"|'[^'\n]*')/gu, (m, name, v) =>
     (!isCredentialName(resolve(name)) || isPlaceholderValue(v)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+}
+
+// PostgreSQL password file lines: hostname:port:database:username:password, fields may hold \: escapes; the fifth field
+// goes (PR #27 review). The port must be a number or *, which keeps times and IPv6 out.
+const PGPASS = /^((?:\\.|[^:\\\s])+):(\d{1,5}|\*):((?:\\.|[^:\\\n])*):((?:\\.|[^:\\\n])*):((?:\\.|[^\\\n])+)$/gm;
+function scrubPgpass(s, label) {
+  if (!s.includes(':')) return s;
+  return s.replace(PGPASS, (m, h, p, d, u, pw) => isPlaceholderValue(pw) ? m : m.slice(0, m.length - pw.length) + label('SECRET', pw));
 }
 
 // netrc: "password <value>" / "account <value>" with no separator. Applied only when the text is actually a netrc file
@@ -984,8 +994,12 @@ function scrubPhrase(s, label) {
 const FLAG_P = /(^|\s)(-p)([^\s'"]+)/g; // no minimum: -pX is a password too (PR #16 review)
 const FLAG_USER = /(^|\s)(-u|-U|--user|--proxy-user)(=|[ \t]+)((?:"[^"\n]*"|'[^'\n]*'|[^\s'"])+)/g;
 const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]+)("[^"\n]*"|'[^'\n]*'|(?:\\\r?\n|[^\s'"])+)/g;
+// SQL Server tools take the password as -P (sqlcmd -S db -U alice -P x, or -Px); only on a line naming one of them,
+// since -P is a port elsewhere (PR #27 review).
+const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
 function scrubFlags(s, label, V) {
   if (!s.includes('-')) return s;
+  s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
   return applyOnView(s, V(s), FLAG_ANY, label, (m) => isCredentialName(m[3]) ? { from: m.index + m[0].length - m[5].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
@@ -1008,8 +1022,11 @@ function scrubCommands(s, label) {
 const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp']);
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
-  return s.replace(/([?&]([A-Za-z0-9_.\-]{1,60})=)([^&\s#\]]+)/g, (m, pre, name, v) =>
-    (!QUERY_NAMES.has(name.toLowerCase()) && !isCredentialName(resolve(name))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v));
+  // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review).
+  return s.replace(/([?&]((?:[A-Za-z0-9_.\-]|%[0-9A-Fa-f]{2}){1,60})=)([^&\s#\]]+)/g, (m, pre, name, v) => {
+    const n = decodeName(name);
+    return (!QUERY_NAMES.has(n.toLowerCase()) && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
+  });
 }
 
 // URL userinfo scheme://user:pass@host — the whole user:pass is replaced (a token-as-user form too). No length ceiling:
@@ -1190,6 +1207,7 @@ export function scrubber({ terms = [] } = {}) {
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
+    s = scrubPgpass(s, label);
     s = scrubNetrc(s, label);
     s = scrubCopula(s, label);
     s = scrubPhrase(s, label);
@@ -1232,6 +1250,14 @@ export function scrubber({ terms = [] } = {}) {
     const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && e.value.trim().length >= 4 && !/[\uE000\uE001\n]/.test(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     for (const [kind, v] of known) if (s.includes(v)) s = s.split(v).join(label(kind, v));
+    // Card and SSN numbers recur with other separators (123-45-6789 echoed as 123456789; PR #27 review): match the digits
+    // with any of space, dot or dash between them and reuse the same placeholder.
+    for (const { kind, value } of inventory) {
+      if (kind !== 'SSN' && kind !== 'CARD') continue;
+      const d = value.replace(/\D/g, ''); if (d.length < 9) continue;
+      const re = new RegExp(`(?<![\\d\\uE000])${d.split('').join('[ .-]?')}(?!\\d)`, 'g');
+      s = s.replace(re, () => label(kind, value));
+    }
     return s.replace(SENT, (m, kind, n) => `[${kind}_${n}]`);
   }
 
