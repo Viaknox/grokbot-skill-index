@@ -108,7 +108,7 @@ export function checkConversation(msgs) {
     // The same for card and SSN shapes inside a setting (password=4111 1111 1111 1111; PR #16 review).
     const raw = String(m.content);
     const cardIn = (t) => (t.match(/(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/g) || []).some(x => luhnOk(x.replace(/\D/g, '')));
-    const ssnIn = (t) => /(?<![\p{N}-])(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/u.test(t);   // the main SSN separators (PR #27 review)
+    const ssnIn = (t) => /(?<!\p{N})(?<!\p{N}-)(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/u.test(t);   // the main SSN separators (PR #27 review)
     for (const [kind, test] of [['CARD', cardIn], ['SSN', ssnIn]]) {
       if (!test(raw) || hard.includes(kind) || newHard.includes(kind)) continue;
       if (rest !== null && !test(rest)) hard.push(kind); else newHard.push(kind);

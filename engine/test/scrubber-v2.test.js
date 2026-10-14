@@ -983,3 +983,10 @@ test('r50: multiword JSON key before a newline colon, anchored Secret kinds, lon
     assert.ok(r.held || !r.text.includes('huntertwo'), t + ' -> ' + r.text);
   }
 });
+
+// Round 51 (viaknox PR #27 security review of bfc5077).
+test('r51: an SSN after a label hyphen is scrubbed; longer numeric IDs stay', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x).text;
+  assert.ok(!t('SSN-123-45-6789').includes('6789'));
+  assert.equal(t('id 987-123-45-6789'), 'id 987-123-45-6789');
+});

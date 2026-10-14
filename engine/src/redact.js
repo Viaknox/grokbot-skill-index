@@ -1390,7 +1390,7 @@ const PATTERNS = [
   // The whole RFC 5322 atext alphabet in the local part (o'connor@…, alice!@…; PR #27 review).
   ['EMAIL', /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu],
   ['CARD', /(?<![\p{L}\p{N}])(?:\d[ -]?){12,18}\d(?![\p{L}\p{N}])/gu],   // not \b: "id_4111…" must match (PR #16 review)
-  ['SSN', /(?<![\p{L}\p{N}-])(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/gu],   // a sentence-ending \".\" is not part of the number (PR #16 review)   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
+  ['SSN', /(?<![\p{L}\p{N}])(?<!\p{N}-)(?<!\p{N}\.)\d{3}([-. ])\d{2}\1\d{4}(?!\p{N}|[.-]\p{N})/gu],   // a sentence-ending \".\" is not part of the number (PR #16 review)   // dashes, spaces or dots, used consistently (123 45 6789; PR #27 review)   // not \b: "id_123-45-6789" must match (PR #16 review)
   // A nine-digit SSN with no dashes counts after an SSN cue ("SSN: 123456789"; PR #27 review).
   ['SSN', /(?<=\b(?:ssn|social[ \t]+security)(?:[ \t]+(?:number|no\.?|#))?[ \t]+(?:is|was)[ \t]+)\d{9}(?!\d)/gi],   // "my SSN is 123456789" (PR #27 review)
   ['SSN', /(?<=\b(?:ssn|SSN|social[ \t]+security(?:[ \t]+(?:number|no\.?|#))?)[ \t]*[:#=-]?[ \t]*)\d{9}\b/gi],
