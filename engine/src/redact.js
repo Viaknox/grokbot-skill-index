@@ -37,6 +37,8 @@ function foldName(name) {
 }
 // A name may arrive escaped: JSON "pass\u0077ord" or a URL parameter pass%77ord. Decode before the credential check.
 function decodeName(name) {
+  // HTML character references too (p&#97;ssword, p&#x61;ssword; PR #27 review).
+  name = name.replace(/&#(\d{1,7});/g, (m, d) => String.fromCodePoint(Math.min(Number(d), 0x10FFFF))).replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)));
   return name.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16))).replace(/%([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
 }
 
@@ -404,11 +406,14 @@ function csvRow(s, i) {
   cells.push([start, j]); return { cells, end: j };
 }
 const trailingName = (tok) => (tok.replace(/[:=]+$/, '').replace(/["']$/, '').match(/[\p{L}\p{N}_$.\-]+$/u) || [''])[0];
+// The judge's own role labels ("USER: AUTH x", "AGENT: …") are not part of the line a person typed (PR #27 review).
+const ROLE_PREFIX = /^(?:USER|AGENT|AGENT INSTRUCTIONS|USER ACTION \(not a message the user typed\)):[ \t]*/;
 function scrubLineForms(s, label, resolve) {
   let out = '', at = 0, i = 0; let csv = null;
   while (i < s.length) {
     let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
-    const line = s.slice(i, nl).replace(/\r$/, '');
+    let line = s.slice(i, nl).replace(/\r$/, '');
+    { const rp = ROLE_PREFIX.exec(line); if (rp) { i += rp[0].length; line = line.slice(rp[0].length); } }
     let m;
     if (csv && line.trim() === '') csv = null;
     if ((m = BARE_KEY_LINE.exec(line)) && line.length > m[0].length) {
@@ -694,7 +699,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     const tag = m[0], tagName = (tag.match(/^<([\w:.\-]+)/) || ['', ''])[1];
     let byAttr = false; ATTR_ANY.lastIndex = 0;
     // type="password" marks a password field on its own (PR #27 review).
-    for (let a; (a = ATTR_ANY.exec(tag));) { if ((/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) || (/^autocomplete$/i.test(a[1]) && /^["']?(?:current-password|new-password|one-time-code)["']?$/i.test(a[3]))) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(a[3].replace(/^["']|["']$/g, '')); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
+    for (let a; (a = ATTR_ANY.exec(tag));) { if ((/^type$/i.test(a[1]) && /^["']?password["']?$/i.test(a[3])) || (/^autocomplete$/i.test(a[1]) && /^["']?(?:current-password|new-password|one-time-code)["']?$/i.test(a[3]))) { byAttr = true; break; } if (!CUE_ATTR.test(a[1])) continue; const n = resolve(decodeName(a[3].replace(/^["']|["']$/g, ''))); if (isCredentialName(n) || HEADER_CRED.test(n.trim())) { byAttr = true; break; } }
     const byTag = isCredentialName(resolve(tagName));
     if (!byAttr && !byTag) continue;
     // Every attribute value goes except the ones that identify the element (name, id, http-equiv, type, class).
@@ -703,7 +708,7 @@ function scrubHtmlAttrs(s, label, resolve) {
     // or placeholder that carries the secret itself goes like any other attribute.
     for (let v; (v = ATTR_ANY.exec(tag));) {
       const raw = v[3].replace(/^["']|["']$/g, '');
-      if (/^(?:name|id|http-equiv|type|class)$/i.test(v[1]) || (IDENT_ATTR.test(v[1]) && (isCredentialName(resolve(raw)) || HEADER_CRED.test(raw.trim())))) continue;
+      if (/^(?:name|id|http-equiv|type|class)$/i.test(v[1]) || (IDENT_ATTR.test(v[1]) && (isCredentialName(resolve(decodeName(raw))) || HEADER_CRED.test(raw.trim())))) continue;
       const vs = m.index + v.index + v[0].length - v[3].length; ivs.push([vs, vs + v[3].length, 'SECRET']); hit = true;
     }
     // <… Name="password"><…Value>text</…Value>: the next *Value child's text is the credential; and the element's own
@@ -923,6 +928,16 @@ function scrubCallArg(s, label, resolve) {
     (!isCredentialName(resolve(name)) || isPlaceholderValue(v)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
 }
 
+// SQL account statements: MySQL "IDENTIFIED [WITH plugin] BY [PASSWORD] 'x'", PostgreSQL "[WITH] [ENCRYPTED] PASSWORD 'x'"
+// after CREATE/ALTER USER or ROLE, SQL Server "WITH PASSWORD = 'x'" (PR #27 review).
+const SQL_IDENTIFIED = /\bIDENTIFIED[ \t]+(?:WITH[ \t]+\S+[ \t]+)?BY[ \t]+(?:PASSWORD[ \t]+)?('(?:''|[^'\n])*'|"[^"\n]*"|[^\s;,)]+)/gi;
+const SQL_PASSWORD = /\b(?:CREATE|ALTER)[ \t]+(?:USER|ROLE|LOGIN)\b[^;\n]{0,200}?\bPASSWORD[ \t]*=?[ \t]*('(?:''|[^'\n])*'|"[^"\n]*")/gi;
+function scrubSqlAuth(s, label) {
+  if (!/IDENTIFIED|PASSWORD/i.test(s)) return s;
+  const f = (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v);
+  return s.replace(SQL_IDENTIFIED, f).replace(SQL_PASSWORD, f);
+}
+
 // PostgreSQL password file lines: hostname:port:database:username:password, fields may hold \: escapes; the fifth field
 // goes (PR #27 review). The port must be a number or *, which keeps times and IPv6 out.
 const PGPASS = /^((?:\\.|[^:\\\s])+):(\d{1,5}|\*):((?:\\.|[^:\\\n])*):((?:\\.|[^:\\\n])*):((?:\\.|[^\\\n])+)$/gm;
@@ -999,6 +1014,7 @@ const FLAG_ANY = /(^|[\s'"(])(--?)([A-Za-z][\w.\-]{0,60})([ \t]*[=:][ \t]*|[ \t]
 const SQLCMD_LINE = /^.*\b(?:sqlcmd|osql|isql|bcp)\b.*$/gim;
 function scrubFlags(s, label, V) {
   if (!s.includes('-')) return s;
+  s = s.replace(/^.*\bsshpass\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));   // sshpass -p x (PR #27)
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
   s = applyOnView(s, V(s), FLAG_P, label, (m) => ({ from: m.index + m[1].length + 2, to: m.index + m[0].length, kind: 'SECRET' }));
   s = applyOnView(s, V(s), FLAG_USER, label, (m) => m[4].includes(':') ? { from: m.index + m[0].length - m[4].length, to: m.index + m[0].length, kind: 'SECRET' } : null);
@@ -1208,6 +1224,7 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
     s = scrubPgpass(s, label);
+    s = scrubSqlAuth(s, label);
     s = scrubNetrc(s, label);
     s = scrubCopula(s, label);
     s = scrubPhrase(s, label);

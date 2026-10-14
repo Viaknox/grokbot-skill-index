@@ -650,3 +650,9 @@ test('[promised] viaknox PR #27 round 10: quoted multipart names, percent-encode
   assert.equal(scrubber().sanitize('mysql -h db -P 3306 -u x').text, 'mysql -h db -P 3306 -u x');
   assert.equal(scrubber().sanitize('meeting 10:30:00').text, 'meeting 10:30:00');
 });
+test('[promised] viaknox PR #27 round 11: sshpass -p, HTML-entity cue names, SQL account passwords, role-prefixed line forms', () => {
+  for (const x of ['sshpass -p hunter22 ssh host', '<input name="p&#97;ssword" value="hunter22">', "CREATE USER 'alice'@'localhost' IDENTIFIED BY 'hunter22';",
+    "ALTER USER bob WITH PASSWORD 'hunter22';", "CREATE LOGIN x WITH PASSWORD = 'hunter22'", 'USER: AUTH hunter22\nAGENT: ok'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+  assert.equal(scrubber().sanitize('ssh -p 22 host').text, 'ssh -p 22 host');
+});
