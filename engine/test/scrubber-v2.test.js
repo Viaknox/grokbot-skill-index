@@ -807,3 +807,7 @@ test('[best-effort] round 31: scalar token-map keys, 3-character recurrences, ";
   const s = scrubber(); assert.equal(s.sanitize('USER: PASSWORD=abc\nAGENT: abc').text, 'USER: PASSWORD=[SECRET_1]\nAGENT: [SECRET_1]');
   assert.deepEqual(s.echoes('it was abc'), ['SECRET']);
 });
+test('[best-effort] round 32: docker login -p with a space', () => {
+  assert.ok(!/hunter22/.test(scrubber().sanitize('docker login -u alice -p hunter22 registry.example.com').text));
+  assert.equal(scrubber().sanitize('psql -h db -p 5432').text, 'psql -h db -p 5432');
+});

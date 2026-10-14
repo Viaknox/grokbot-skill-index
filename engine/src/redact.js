@@ -1156,6 +1156,8 @@ function scrubFlags(s, label, V) {
   // htpasswd -b … user password: the last argument is the password; smbclient/rpcclient/smbmap -U user%password (PR #27).
   s = s.replace(/^(.*\bhtpasswd\b.*[ \t]-\w*b\w*\b.*[ \t])("[^"\n]*"|'[^'\n]*'|[^\s"']+)[ \t]*$/gim, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v));
   s = s.replace(/^.*\b(?:smbclient|rpcclient|smbmap|smbget|smbcacls|net|mount\.cifs)\b.*$/gim, (line) => line.replace(/((?:^|\s)(?:-U|--user(?:name)?)(?:=|[ \t]+)["']?[^\s%"']*%)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));
+  // docker/podman/buildah/nerdctl/helm … login -p x: -p is --password there (docs.docker.com docker login; PR #27 review).
+  s = s.replace(/^.*\b(?:docker|podman|buildah|nerdctl|skopeo|helm|oras)\b.*\blogin\b.*$/gim, (line) => line.replace(/(^|\s)-p[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-p ${label('SECRET', v)}`));
   s = s.replace(/^.*\bredis-cli\b.*$/gim, (line) => line.replace(/(^|\s)-a[ \t]+("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-a ${label('SECRET', v)}`));   // redis-cli -a x (PR #27)
   s = s.replace(/^.*\bvault[ \t]+login\b.*$/gim, (line) => line.replace(/(\bvault[ \t]+login(?:[ \t]+-\S+)*[ \t]+)("[^"\n]*"|'[^'\n]*'|[^\s"'=-][^\s"'=]*)(?=[ \t]*$)/i, (m, pre, v) => isPlaceholderValue(v) ? m : pre + label('SECRET', v)));   // vault login <token> (PR #27)
   s = s.replace(SQLCMD_LINE, (line) => line.replace(/(^|\s)-P(?:[ \t]+)?("[^"\n]*"|'[^'\n]*'|[^\s"']+)/g, (m, pre, v) => isPlaceholderValue(v) ? m : `${pre}-P ${label('SECRET', v)}`));
