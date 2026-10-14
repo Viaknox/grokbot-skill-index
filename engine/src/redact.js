@@ -42,7 +42,10 @@ function decodeName(name) {
   name = name.replace(/&(amp|lt|gt|quot|apos|nbsp);/gi, (m, n) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' })[n.toLowerCase()])
     .replace(/&([A-Za-z])(acute|grave|circ|uml|tilde|ring|cedil|caron);/g, (m, c, k) => (c + { acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', ring: '\u030A', cedil: '\u0327', caron: '\u030C' }[k]).normalize('NFC'));
   name = name.replace(/&#(\d{1,7});/g, (m, d) => String.fromCodePoint(Math.min(Number(d), 0x10FFFF))).replace(/&#x([0-9a-f]{1,6});/gi, (m, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10FFFF)));
-  return name.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16))).replace(/%([0-9a-fA-F]{2})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+  return name.replace(/\\u([0-9a-fA-F]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)))
+    // A run of %HH bytes is UTF-8 (contrase%C3%B1a is contraseña; PR #27 review); a run that is not valid UTF-8 falls
+    // back to one character per byte.
+    .replace(/(?:%[0-9a-fA-F]{2})+/g, (m) => { try { return decodeURIComponent(m); } catch { return m.replace(/%([0-9a-fA-F]{2})/g, (x, h) => String.fromCharCode(parseInt(h, 16))); } });
 }
 
 // --- Folded view. One linear pass builds a copy of the text with zero-width characters, soft hyphens, combining marks
@@ -134,7 +137,7 @@ function hasCompound(parts) {
 const COMPOUND = /(seedphrase|seedwords|recoveryphrase|secretphrase|walletphrase|mnemonicphrase|apikey|accesskey|privatekey|secretkey|sessionkey|authtoken|accesstoken|apitoken|clientsecret|refreshtoken|authorization|proxyauthorization|setcookie|cookie|recoverycode|backupcode|verificationcode|securitycode|authcode|2facode|mfacode|keyname|keyvalue|x509data|derencodedkeyvalue|pwfile|passfile|passwdfile|passwordfile|secretfile|tokenfile|keyfile|credfile|credentialsfile|sessionid|jsessionid|phpsessid)/;
 const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', 'sid', 'mnemonic', 'mnemonics',   // wallet recovery words (PR #27)   // whole parts only: cloudant_pw, db_pass, pin; never passage, spinner
   // the same words in other languages (name parts are lower-cased and NFKC-folded before this lookup)
-  'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk',   // psk: WPA pre-shared key (PR #27) 'zugangsdaten',
+  'passe', 'mdp', 'clé', 'cle', 'jeton', 'passwort', 'kennwort', 'geheimnis', 'schlüssel', 'schluessel', 'schlussel', 'psk', 'zugangsdaten',   // psk: WPA pre-shared key (PR #27)
   'contraseña', 'contrasena', 'clave', 'secreto', 'credenciales', 'senha', 'chave', 'chiave', 'segreto', 'wachtwoord', 'sleutel',
   'пароль', 'секрет', 'ключ', 'токен', 'パスワード', '秘密鍵', 'トークン', '密码', '密钥', '口令', '令牌', '비밀번호', '암호']);
 // "key"/"keys" as the LAST part of a multi-part name is a credential (ssh_key, signing-key, iam-key) unless the part
@@ -395,6 +398,8 @@ function scrubQuotedKeys(s, label, resolve) {
 const TWO_TOKENS = /^[ \t]*(?:(?:export|setenv|set)[ \t]+)?(\S+)[ \t]+(\S+)[ \t]*$/;
 const NAME_COMMA = /^[ \t]*["']?([\p{L}\p{N}_$.\-]{1,160})["']?,/u;
 const IDENT_CELL = /^[ \t]*["']?[\p{L}\p{N}_$.\-]{1,60}["']?[ \t]*$/u;
+// A short multiword column label ("Login Name", "Web Site URL"): up to four words.
+const LABEL_CELL = /^[ \t]*["']?[\p{L}\p{N}_$.\-]{1,40}(?:[ \t]+[\p{L}\p{N}_$.\-]{1,40}){1,3}["']?[ \t]*$/u;
 const YAML_Q = /^[ \t]*\?[ \t]+([\p{L}\p{N}_$.\-]{1,160})[ \t]*$/u;
 const ENV_LINE = /^[ \t]*(?:ENV|ARG|export|set|setenv|env)[ \t]+/;
 // "key"/"keys" as the whole name is a credential only in the dotenv form: the line is key=value or export key=value.
@@ -472,8 +477,9 @@ function scrubLineForms(s, label, resolve) {
         nl = Math.max(nl, row.end);
       }
     } else if (line.includes(',') && !csv) {
-      const cells = line.split(',');
-      if (cells.length >= 2 && cells.every(c => IDENT_CELL.test(c))) {
+      // Header cells may be multiword labels ("Login Name", "Password"; PR #27 review): each column is judged on its own.
+      const hdr = csvRow(s, i), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, ''));
+      if (cells.length >= 2 && hdr.end <= nl && cells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
         const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: cells.length, cols };
       }
@@ -1177,7 +1183,9 @@ export class ScrubError extends Error { constructor(m) { super(m); this.name = '
 // same secret recurred without seeing it.
 export function scrubber({ terms = [] } = {}) {
   const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const own = terms.map(t => String(t).trim()).filter(Boolean).sort((a, b) => b.length - a.length);
+  // A term that folds to nothing (only zero-width or combining characters) is dropped: it would make an empty regex
+  // alternative that matches at every offset (PR #27 review).
+  const own = terms.map(t => String(t).trim()).filter(t => t && foldStr(t).trim()).sort((a, b) => b.length - a.length);
   // Never-send words: whole-word, any case, not inside another word and not inside an email/host (so a one-letter term
   // can't eat the "x" in jo@x.example). Matched on the folded view with folded terms, so "A\u200Dcme", "Ａｃｍｅ",
   // "ıstanbul" and a decomposed "Café" are all the term.

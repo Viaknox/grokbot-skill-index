@@ -664,3 +664,11 @@ test('[promised] viaknox PR #27 round 13: named HTML references, WPA psk, MySQL 
     'contraseña: hunter22', '비밀번호: hunter22', 'パスワード: hunter22', 'Schlüssel: hunter22'])
     assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
 });
+test('[promised] viaknox PR #27 round 14: multiword CSV headers, UTF-8 query names, zugangsdaten; empty-folding terms do not hang', () => {
+  for (const x of ['Title,Website,Login Name,Password,Comment\nX,https://x,alice,hunter22,n', 'https://x/?contrase%C3%B1a=hunter22&a=1', 'zugangsdaten=hunter22'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+  const s = scrubber({ terms: ['​', '́', 'Acme'] });
+  assert.equal(s.scrub(''), '');
+  assert.ok(!s.sanitize('Acme ok').text.includes('Acme'));
+  assert.equal(scrubber().sanitize('I said hi, then left\nok, fine').text, 'I said hi, then left\nok, fine');
+});
