@@ -302,7 +302,7 @@ function applyOnView(s, view, re, label, pick) {
 // already turned into a placeholder is resolved back). Bounded classes only, so hostile input stays linear.
 const ASSIGN_START = new RegExp(
   '(?<![\\p{L}\\p{N}_$.\\-])' +
-  '(["\']?)([\\p{L}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF][\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
+  '(["\']?)([\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF][\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]{0,160})\\1' +
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:".
   '(?:[ \\t]*(?:\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{1,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?[ \\t]*\\]?[ \\t]*(::=|:=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
@@ -528,6 +528,8 @@ function scrubScopes(s, label, resolve) {
         else j = le;
       }
     }
+    // Flow-style maps under data:/stringData: ({username: admin, db: x}) lose every scalar too (viaknox PR #27 review).
+    if (k8s && (m = /^[ \t]*(?:data|stringData):[ \t]*\{/.exec(line))) { const open = i + m[0].length - 1; objectScalars(s, open, braceEnd(s, open), ivs); }
     if (k8s && (m = /^([ \t]*)(data|stringData):[ \t]*$/.exec(line))) {
       const ind = m[1].length; let j = nl;
       while (j < s.length) {
@@ -589,13 +591,20 @@ function scrubTables(s, label, resolve) {
     while (i < s.length) {
       let nl = s.indexOf('\n', i); if (nl < 0) nl = s.length;
       const line = s.slice(i, nl).replace(/\r$/, '');
-      if (/^[ \t]*\|.*\|[ \t]*$/.test(line)) {
-        // A backslash-escaped pipe (`a\|b`) is cell text, not a boundary (PR #16 review).
-        const cells = []; for (let k = line.indexOf('|'), prev = -1; k >= 0; k = line.indexOf('|', k + 1)) { if (k > 0 && line[k - 1] === '\\') continue; if (prev >= 0) cells.push([i + prev + 1, i + k]); prev = k; }
+      // A pipe-less row only counts inside a table already found or right above a rule row, so ordinary lines with a
+      // stray "|" (YAML block scalars) cost nothing.
+      const ruleNext = () => { let n2 = s.indexOf('\n', nl + 1); if (n2 < 0) n2 = s.length; return /^[ \t]*(?:\|[ \t]*)?:?-{3,}/.test(s.slice(nl + 1, n2)); };
+      if (/^[ \t]*\|.*\|[ \t]*$/.test(line) || (line.includes('|') && (cols !== null || ruleNext()))) {
+        // A backslash-escaped pipe (`a\|b`) is cell text, not a boundary (PR #16 review). Outer pipes are optional in
+        // Markdown ("user | password"), so the text before the first and after the last pipe is a cell when it is not
+        // blank (viaknox PR #27 review).
+        const pipes = []; for (let k = line.indexOf('|'); k >= 0; k = line.indexOf('|', k + 1)) if (!(k > 0 && line[k - 1] === '\\')) pipes.push(k);
+        const bounds = [-1, ...pipes, line.length], cells = [];
+        for (let q = 0; q + 1 < bounds.length; q++) { const a = bounds[q] + 1, b = bounds[q + 1]; if ((q === 0 || q === bounds.length - 2) && !line.slice(a, b).trim()) continue; cells.push([i + a, i + b]); }
         if (cols === null) {
           let nl2 = s.indexOf('\n', nl + 1); if (nl2 < 0) nl2 = s.length;
-          if (/^[ \t]*\|?[ \t]*:?-{3,}/.test(s.slice(nl + 1, nl2))) { const found = cells.map(([a, b], k) => (isCredentialName(resolve(s.slice(a, b).trim())) ? k : -1)).filter(k => k >= 0); if (found.length) { cols = new Set(found); n = cells.length; } }
-        } else if (cells.length === n && !/^[ \t]*\|?[ \t]*:?-{3,}/.test(line)) {
+          if (/^[ \t]*(?:\|[ \t]*)?:?-{3,}/.test(s.slice(nl + 1, nl2))) { const found = cells.map(([a, b], k) => (isCredentialName(resolve(s.slice(a, b).trim())) ? k : -1)).filter(k => k >= 0); if (found.length) { cols = new Set(found); n = cells.length; } }
+        } else if (cells.length === n && !/^[ \t]*(?:\|[ \t]*)?:?-{3,}/.test(line)) {
           for (const k of cols) if (cells[k]) { const [a, b] = cells[k], cell = s.slice(a, b), lead = cell.length - cell.trimStart().length; if (cell.trim()) ivs.push([a + lead, a + lead + cell.trim().length, 'SECRET']); }
         }
       } else if (line.trim() === '') cols = null;
@@ -749,6 +758,24 @@ function scrubNameValuePairs(s, label, resolve) {
     if (!isCredentialName(resolve(m[5]))) continue;
     const from = m.index + m[0].length, nameIndent = m.index - (s.lastIndexOf('\n', m.index - 1) + 1);
     const end = entryEnd(s, from, nameIndent);
+    // A value field may come BEFORE the name in the same entry ({"value": …, "name": "password"}, or a YAML list item
+    // "- value: …" then "  name: password"); find the entry start and scrub those too (viaknox PR #27 review).
+    let start = -1;
+    const ob = s.lastIndexOf('{', m.index);
+    if (ob >= 0 && m.index - ob < 4000 && !s.slice(ob, m.index).includes('}')) start = ob;
+    else {
+      let ls = s.lastIndexOf('\n', m.index - 1) + 1;
+      for (let k = 0; k < 20 && ls > 0; k++) {
+        const ps = s.lastIndexOf('\n', ls - 2) + 1, pl = s.slice(ps, ls - 1); if (!pl.trim()) break;
+        const ind = (pl.match(/^[ \t]*/) || [''])[0].length;
+        if (/^[ \t]*-[ \t]/.test(pl) && ind + 2 === nameIndent) { start = ps; break; }
+        if (ind !== nameIndent) break; ls = ps;
+      }
+    }
+    if (start >= 0) {
+      const VB = new RegExp(VALUE_FIELD.source, 'giu'); VB.lastIndex = start;
+      for (let v; (v = VB.exec(s)) && v.index < m.index;) { const vs = v.index + v[0].length, ve = entryValueEnd(s, vs, m.index); if (ve <= m.index && s.slice(vs, ve).trim()) ivs.push([vs, ve, 'SECRET']); VB.lastIndex = Math.max(ve, vs + 1); }
+    }
     let at = from;
     if (known && from >= known.from) { if (known.index < 0) continue; if (known.index >= from) at = known.index; }
     for (;;) {
@@ -1135,6 +1162,11 @@ export function scrubber({ terms = [] } = {}) {
     // still the term. The first sweep keeps "@" out so a one-letter term cannot eat a host label inside a real address
     // (jo@x.example); real addresses are [EMAIL_n] by now, so this sweep may touch "@" freely (PR #16 review).
     if (ownAtRe) s = applyOnView(s, V(s), ownAtRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
+    // A secret already recognised anywhere (in this text or an earlier one) is replaced wherever it recurs bare, e.g. an
+    // agent repeating "CorrectHorse9!" after the user's PASSWORD=CorrectHorse9! (viaknox PR #27 review).
+    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && e.value.trim().length >= 4 && !/[\uE000\uE001\n]/.test(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
+      .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
+    for (const [kind, v] of known) if (s.includes(v)) s = s.split(v).join(label(kind, v));
     return s.replace(SENT, (m, kind, n) => `[${kind}_${n}]`);
   }
 

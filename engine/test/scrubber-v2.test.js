@@ -595,3 +595,14 @@ test('[promised] a brace-prefixed credential value ({noop}, {bcrypt}) goes whole
 test('[best-effort] an echo of just the token is found after a credential with a trailing comment', () => {
   const s = scrubber(); s.scrub('PASSWORD=hunter2 # temporary'); assert.deepEqual(s.echoes('your password is hunter2'), ['SECRET']);
 });
+test('[promised] a recognised secret is replaced wherever it recurs bare, in this text or a later one', () => {
+  assert.equal(scrubber().sanitize('USER: PASSWORD=CorrectHorse9!\nAGENT: CorrectHorse9!').text, 'USER: PASSWORD=[SECRET_1]\nAGENT: [SECRET_1]');
+  const s = scrubber(); s.scrub('PASSWORD=CorrectHorse9!'); assert.ok(!s.scrub('the bot said CorrectHorse9! again').includes('CorrectHorse'));
+});
+test('[promised] digit-leading credential keys ({"2facode": …}) are scrubbed', () => {
+  assert.ok(!scrubber().sanitize('{"2facode":"654321"}').text.includes('654321'));
+});
+test('[best-effort] flow-style Kubernetes Secret maps, value-before-name records and pipe-less Markdown tables', () => {
+  for (const x of ['kind: Secret\nstringData: {username: admin, db: hunter2}', '{"value":"hunter2","name":"password"}', '- value: hunter2\n  name: password', 'user | password\n--- | ---\nalice | hunter2'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter2'), x);
+});
