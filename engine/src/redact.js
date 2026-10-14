@@ -417,8 +417,9 @@ const ASSIGN_START = new RegExp(
   '(["\']?)((?:\\\\u\\{[0-9A-Fa-f]{1,6}\\}|\\\\u[0-9A-Fa-f]{4}|\\\\x[0-9A-Fa-f]{2}|%[0-9A-Fa-f]{2}|[\\p{L}\\p{N}_$\\uE000\\uFF21-\\uFF5A\\u200B-\\u200D\\u2060\\uFEFF])(?:\\\\u\\{[0-9A-Fa-f]{1,6}\\}|[\\p{L}\\p{N}_$.\\-\\\\%\\u200B-\\u200D\\u2060\\uFEFF\\uE000\\uE001]){0,160})\\1' +
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
-  // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review).
-  '(?:[ \\t]*(?://[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?(?:(?<=["\'])[ \\t\\r\\n]{0,40}|[ \\t]*)\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review). A C# accessor block too
+  // (public string Password { get; set; } = "x"; PR #27 review).
+  '(?:[ \\t]*(?:\\{(?:[ \\t]*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)[ \\t]*;){1,3}[ \\t]*\\}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40}))?(?:(?<=["\'])[ \\t\\r\\n]{0,40}|[ \\t]*)\\]?[ \\t]*(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -539,6 +540,13 @@ function scrubLineForms(s, label, resolve) {
     } else if ((m = NAME_COMMA.exec(line)) && isCredentialName(resolve(m[1]))) {
       const vStart = i + m[0].length, end = valueEnd(s, vStart);
       if (vStart >= at && s.slice(vStart, end).trim() && !isPlaceholderValue(s.slice(vStart, end))) { out += s.slice(at, vStart) + label('SECRET', s.slice(vStart, end)); at = end; nl = Math.max(nl, end); }
+      // A credential-first CSV header (password,username) also starts a table, so the rows below lose their credential
+      // cells too (PR #27 review). The rest of the header line still goes, which errs on the safe side.
+      const hcells = line.split(',');
+      if (!csv && hcells.length >= 2 && hcells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
+        const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
+        if (cols.size) csv = { n: hcells.length, cols, dl: ',' };
+      }
     } else if ((m = YAML_Q.exec(line)) && isCredentialName(resolve(m[1])) && nl < s.length) {
       let nl2 = s.indexOf('\n', nl + 1); if (nl2 < 0) nl2 = s.length;
       const next = s.slice(nl + 1, nl2), c = /^[ \t]*:[ \t]*/.exec(next);
@@ -1469,6 +1477,8 @@ export function residual(text, { terms = [] } = {}) {
     // A bare "sha"/"hash" label is not enough: those still hold (a password hash is not public).
     if (/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(run) && /\b(?:commit|commits|committed|revision|merge|merged|cherry-pick|cherry-picked|revert|reverted|blob|tree|git)\b[^\n]{0,40}$/i.test(sp.slice(Math.max(0, mm.index - 60), mm.index))) continue;
     if (/^[0-9a-fA-F]+$/.test(run)) { if (/[a-fA-F]/.test(run) && shannon(run) >= 3.0) { reasons.push('high-entropy hex run'); break; } continue; }
+    // A camel/Pascal-case identifier made of word-like parts (AbstractQueuedSynchronizer) is code, not a token (PR #27 review).
+    if (/^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) continue;
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }
   }

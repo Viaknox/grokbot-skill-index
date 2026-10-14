@@ -999,3 +999,13 @@ test('r52: copula punctuation, dotted TOML headers, Java escapes, multiline bloc
     assert.ok(r.held || !r.text.includes('hunter2'), t + ' -> ' + r.text);
   }
 });
+
+// Round 53 (viaknox PR #27 review of 6e07d33; follow-up PR).
+test('r53: credential-first CSV headers, C# auto-property initializers, camel-case identifiers', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  const csv = t('password,username\nhunter2,alice\nhunter3,bob');
+  assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
+  assert.ok(!t('public string Password { get; set; } = "hunter2";').text.includes('hunter2'));
+  assert.equal(t('how does AbstractQueuedSynchronizer work').held, false);
+  const rnd = t('token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm'); assert.ok(rnd.held || !rnd.text.includes('kQzPbXwR'), rnd.text);
+});
