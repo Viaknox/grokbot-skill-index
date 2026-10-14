@@ -636,3 +636,8 @@ test('[best-effort] reformatted contact echoes are found', () => {
   const s = scrubber(); s.scrub('mail Alice@Example.com, call (415) 555-2671');
   assert.deepEqual(s.echoes('ok alice@example.com and 415-555-2671').sort(), ['EMAIL', 'PHONE']);
 });
+test('[promised] viaknox PR #27 round 9: environment-suffixed compact names, multipart boundaries, quoted-local emails, deep XML', () => {
+  for (const x of ['APIKEYPROD=hunter22', 'PASSWORDPROD=hunter22', 'CLIENTSECRETTEST=hunter22', '--real\nContent-Disposition: form-data; name="password"\n\nnote\n---\nhunter22\n--real--', '<password>' + '<x>a</x>'.repeat(300) + 'hunter22</password>'])
+    assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x.slice(0, 40));
+  assert.ok(!scrubber().sanitize('"john doe"@example.com wrote').text.includes('john doe'));
+});

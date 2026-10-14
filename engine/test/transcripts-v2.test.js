@@ -79,3 +79,7 @@ test('a typed request that ends in a file name is the user\'s words, not attachm
   assert.equal(isPlaceholder({ role: 'user', content: '[image: please send me an image of cat.jpg]' }), false);
   for (const x of ['[image: My vacation photo.jpg]', '[file: report final.pdf (2 MB)]', '[file: a.txt, b.txt]']) assert.equal(isPlaceholder({ role: 'user', content: x }), true, x);
 });
+test('a short typed request ending in a file name stays a user message (viaknox PR #27 round 9)', () => {
+  for (const x of ['[file: please send report.pdf]', '[image: draw cat.png]']) assert.equal(isPlaceholder({ role: 'user', content: x }), false, x);
+  for (const x of ['[file: report final.pdf (2 MB)]', '[image: My vacation photo.jpg]']) assert.equal(isPlaceholder({ role: 'user', content: x }), true, x);
+});

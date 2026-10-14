@@ -106,7 +106,7 @@ function viewer() { let last = null, view = null; return (s) => (s === last ? vi
 // name ("PGPASSWORD", "dbSecret") or as a plural ("passwords:", "secrets:") but not as the prefix of an unrelated word
 // ("secretary", "tokenizer", "author"). A few storage suffixes glued on still count ("DBPASSWORDHASH", "MYSECRETVALUE";
 // PR #27 review).
-const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|keys|token|tokens|file|env|var';   // BEARERTOKEN too (PR #27)
+const STORE_SUFFIX = 'hash|value|val|str|string|text|data|enc|encrypted|b64|base64|plain|raw|key|keys|token|tokens|file|env|var|prod|production|dev|development|test|testing|staging|stage|qa|uat|live|local|sandbox|old|new|backup|bak|primary|secondary';   // environment suffixes too (APIKEYPROD; PR #27)   // BEARERTOKEN too (PR #27)
 const STRONG = new RegExp(`(password|passwd|pwd|passphrase|passcode|secret|credential|bearer|auth|pass)s?(?:${STORE_SUFFIX})?(?![a-z])`);
 // A compound must END at the end of a name part (optionally after a plural "s" or a storage suffix), so "cookiecutter"
 // is not a cookie; the generic-looking ones must also START at a part, so "monkeyvalue" and "hockeyname" stay plain,
@@ -871,8 +871,12 @@ function scrubMultipart(s, label, resolve) {
     const blank = s.indexOf('\n\n', m.index), blankCr = s.indexOf('\r\n\r\n', m.index);
     const start = blank < 0 ? (blankCr < 0 ? -1 : blankCr + 4) : (blankCr >= 0 && blankCr < blank ? blankCr + 4 : blank + 2);
     if (start < 0 || start - m.index > 4000) continue;
+    // Stop only at this part's own boundary line (the last "--x" line before the header); a body line that merely starts
+    // with "--" is content. With no boundary in sight the body runs to the end of the input (PR #27 review).
+    const before = s.slice(Math.max(0, m.index - 4000), m.index).split(/\r?\n/).reverse().find(l => /^--\S/.test(l));
+    const boundary = before ? before.trim() : null;
     let end = start;
-    while (end < s.length) { let le = s.indexOf('\n', end); if (le < 0) le = s.length; if (s.slice(end, le).startsWith('--')) break; end = le + 1; }
+    while (end < s.length) { let le = s.indexOf('\n', end); if (le < 0) le = s.length; const ln = s.slice(end, le).replace(/\r$/, '').trim(); if (boundary && (ln === boundary || ln === boundary + '--')) break; end = le + 1; }
     if (end > s.length) end = s.length;
     const body = s.slice(start, end).replace(/\r?\n$/, ''); if (body.trim()) ivs.push([start, start + body.length, 'SECRET']);
   }
@@ -898,7 +902,10 @@ function scrubXml(s, label, resolve) {
     // walk the closing tags inside the 64 KB window until this element's own one.
     let ci = closes.length; { let lo = 0, hi = closes.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (closes[mid] < open) lo = mid + 1; else hi = mid; } ci = lo; }
     let close = -1; const want = '</' + m[1] + '>';
-    for (let k = ci, n = 0; k < closes.length && closes[k] - open <= 65536 && n < 64; k++, n++) if (s.startsWith(want, closes[k])) { close = closes[k]; break; }
+    let k = ci, n = 0;
+    for (; k < closes.length && closes[k] - open <= 65536 && n < 256; k++, n++) if (s.startsWith(want, closes[k])) { close = closes[k]; break; }
+    // Too many nested closing tags to walk: take the rest of the 64 KB window rather than risk leaving the value (PR #27).
+    if (close < 0 && n >= 256) close = Math.min(s.length, open + 65536);
     if (close < 0) continue;
     const content = s.slice(open, close);
     if (content.trim() && !isPlaceholderValue(content)) { out += s.slice(at, open) + label('SECRET', content); at = close; }
@@ -1039,6 +1046,7 @@ const KEY_SHAPE_RE = new RegExp('\\b(?:' + KEY_SHAPES.join('|') + ')', 'g');
 
 const PATTERNS = [
   // Internationalised addresses too (usér@exämple.com, δοκιμή@παράδειγμα.δοκιμή): letters of any script, bounded classes.
+  ['EMAIL', /"[^"\n]{1,64}"@[\p{L}\p{N}.-]{1,253}\.\p{L}{2,63}(?![\p{L}\p{N}])/gu],   // quoted local part ("john doe"@x.com; PR #27)
   ['EMAIL', /(?<![\p{L}\p{N}])[\p{L}\p{N}._%+-]{1,64}@[\p{L}\p{N}.-]{1,253}\.\p{L}{2,63}(?![\p{L}\p{N}])/gu],
   ['CARD', /\b(?:\d[ -]?){12,18}\d\b/g],
   ['SSN', /\b\d{3}-\d{2}-\d{4}\b/g],

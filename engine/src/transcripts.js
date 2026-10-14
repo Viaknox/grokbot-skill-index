@@ -53,7 +53,9 @@ const similar = (a, b) => { const A = words(a), B = words(b); if (A.size < 3 || 
 const ACTION = /^\[(?:(?:the )?user (?:has )?)?(?:submitted|entered|attached|uploaded|pasted|shared|selected|clicked|pressed|saved|redacted|filled)\b[^\]\n?!]{0,60}\]$/i;
 const MEDIA_NOTE = /^\[(?:image|photo|file|screenshot|audio|voice note|voice message|video|attachment|document|sticker|gif)(?: (?:attached|uploaded|omitted|sent|shared|removed))?(?::([^\]\n]{1,80}))?\]$/i;
 // A file name has at most four words, so a typed request that ends in one ("…an image of cat.jpg") is not metadata (PR #27).
-const ITEM = String.raw`(?:[\w.()-]+(?: [\w.()-]+){0,3}\.(?=[0-9]{0,4}[a-z])[a-z0-9]{1,5}|\d+(?:\.\d+)?\s?(?:bytes|kb|mb|gb|b)|\d+x\d+|\d+:\d\d)`;
+// …and no word of it is an everyday request word ("please send report.pdf", "draw cat.png" are typed asks; PR #27).
+const ASK_WORD = String.raw`(?!(?:please|send|draw|make|show|give|get|create|write|find|open|me|a|an|the|of|can|you|could|would)\s)`;
+const ITEM = String.raw`(?:${ASK_WORD}[\w.()-]+(?: ${ASK_WORD}[\w.()-]+){0,3}\.(?=[0-9]{0,4}[a-z])[a-z0-9]{1,5}|\d+(?:\.\d+)?\s?(?:bytes|kb|mb|gb|b)|\d+x\d+|\d+:\d\d)`;
 const LIST = String.raw`${ITEM}(?:\s*[,;]\s*${ITEM})*`;
 const METADATA = new RegExp(String.raw`^\s*(?:${LIST})?(?:\s*\(\s*${LIST}\s*\))?\s*$`, 'i');
 const looksLikeMetadata = (rest) => rest.trim() !== '' && METADATA.test(rest);
