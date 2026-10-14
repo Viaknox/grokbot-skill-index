@@ -750,3 +750,7 @@ test('[best-effort] viaknox PR #27 round 22: vault login token, cc-csc fields; t
     assert.ok(!/dev-only-token|922|hunter22/.test(scrubber().sanitize(x).text), x);
   for (const x of ['max_output_tokens=1024', 'max_completion_tokens=1024', 'cached_input_tokens=500']) assert.equal(scrubber().sanitize(x).text, x);
 });
+test('[promised] viaknox PR #27 round 23: a name ending in token is a credential unless a count word says otherwise', () => {
+  for (const x of ['ROTATION_TOKEN=hunter22', 'RESPONSE_TOKEN=hunter22']) assert.ok(!scrubber().sanitize(x).text.includes('hunter22'), x);
+  for (const x of ['max_output_tokens=1024', 'usage_tokens=5', 'token_rotation_policy=30d', 'tokenLimit=10']) assert.equal(scrubber().sanitize(x).text, x);
+});

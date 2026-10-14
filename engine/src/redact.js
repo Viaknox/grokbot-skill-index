@@ -152,7 +152,10 @@ const WHOLE = new Set(['pass', 'pw', 'pin', 'otp', 'creds', 'cred', 'session', '
 // "key"/"keys" as the LAST part of a multi-part name is a credential (ssh_key, signing-key, iam-key) unless the part
 // before it says the key is structural, not secret (public_key, primary_key, cache_key…). A bare "key:" stays plain.
 const STRUCTURAL_KEY = new Set(['public', 'foreign', 'primary', 'sort', 'partition', 'hash', 'cache', 'row', 'index', 'composite', 'idempotency', 'dedup', 'translation', 'i18n', 'shortcut', 'hot', 'map', 'dict', 'object', 'array', 'lookup']);
-const USAGE = new Set(['output', 'input', 'completion', 'completions', 'cached', 'prompt', 'context', 'reasoning', 'generation', 'response', 'total', 'used', 'remaining', 'limit', 'limits', 'budget', 'count', 'counts', 'usage', 'size', 'max', 'min', 'window', 'rate', 'length', 'cost', 'costs', 'price', 'per', 'requirements', 'policy', 'rotation', 'economy']);
+// Words that only ever describe token COUNTS, checked anywhere in the name (max_output_tokens); words such as rotation or
+// policy describe a credential's lifecycle and are only checked next to "token" (ROTATION_TOKEN stays a credential; PR #27).
+const TOKEN_COUNT = new Set(['max', 'min', 'output', 'input', 'completion', 'completions', 'cached', 'prompt', 'context', 'reasoning', 'total', 'used', 'usage', 'remaining', 'count', 'counts', 'limit', 'limits', 'budget']);
+const USAGE = new Set(['limit', 'limits', 'budget', 'count', 'counts', 'usage', 'size', 'max', 'min', 'window', 'rate', 'length', 'cost', 'costs', 'price', 'per', 'requirements', 'policy', 'rotation', 'economy']);
 function nameParts(name) {
   // Split on separators, camelCase, AND letter/digit boundaries, so "PASSWORD2" and "api_key_v2" break into whole
   // words ("password", "2") while "secretary" and "tokenizer" stay single parts and are not credentials.
@@ -180,7 +183,9 @@ function credParts(parts) {
     // still seen (viaknox PR #27 review).
     if (/^\d+$/.test(parts[i + 1] || '') && STRONG.test(p + parts[i + 1])) return true;
     // A usage word anywhere in the name keeps it a setting (max_output_tokens, cached_input_tokens; PR #27 review).
-    if (/^tokens?$/.test(p)) return !parts.some(q => USAGE.has(q));
+    // When "token" is the last part, the name IS a token (ROTATION_TOKEN) unless a count word says otherwise; when more
+    // follows it (token_rotation_policy), the usual usage words next to it make it a setting.
+    if (/^tokens?$/.test(p)) return !parts.some(q => TOKEN_COUNT.has(q)) && (i === parts.length - 1 || (!USAGE.has(parts[i + 1] || '') && !USAGE.has(parts[i - 1] || '')));
     return false;
   });
 }
