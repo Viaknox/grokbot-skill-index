@@ -1254,3 +1254,13 @@ test('r68: whole links even with a never-send term inside; ChatGPT workspace sha
   const d = scrubber().sanitize('old link https://chat.openai.com/share/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718x9Q ok');
   assert.ok(!d.text.includes('68e0f1a2'), d.text); assert.match(d.text, /\[LINK_1\]/);
 });
+
+test('r69: the rest of a share link (path tail, query) is redacted with it: Drive open?id=, Figma t=, resourcekey (viaknox PR #31 review)', () => {
+  for (const [u, bits] of [['https://drive.google.com/open?id=1sd4D8rRF1Bv0Yumc9N6ENzC8xUlSHKS0&usp=sharing', ['1sd4D8rR']],
+    ['http://figma.com/file/Xhi0lg09reehpFWk4f9NQh/file-name?node-id=211-2665&t=D5QnxlouJ9sKF1dM-0&thumbnails-only=1', ['Xhi0lg09', 'D5Qnxlou']],
+    ['https://drive.google.com/file/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view?usp=sharing&resourcekey=0-JI_CQrZzk6ZkIu1Uqn3s_w', ['1tQe2R9', 'JI_CQrZ']]]) {
+    const s = scrubber(); const r = s.sanitize('see ' + u + '. ok');
+    assert.equal(r.held, false, r.text); for (const b of bits) assert.ok(!r.text.includes(b), r.text);
+    assert.match(r.text, /^see \[LINK_1\]\. ok$/); assert.equal(s.unscrub('[LINK_1]'), u);
+  }
+});

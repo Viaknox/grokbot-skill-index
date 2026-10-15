@@ -1502,14 +1502,14 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
   + '|(?:' + ci('chatgpt.com') + '|' + ci('chat.openai.com') + ')/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings|videos)/(?:u/\\d{1,2}/)?d/(?:e/)?'
-  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/)'
+  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/|(?:open|uc)\\?(?:[A-Za-z0-9_\\-.=%~+]*&)?id=)'   // also /open?id=<id> (viaknox PR #31 review)
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
   + ')' + SEG
-  // A Drive/Docs query that carries a resourcekey (part of the access, developers.google.com/workspace/drive/api/guides/resource-keys)
-  // goes into [LINK_n] with the link; any other query stays outside and is scanned (viaknox PR #31 review).
-  + '(?:(?:/[A-Za-z]{1,20})?\\?(?:[A-Za-z0-9_\\-.=%~+]*&)?resourcekey=[A-Za-z0-9_\\-]+(?:&[A-Za-z0-9_\\-.=%~+]*)*)?', 'gu');
+  // The rest of the link's path and its query go into [LINK_n] too: a Drive resourcekey, Figma's generated t=, a
+  // node-id. Redacted, never sent, so nothing in them needs scanning (viaknox PR #31 review). A trailing "." stays outside.
+  + '(?:/' + SEG + ')*(?:[?&][A-Za-z0-9_\\-.=%~+&]*[A-Za-z0-9_\\-=%~+&])?', 'gu');
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
