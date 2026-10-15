@@ -1502,14 +1502,13 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
   + '|(?:' + ci('chatgpt.com') + '|' + ci('chat.openai.com') + ')/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings|videos)/(?:u/\\d{1,2}/)?d/(?:e/)?'
-  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/)'
+  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/|(?:open|uc)\\?(?:[A-Za-z0-9_\\-.=%~+]*&)*id=)'   // also /open?id=<id> (viaknox PR #31 review)
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
-  + ')' + SEG
-  // A Drive/Docs query that carries a resourcekey (part of the access, developers.google.com/workspace/drive/api/guides/resource-keys)
-  // goes into [LINK_n] with the link; any other query stays outside and is scanned (viaknox PR #31 review).
-  + '(?:(?:/[A-Za-z]{1,20})?\\?(?:[A-Za-z0-9_\\-.=%~+]*&)?resourcekey=[A-Za-z0-9_\\-]+(?:&[A-Za-z0-9_\\-.=%~+]*)*)?', 'gu');
+  + ')' + SEG, 'gu');
+// A [LINK_n] placeholder followed by more of its URL: path segments and a query, up to whitespace or another placeholder.
+const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:\/[^\s\/?#\uE000\uE001"'<>]+)*\/?(?:[?&][^\s#\uE000\uE001"'<>]*)?(?:#[^\s\uE000\uE001"'<>]*)?)/g;
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
@@ -1640,6 +1639,8 @@ export function scrubber({ terms = [] } = {}) {
         core = qm ? qm[2] : core.replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
         // The decoded spelling too ("hunter\u0074wo" is echoed as huntertwo; PR #16 review).
         if (/[\\%&]/.test(core)) { const dec = decodeName(core); if (dec !== core && dec.trim().length >= 3) inventory.push({ kind, value: dec }); }
+        // Form encoding: a query value's "+" is a space (password=correct+horse+battery; tune-up PR #22 review).
+        if (/^\S*\+\S*$/.test(core)) { const sp = decodeName(core.replace(/\+/g, ' ')); if (sp.trim().length >= 3) inventory.push({ kind, value: sp }); }
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
         // Only when a comment or a sibling setting really follows: spaces alone may be part of the credential
@@ -1703,6 +1704,11 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubLineForms(s, label, resolve);
     s = scrubCallArg(s, label, resolve);
     s = scrubBareAuth(s, label);
+    // The rest of a share link (more path, the query: a Drive resourcekey, Figma's t=, a redirect) is taken only now,
+    // after every credential rule has run on it (?password=…, /password/…), so those are still found and inventoried;
+    // whatever is left joins the link as its own [LINK_n] and is never sent (tune-up PR #22 review). A trailing "." or ","
+    // stays outside.
+    s = s.replace(LINK_TAIL, (m, ph, tail) => { const t = tail.replace(/[.,;:!?)\]'"]+$/, ''); return t ? ph + label('LINK', t) + tail.slice(t.length) : m; });
     // Any quoted string carrying an escaped quote (\") is a smuggling attempt: scrub the whole string. Benign values
     // like "jo" have no escaped quote and stay. The pattern is the classic linear JSON-string match.
     s = s.replace(/"(?:\\.|[^"\\\n])*"/g, (m) => (/\\"/.test(m) ? label('SECRET', m) : m));

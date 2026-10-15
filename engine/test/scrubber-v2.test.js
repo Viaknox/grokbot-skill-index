@@ -1254,3 +1254,50 @@ test('r68: whole links even with a never-send term inside; ChatGPT workspace sha
   const d = scrubber().sanitize('old link https://chat.openai.com/share/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718x9Q ok');
   assert.ok(!d.text.includes('68e0f1a2'), d.text); assert.match(d.text, /\[LINK_1\]/);
 });
+
+test('r69: the rest of a share link (path tail, query) is redacted with it: Drive open?id=, Figma t=, resourcekey (viaknox PR #31 review)', () => {
+  for (const [u, bits] of [['https://drive.google.com/open?id=1sd4D8rRF1Bv0Yumc9N6ENzC8xUlSHKS0&usp=sharing', ['1sd4D8rR']],
+    ['http://figma.com/file/Xhi0lg09reehpFWk4f9NQh/file-name?node-id=211-2665&t=D5QnxlouJ9sKF1dM-0&thumbnails-only=1', ['Xhi0lg09', 'D5Qnxlou']],
+    ['https://drive.google.com/file/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view?usp=sharing&resourcekey=0-JI_CQrZzk6ZkIu1Uqn3s_w', ['1tQe2R9', 'JI_CQrZ']]]) {
+    const s = scrubber(); const r = s.sanitize('see ' + u + '. ok');
+    assert.equal(r.held, false, r.text); for (const b of bits) assert.ok(!r.text.includes(b), r.text);
+    assert.match(r.text, /^see (?:\[LINK_\d+\])+\. ok$/); assert.equal(s.unscrub(r.text), 'see ' + u + '. ok');   // the link round-trips exactly
+  }
+});
+
+test('r70: a credential in a share link\'s query is still found when repeated; Drive uc with several params (viaknox PR #33 review)', () => {
+  const s = scrubber(); const r = s.sanitize('User: https://docs.google.com/document/d/abc/edit?password=hunter2\nBot: hunter2');
+  assert.ok(!r.text.includes('hunter2'), r.text);
+  for (const [u, said] of [['api+key=hunter2', 'hunter2'], ['password=correct+horse+battery', 'correct horse battery'], ['pass%77ord=s3cr%21t', 's3cr!t']]) {
+    const t = scrubber().sanitize('User: https://docs.google.com/document/d/abc/edit?' + u + '\nBot: ' + said);
+    assert.ok(!t.text.includes(said), u + ' -> ' + t.text);
+  }
+  const d = scrubber().sanitize('get https://drive.google.com/uc?export=download&confirm=t&id=1sd4D8rRF1Bv0Yumc9N6ENzC8xUlSHKS0 now');
+  assert.equal(d.held, false, d.text); assert.ok(!d.text.includes('1sd4D8rR'), d.text);
+});
+
+test('r71: the rest of a share link is taken after the credential rules, so they still see it (tune-up PR #22 review)', () => {
+  const D = 'https://docs.google.com/document/d/abc';
+  const r1 = scrubber().sanitize('see ' + D + '/edit?redirect=https://private.example/path ok');
+  assert.ok(!r1.text.includes('private.example'), r1.text);
+  const r2 = scrubber().sanitize(D + '/edit?password=!hunter2');
+  assert.ok(!r2.text.includes('hunter2'), r2.text);
+  for (const [tail, said] of [['/edit/password/hunter2', 'hunter2'], ['/edit?pass%77ord=hunter2', 'hunter2'], ['/edit?password=%ZZhunter%32', '%ZZhunter2'],
+    ['/edit?sig=hunter2xyz', 'hunter2xyz'], ['/edit?code=hunter2xyz', 'hunter2xyz'], ['/edit?key=hunter2xyz', 'hunter2xyz']]) {
+    const r = scrubber().sanitize('User: ' + D + tail + '\nBot: ' + said);
+    assert.ok(!r.text.split('\n')[1].includes(said), tail + ' -> ' + r.text);
+  }
+});
+
+test('r72: secrets and PII in a share link query are counted and inventoried like any other (tune-up PR #22 review on eaf75f8)', () => {
+  const L = 'https://claude.ai/share/abcd-1234';
+  const s1 = scrubber(); s1.sanitize(L + '?password=hunter2');
+  assert.equal(s1.counts().SECRET, 1);
+  for (const q of ['?this_is_a_very_long_application_namespace_for_the_primary_database_password=hunter2', '?next=password=hunter2']) {
+    const r = scrubber().sanitize('User: ' + L + q + '\nBot: hunter2');
+    assert.ok(!r.text.includes('hunter2'), q + ' -> ' + r.text);
+  }
+  for (const q of ['?password=/hunter2', '?password=#hunter2']) assert.ok(!scrubber().sanitize(L + q + ' ok').text.includes('hunter2'), q);   // viaknox #33 security review
+  const r = scrubber().sanitize('User: ' + L + '?contact=415-555-2671\nBot: 415-555-2671');
+  assert.match(r.text, /Bot: \[PHONE_1\]$/);
+});
