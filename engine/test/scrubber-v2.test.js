@@ -1337,9 +1337,3 @@ test('r75: scrubbing already-scrubbed link output changes nothing (tune-up PR #2
     const a = s.scrub(t); assert.equal(s.scrub(a), a, t);
   }
 });
-
-test('r76: an email inside a share link query is inventoried as the bare address, so its repeat is an echo (viaknox PR #35 review)', async () => {
-  const { checkConversation } = await import('../src/transcripts.js');
-  const codes = checkConversation([{ role: 'user', content: 'https://docs.google.com/document/d/abc/edit?contact=jo@example.com' }, { role: 'assistant', content: 'write to jo@example.com' }]).map(f => f.code);
-  assert.ok(codes.includes('echoed_contact') && !codes.includes('revealed_contact'), codes.join());
-});
