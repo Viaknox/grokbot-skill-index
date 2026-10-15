@@ -1508,6 +1508,7 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
   + ')' + SEG, 'gu');
 // A [LINK_n] placeholder followed by more of its URL: path segments and a query, up to whitespace or another placeholder.
+const TRAIL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', ']', "'", '"']);
 const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:\/[^\s\/?#\uE000\uE001"'<>]+)*\/?(?:[?&][^\s#\uE000\uE001"'<>]*)?(?:#[^\s\uE000\uE001"'<>]*)?)/g;
 
 export function residual(text, { terms = [] } = {}) {
@@ -1619,6 +1620,10 @@ export function scrubber({ terms = [] } = {}) {
   const next = {};                   // last placeholder number handed out, per kind
   const reserved = new Map();        // kind -> numbers that already appeared as literal [KIND_n] text in some input
   const inventory = [];              // { kind, value } of every value scrubbed, for echoes()
+  // ID-like pieces of a share link (its ID, a path segment, a query value such as Figma t=) are inventoried on their own,
+  // so a later bare repeat of one is replaced too, not only a repeat of the whole link (tune-up PR #22 follow-up).
+  // Plain words (edit, sharing, resourcekey) are left alone: a piece must be 8+ characters with a digit, or 16+.
+  const linkPieces = (v) => { for (const p of v.split(/[\/?&#=:]+/)) if (!/[\uE000\uE001]/.test(p) && ((p.length >= 8 && /\d/.test(p)) || p.length >= 16) && !/^https?$/i.test(p) && !/\./.test(p)) inventory.push({ kind: 'LINK', value: p }); };
   const ambiguous = new Set();       // public [KIND_n] we minted that later also arrived as literal text: never restored
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
@@ -1672,7 +1677,7 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
     // Share links first, before any rule inserts a placeholder inside one (a never-send term in a Notion title would
     // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
-    s = s.replace(SHARE_LINK, (m) => label('LINK', m));
+    s = s.replace(SHARE_LINK, (m) => { linkPieces(m); return label('LINK', m); });
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
@@ -1708,7 +1713,9 @@ export function scrubber({ terms = [] } = {}) {
     // after every credential rule has run on it (?password=…, /password/…), so those are still found and inventoried;
     // whatever is left joins the link as its own [LINK_n] and is never sent (tune-up PR #22 review). A trailing "." or ","
     // stays outside.
-    s = s.replace(LINK_TAIL, (m, ph, tail) => { const t = tail.replace(/[.,;:!?)\]'"]+$/, ''); return t ? ph + label('LINK', t) + tail.slice(t.length) : m; });
+    // Trailing punctuation is trimmed with a loop, not /[...]+$/: that regex restarts at every position of a long run that
+    // is followed by another character, which is quadratic (a 300 KB run stalled for minutes; tune-up PR #22 follow-up).
+    s = s.replace(LINK_TAIL, (m, ph, tail) => { let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; linkPieces(t); return ph + label('LINK', t) + tail.slice(e); });
     // Any quoted string carrying an escaped quote (\") is a smuggling attempt: scrub the whole string. Benign values
     // like "jo" have no escaped quote and stay. The pattern is the classic linear JSON-string match.
     s = s.replace(/"(?:\\.|[^"\\\n])*"/g, (m) => (/\\"/.test(m) ? label('SECRET', m) : m));
@@ -1733,7 +1740,7 @@ export function scrubber({ terms = [] } = {}) {
     // A value wrapping a never-send placeholder (password=Acme-x is [PRIVATE_1]-x) still recurs as that same text, so it
     // stays eligible; the part outside the placeholder must still be at least four characters (PR #16 review).
     const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 3; };
-    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
+    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY' || e.kind === 'LINK') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
     // settings), and

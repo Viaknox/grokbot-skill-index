@@ -1301,3 +1301,15 @@ test('r72: secrets and PII in a share link query are counted and inventoried lik
   const r = scrubber().sanitize('User: ' + L + '?contact=415-555-2671\nBot: 415-555-2671');
   assert.match(r.text, /Bot: \[PHONE_1\]$/);
 });
+
+test('r73: long punctuation after a share link stays linear; link IDs and tail values are caught when repeated bare (tune-up PR #22 follow-up)', () => {
+  const L = 'https://claude.ai/share/abcd-1234-efgh-5678';
+  for (const v of [L + '?x=' + '!,'.repeat(150000) + 'a', L + '/' + '.'.repeat(300000) + 'a']) {
+    const t = Date.now(); scrubber().sanitize(v); assert.ok(Date.now() - t < 1500, 'took ' + (Date.now() - t) + ' ms');
+  }
+  const s = scrubber(); s.sanitize(L + '/ZZpathseg9988?t=ZZnonCred9988');
+  const r = s.sanitize('bare ZZpathseg9988, ZZnonCred9988 and abcd-1234-efgh-5678');
+  for (const v of ['ZZpathseg9988', 'ZZnonCred9988', 'abcd-1234-efgh-5678']) assert.ok(!r.text.includes(v), r.text);
+  const d = scrubber().sanitize('https://docs.google.com/document/d/1AbCdEfGh/edit?usp=sharing then edit sharing usp');
+  assert.match(d.text, /then edit sharing usp$/);
+});
