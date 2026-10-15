@@ -1497,7 +1497,7 @@ function shannon(str) {
 // Scheme and host match in any case; routes are case-sensitive (a look-alike claude.ai/ARTIFACT/… is scanned, not
 // taken). Nothing glued to a letter, mark or digit of any script counts as a link start (tune-up PR #21 review).
 const ci = (h) => h.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`).replace(/\./g, '\\.');
-const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*(?:[A-Za-z0-9_\\-]|%[0-9A-Fa-f]{2})';   // never ends on ".": a sentence's full stop stays outside; "_" and "-" can end a real ID (Drive IDs are opaque)
+const SEG = '(?:[\\p{L}\\p{M}\\p{N}_\\-.]|%[0-9A-Fa-f]{2})*(?:[\\p{L}\\p{M}\\p{N}_\\-]|%[0-9A-Fa-f]{2})';   // letters of any script (Notion: Café-<id>); never ends on "." (a full stop stays outside), may end on _ or - (opaque Drive IDs) (tune-up PR #21 review)
 const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?://(?:'
   + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
   + '|(?:' + ci('chatgpt.com') + '|' + ci('chat.openai.com') + ')/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
