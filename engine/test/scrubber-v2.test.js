@@ -1222,3 +1222,11 @@ test('r66: share links are replaced whole by [LINK_n], so the ID never reaches t
   const r = s.sanitize('éhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm');
   assert.ok(r.held || !r.text.includes('kQzPbXwR'), r.text);
 });
+
+test('r67: [LINK_n] is a reserved placeholder: a literal one is never restored to the real link (tune-up PR #21 review, P1)', () => {
+  const s = scrubber(); const url = 'https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit';
+  assert.equal(s.unscrub(s.scrub('see ' + url)), 'see ' + url);
+  s.scrub('the user typed [LINK_1] literally');
+  assert.ok(!s.unscrub('echo [LINK_1]').includes('1aBcDeFg'));
+  assert.ok(!scrubber().scrub('[LINK_1] then ' + url).includes('[LINK_1] then [LINK_1]'));   // our own numbering skips a literal one
+});

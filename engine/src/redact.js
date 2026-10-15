@@ -19,7 +19,7 @@ const OPEN = '\uE000', CLOSE = '\uE001';
 const SENT = /\uE000([A-Z]+)_(\d+)\uE001/g;
 // Only the kinds this scrubber mints are reserved tokens: a value such as `password=[ATTACK_1]` is live data, not a
 // placeholder, and must be scrubbed and residual-checked like any other (PR #16 review).
-const PUB = /\[(KEY|SECRET|PRIVATE|EMAIL|CARD|SSN|PHONE|IP)_(\d+)\]/g;
+const PUB = /\[(KEY|SECRET|PRIVATE|EMAIL|CARD|SSN|PHONE|IP|LINK)_(\d+)\]/g;
 
 // Characters attackers insert to hide a credential NAME from a word match. We strip/normalise these only to decide
 // "is this a credential"; the output text itself is never changed except by replacement.
