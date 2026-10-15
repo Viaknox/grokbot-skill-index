@@ -1323,8 +1323,9 @@ test('r74: link tail runs after key/PII rules, passes over placeholders; Drive p
   assert.ok(!p.text.includes('abc123') && !p.text.includes('resourcekey'), p.text);
   const d = scrubber().sanitize('User: https://drive.google.com/open?password=hunter2&id=abc123\nBot: hunter2');
   assert.ok(!d.text.includes('hunter2') && !d.text.includes('abc123'), d.text);
-  const s = scrubber(); s.sanitize('PASSWORD=red+green+blue');
-  assert.equal(s.sanitize('The colors are red green blue').text, 'The colors are red green blue');
+  // A form body has no ? to mark it, so + is decoded for every secret: missing the echo would leak (viaknox PR #35 review).
+  const s = scrubber(); s.sanitize('password=correct+horse+battery');
+  assert.ok(!s.sanitize('it is correct horse battery').text.includes('horse'));
   const q = scrubber(); q.sanitize(L + '?password=correct+horse+battery');
   assert.ok(!q.sanitize('it was correct horse battery').text.includes('horse'));
   const t = scrubber().sanitize(L + '//ZZdbl9988 ok');

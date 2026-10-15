@@ -1390,7 +1390,7 @@ function scrubQuery(s, label, resolve) {
   // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
   return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
-    return (!QUERY_NAMES.has(n.toLowerCase()) && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v, true);
+    return (!QUERY_NAMES.has(n.toLowerCase()) && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
   });
 }
 
@@ -1639,7 +1639,7 @@ export function scrubber({ terms = [] } = {}) {
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
   // indistinguishable. counts() still reports distinct values only; numbering just skips the reserved ones.
-  const label = (kind, value, form = false) => {
+  const label = (kind, value) => {
     const k = kind + '\u0000' + value;
     if (!seen.has(k)) {
       let n = (next[kind] || 0) + 1; while (reserved.has(kind) && reserved.get(kind).has(n)) n++;
@@ -1655,9 +1655,10 @@ export function scrubber({ terms = [] } = {}) {
         core = qm ? qm[2] : core.replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
         // The decoded spelling too ("hunter\u0074wo" is echoed as huntertwo; PR #16 review).
         if (/[\\%&]/.test(core)) { const dec = decodeName(core); if (dec !== core && dec.trim().length >= 3) inventory.push({ kind, value: dec }); }
-        // Form encoding: a query value's "+" is a space (password=correct+horse+battery; tune-up PR #22 review). Only for
-        // query values: a literal + in PASSWORD=red+green+blue is not a space (PR #22 post-merge review).
-        if (form && /^\S*\+\S*$/.test(core)) { const sp = decodeName(core.replace(/\+/g, ' ')); if (sp.trim().length >= 3) inventory.push({ kind, value: sp }); }
+        // Form encoding: a query value's "+" is a space (password=correct+horse+battery; tune-up PR #22 review). Applied to every
+        // secret, not just query values: a pasted form body (password=correct+horse+battery) has no ? to mark it, and a
+        // missed decoded echo is a leak while an extra one only over-redacts (viaknox PR #35 security review).
+        if (/^\S*\+\S*$/.test(core)) { const sp = decodeName(core.replace(/\+/g, ' ')); if (sp.trim().length >= 3) inventory.push({ kind, value: sp }); }
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
         // Only when a comment or a sibling setting really follows: spaces alone may be part of the credential
