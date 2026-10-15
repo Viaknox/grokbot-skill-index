@@ -1506,10 +1506,9 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
-  + ')' + SEG
-  // The rest of the link's path and its query go into [LINK_n] too: a Drive resourcekey, Figma's generated t=, a
-  // node-id. Redacted, never sent, so nothing in them needs scanning (viaknox PR #31 review). A trailing "." stays outside.
-  + '(?:/' + SEG + ')*(?:[?&][A-Za-z0-9_\\-.=%~+&]*[A-Za-z0-9_\\-=%~+&])?', 'gu');
+  + ')' + SEG, 'gu');
+// A [LINK_n] placeholder followed by more of its URL: path segments and a query, up to whitespace or another placeholder.
+const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:\/[^\s\/?#\uE000\uE001"'<>]+)*\/?(?:[?&][^\s#\uE000\uE001"'<>]*)?(?:#[^\s\uE000\uE001"'<>]*)?)/g;
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
@@ -1640,6 +1639,8 @@ export function scrubber({ terms = [] } = {}) {
         core = qm ? qm[2] : core.replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
         // The decoded spelling too ("hunter\u0074wo" is echoed as huntertwo; PR #16 review).
         if (/[\\%&]/.test(core)) { const dec = decodeName(core); if (dec !== core && dec.trim().length >= 3) inventory.push({ kind, value: dec }); }
+        // Form encoding: a query value's "+" is a space (password=correct+horse+battery; tune-up PR #22 review).
+        if (/^\S*\+\S*$/.test(core)) { const sp = decodeName(core.replace(/\+/g, ' ')); if (sp.trim().length >= 3) inventory.push({ kind, value: sp }); }
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
         // Only when a comment or a sibling setting really follows: spaces alone may be part of the credential
@@ -1671,17 +1672,7 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
     // Share links first, before any rule inserts a placeholder inside one (a never-send term in a Notion title would
     // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
-    // A credential in the link's query (?password=…, &token=…) is inventoried first, so a bare repeat elsewhere is still
-    // replaced as a secret (viaknox PR #33 review).
-    s = s.replace(SHARE_LINK, (m) => {
-      // Form encoding too: "+" is a space and %XX an escape, in the name and the value (api+key=…; viaknox PR #33 review).
-      const dec = (/** @type {string} */ x, plus) => { const y = plus ? x.replace(/\+/g, ' ') : x; try { return decodeURIComponent(y); } catch { return y; } };
-      for (const q of m.matchAll(/[?&]([A-Za-z0-9_.%+\-]{1,64})=([^&#\s]{3,})/g)) {
-        if (!isCredentialName(dec(q[1], true)) && !isCredentialName(q[1])) continue;
-        for (const x of new Set([q[2], dec(q[2], false), dec(q[2], true)])) if (x.length >= 3) inventory.push({ kind: 'SECRET', value: x });
-      }
-      return label('LINK', m);
-    });
+    s = s.replace(SHARE_LINK, (m) => label('LINK', m));
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
@@ -1713,6 +1704,11 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubLineForms(s, label, resolve);
     s = scrubCallArg(s, label, resolve);
     s = scrubBareAuth(s, label);
+    // The rest of a share link (more path, the query: a Drive resourcekey, Figma's t=, a redirect) is taken only now,
+    // after every credential rule has run on it (?password=…, /password/…), so those are still found and inventoried;
+    // whatever is left joins the link as its own [LINK_n] and is never sent (tune-up PR #22 review). A trailing "." or ","
+    // stays outside.
+    s = s.replace(LINK_TAIL, (m, ph, tail) => { const t = tail.replace(/[.,;:!?)\]'"]+$/, ''); return t ? ph + label('LINK', t) + tail.slice(t.length) : m; });
     // Any quoted string carrying an escaped quote (\") is a smuggling attempt: scrub the whole string. Benign values
     // like "jo" have no escaped quote and stay. The pattern is the classic linear JSON-string match.
     s = s.replace(/"(?:\\.|[^"\\\n])*"/g, (m) => (/\\"/.test(m) ? label('SECRET', m) : m));

@@ -1261,7 +1261,7 @@ test('r69: the rest of a share link (path tail, query) is redacted with it: Driv
     ['https://drive.google.com/file/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view?usp=sharing&resourcekey=0-JI_CQrZzk6ZkIu1Uqn3s_w', ['1tQe2R9', 'JI_CQrZ']]]) {
     const s = scrubber(); const r = s.sanitize('see ' + u + '. ok');
     assert.equal(r.held, false, r.text); for (const b of bits) assert.ok(!r.text.includes(b), r.text);
-    assert.match(r.text, /^see \[LINK_1\]\. ok$/); assert.equal(s.unscrub('[LINK_1]'), u);
+    assert.match(r.text, /^see (?:\[LINK_\d+\])+\. ok$/); assert.equal(s.unscrub(r.text), 'see ' + u + '. ok');   // the link round-trips exactly
   }
 });
 
@@ -1274,4 +1274,17 @@ test('r70: a credential in a share link\'s query is still found when repeated; D
   }
   const d = scrubber().sanitize('get https://drive.google.com/uc?export=download&confirm=t&id=1sd4D8rRF1Bv0Yumc9N6ENzC8xUlSHKS0 now');
   assert.equal(d.held, false, d.text); assert.ok(!d.text.includes('1sd4D8rR'), d.text);
+});
+
+test('r71: the rest of a share link is taken after the credential rules, so they still see it (tune-up PR #22 review)', () => {
+  const D = 'https://docs.google.com/document/d/abc';
+  const r1 = scrubber().sanitize('see ' + D + '/edit?redirect=https://private.example/path ok');
+  assert.ok(!r1.text.includes('private.example'), r1.text);
+  const r2 = scrubber().sanitize(D + '/edit?password=!hunter2');
+  assert.ok(!r2.text.includes('hunter2'), r2.text);
+  for (const [tail, said] of [['/edit/password/hunter2', 'hunter2'], ['/edit?pass%77ord=hunter2', 'hunter2'], ['/edit?password=%ZZhunter%32', '%ZZhunter2'],
+    ['/edit?sig=hunter2xyz', 'hunter2xyz'], ['/edit?code=hunter2xyz', 'hunter2xyz'], ['/edit?key=hunter2xyz', 'hunter2xyz']]) {
+    const r = scrubber().sanitize('User: ' + D + tail + '\nBot: ' + said);
+    assert.ok(!r.text.split('\n')[1].includes(said), tail + ' -> ' + r.text);
+  }
 });
