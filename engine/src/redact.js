@@ -1506,7 +1506,7 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{N}])' + ci('http') + '[sS]?://(?:'
   + '|' + ci('chatgpt.com') + '/(?:g/' + SEG + '/c/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings)/(?:u/\\d{1,2}/)?d/(?:e/)?'
   + '|' + ci('drive.google.com') + '/(?:file/d/|drive/(?:u/\\d{1,2}/)?folders/)'
-  + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides)/'
+  + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/)' + SEG
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|([A-Za-z0-9-]{1,63})\\.' + ci('notion.site') + ')/([A-Za-z0-9_-]{1,64}/)?(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*?[0-9a-f]{32}(?![A-Za-z0-9_\\-.%]))', 'gu');
 
