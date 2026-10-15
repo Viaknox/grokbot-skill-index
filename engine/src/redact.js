@@ -418,11 +418,11 @@ const ASSIGN_START = new RegExp(
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
   // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review). A C# accessor block too
-  // (public string Password { get; set; } = "x"; PR #27 review).
+  // (public string Password { get; set; } = "x"; PR #27 review), also spread over several lines (viaknox PR #28 review).
   // Each whitespace run is matched atomically ((?=(x*))\N), so a credential word followed by thousands of spaces is
   // read once instead of being re-split between adjacent runs (that was cubic; PR #16 review). Groups 3-6 are only
   // these runs; callers use m[0], m[1] and m[2].
-  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:\\{(?:[ \\t]*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)[ \\t]*;){1,3}[ \\t]*\\}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:[ \\t\\r\\n]*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)[ \\t\\r\\n]*;){1,3}[ \\t\\r\\n]*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -545,8 +545,11 @@ function scrubLineForms(s, label, resolve) {
       if (vStart >= at && s.slice(vStart, end).trim() && !isPlaceholderValue(s.slice(vStart, end))) { out += s.slice(at, vStart) + label('SECRET', s.slice(vStart, end)); at = end; nl = Math.max(nl, end); }
       // A credential-first CSV header (password,username) also starts a table, so the rows below lose their credential
       // cells too (PR #27 review). The rest of the header line still goes, which errs on the safe side.
-      const hcells = line.split(',');
-      if (!csv && hcells.length >= 2 && hcells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
+      // The header is split with the quote-aware CSV parser so it counts columns the same way as the rows below
+      // (password,"last,name" is two columns; viaknox PR #28 review).
+      const hcells = csvRow(line, 0).cells.map(([a, b]) => line.slice(a, b));
+      const cellOk = (c) => { const q = /^[ \t]*"([^"]*)"[ \t]*$/.exec(c); const v = q ? q[1].replace(/,/g, ' ') : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
+      if (!csv && hcells.length >= 2 && hcells.every(cellOk)) {
         const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: hcells.length, cols, dl: ',' };
       }
@@ -1485,8 +1488,14 @@ export function residual(text, { terms = [] } = {}) {
     // A bare "sha"/"hash" label is not enough: those still hold (a password hash is not public).
     if (/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(run) && /\b(?:commit|commits|committed|revision|merge|merged|cherry-pick|cherry-picked|revert|reverted|blob|tree|git)\b[^\n]{0,40}$/i.test(sp.slice(Math.max(0, mm.index - 60), mm.index))) continue;
     if (/^[0-9a-fA-F]+$/.test(run)) { if (/[a-fA-F]/.test(run) && shannon(run) >= 3.0) { reasons.push('high-entropy hex run'); break; } continue; }
-    // A camel/Pascal-case identifier made of word-like parts (AbstractQueuedSynchronizer) is code, not a token (PR #27 review).
-    if (/^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) continue;
+    // A camel/Pascal-case identifier made of word-like parts (AbstractQueuedSynchronizer) is code, not a token (PR #27
+    // review), but only where the text shows it is code: a member access or call (pkg.Name, Name.method, Name(, Name<,
+    // Name::, Name#) or a declaration keyword before it. A bare word-like passphrase (PurpleMonkeyDishwasherSatellite)
+    // still counts (tune-up PR #19 / viaknox PR #28 review).
+    if (/^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
+      const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 2);
+      if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|[(<#]|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
+    }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }
   }

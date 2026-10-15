@@ -1006,7 +1006,8 @@ test('r53: credential-first CSV headers, C# auto-property initializers, camel-ca
   const csv = t('password,username\nhunter2,alice\nhunter3,bob');
   assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
   assert.ok(!t('public string Password { get; set; } = "hunter2";').text.includes('hunter2'));
-  assert.equal(t('how does AbstractQueuedSynchronizer work').held, false);
+  assert.equal(t('at java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)').held, false);
+  assert.equal(t('new AbstractQueuedSynchronizer() is abstract').held, false);
   const rnd = t('token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm'); assert.ok(rnd.held || !rnd.text.includes('kQzPbXwR'), rnd.text);
 });
 
@@ -1036,5 +1037,25 @@ test('r55: underscore-prefixed international phones, long gaps after SSN/phone c
   assert.ok(!t('-https://alice:hunter2@host').includes('hunter2'));
   for (const x of ['phone' + ' '.repeat(300000) + '4155552671', 'a-'.repeat(200000) + 'x', '1'.repeat(300000) + '://a:b@c']) {
     const t0 = Date.now(); scrubber({ terms: [] }).sanitize(x); assert.ok(Date.now() - t0 < 1500, String(Date.now() - t0));
+  }
+});
+
+// Round 56 (tune-up PR #19 / viaknox PR #28 Codex review of f3870f0).
+test('r56: bare camel-case passphrases still count, quoted commas in credential-first CSV headers, multi-line C# accessors', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['value PurpleMonkeyDishwasherSatellite', 'VelvetQuartzDragonNimbusCipher', 'value PurpleMonkeyDishwasherSatellite.']) {
+    const r = t(x); assert.ok(r.held || !/PurpleMonkey|VelvetQuartz/.test(r.text), x);
+  }
+  const csv = t('password,"last,name"\nhunter2,"smith, j"\nhunter3,doe');
+  assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
+  for (const x of ['public string Password {\n  get;\n  set;\n} = "hunter2";', 'public string Password\n{\n    get; private set;\n}\n= "hunter2";']) {
+    assert.ok(!t(x).text.includes('hunter2'), x);
+  }
+});
+
+test('r56: long whitespace inside and after a C# accessor block stays fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['Password {' + ' \n'.repeat(100000) + 'get;}', 'Password { get; }' + ' '.repeat(300000) + 'x', 'Password { get;' + '\n '.repeat(100000)]) {
+    const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
   }
 });
