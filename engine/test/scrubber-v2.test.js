@@ -1000,6 +1000,16 @@ test('r52: copula punctuation, dotted TOML headers, Java escapes, multiline bloc
   }
 });
 
+// Round 53 (viaknox PR #27 review of 6e07d33; follow-up PR).
+test('r53: credential-first CSV headers, C# auto-property initializers, camel-case identifiers', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  const csv = t('password,username\nhunter2,alice\nhunter3,bob');
+  assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
+  assert.ok(!t('public string Password { get; set; } = "hunter2";').text.includes('hunter2'));
+  assert.equal(t('how does AbstractQueuedSynchronizer work').held, false);
+  const rnd = t('token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm'); assert.ok(rnd.held || !rnd.text.includes('kQzPbXwR'), rnd.text);
+});
+
 // Round 54 (tune-up PR #16 review of 3f71d4f / 866e473).
 test('r54: long JSON whitespace before a colon, international phones with long groups, unbounded URL schemes, list-hyphen SSNs', () => {
   const t = (x) => scrubber({ terms: [] }).sanitize(x);
