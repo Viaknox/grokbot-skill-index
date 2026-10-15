@@ -1088,3 +1088,12 @@ test('r58: long comment and whitespace runs inside a C# accessor block stay fast
     const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
   }
 });
+
+test('r59: CSV rows wider or narrower than a credential header fail closed', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['password,"last,name"\nhuntertwo,Doe,Jane', '"last,name",password\nDoe,Jane,huntertwo', 'user,password,role\nalice,huntertwo']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('huntertwo'), `${x} -> ${r.text}`);
+  }
+  const ok = t('password,user\nhuntertwo,alice\n\nhope that helps');
+  assert.ok(ok.text.includes('hope that helps') && !ok.text.includes('huntertwo'), ok.text);
+});

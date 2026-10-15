@@ -516,6 +516,9 @@ function csvRow(s, i, delim = ',') {
   for (; j < s.length; j++) { const c = s[j]; if (c === '"') { q = !q; continue; } if (!q && c === delim) { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break; }
   cells.push([start, j]); return { cells, end: j };
 }
+// A header cell is an identifier or a short label; a quoted cell is unescaped by CSV rules ("" is a quote) first, so
+// "last,name" and "last,""name""" count as labels (tune-up PR #20 / viaknox PR #29 reviews).
+const headerCellOk = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); const v = q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
 const trailingName = (tok) => (tok.replace(/[:=]+$/, '').replace(/["']$/, '').match(/[\p{L}\p{N}_$.\-]+$/u) || [''])[0];
 // The judge's own role labels ("USER: AUTH x", "AGENT: …") are not part of the line a person typed (PR #27 review).
 const ROLE_PREFIX = /^(?:USER|AGENT|AGENT INSTRUCTIONS|USER ACTION \(not a message the user typed\)):[ \t]*/;
@@ -549,9 +552,7 @@ function scrubLineForms(s, label, resolve) {
       // The header is split with the quote-aware CSV parser so it counts columns the same way as the rows below
       // (password,"last,name" is two columns; viaknox PR #28 review).
       const hcells = csvRow(line, 0).cells.map(([a, b]) => line.slice(a, b));
-      // A quoted cell is unescaped by CSV rules ("" is a quote) before its shape is checked (tune-up PR #20 review).
-      const cellOk = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); const v = q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
-      if (!csv && hcells.length >= 2 && hcells.every(cellOk)) {
+      if (!csv && hcells.length >= 2 && hcells.every(headerCellOk)) {
         const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: hcells.length, cols, dl: ',' };
       }
@@ -588,12 +589,18 @@ function scrubLineForms(s, label, resolve) {
           if (csv.cols.has(k) && core && a + lead >= at && !isPlaceholderValue(core)) { out += s.slice(at, a + lead) + label('SECRET', core); at = a + lead + core.length; }
         }
         nl = Math.max(nl, row.end);
+      } else if (row.cells.length >= 2) {
+        // A row with a different width than the header cannot be aligned to the credential column, so the whole row
+        // goes (fails closed; viaknox PR #29 security review).
+        const [a0] = row.cells[0], core = s.slice(a0, row.end).replace(/\r$/, ''), lead = core.length - core.trimStart().length, body = core.trim();
+        if (body && a0 + lead >= at) { out += s.slice(at, a0 + lead) + label('SECRET', body); at = a0 + lead + body.length; }
+        nl = Math.max(nl, row.end);
       }
     } else if ((line.includes(',') || line.includes('\t')) && !csv) {
       // Header cells may be multiword labels ("Login Name", "Password"; PR #27 review): each column is judged on its own.
       // Tab-separated pastes (a spreadsheet copy) too, when the header has tabs and no commas (PR #27 review).
       const dl = line.includes(',') ? ',' : '\t', hdr = csvRow(s, i, dl), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
-      if (cells.length >= 2 && hdr.end <= nl && cells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
+      if (cells.length >= 2 && hdr.end <= nl && cells.every(headerCellOk)) {
         const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: cells.length, cols, dl };
       }
