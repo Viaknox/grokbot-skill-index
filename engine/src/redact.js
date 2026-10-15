@@ -1502,7 +1502,7 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
   + '|(?:' + ci('chatgpt.com') + '|' + ci('chat.openai.com') + ')/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings|videos)/(?:u/\\d{1,2}/)?d/(?:e/)?'
-  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/|(?:open|uc)\\?(?:[A-Za-z0-9_\\-.=%~+]*&)?id=)'   // also /open?id=<id> (viaknox PR #31 review)
+  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/|(?:open|uc)\\?(?:[A-Za-z0-9_\\-.=%~+]*&)*id=)'   // also /open?id=<id> (viaknox PR #31 review)
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
@@ -1671,7 +1671,16 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
     // Share links first, before any rule inserts a placeholder inside one (a never-send term in a Notion title would
     // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
-    s = s.replace(SHARE_LINK, (m) => label('LINK', m));
+    // A credential in the link's query (?password=…, &token=…) is inventoried first, so a bare repeat elsewhere is still
+    // replaced as a secret (viaknox PR #33 review).
+    s = s.replace(SHARE_LINK, (m) => {
+      for (const q of m.matchAll(/[?&]([A-Za-z0-9_.\-]{1,64})=([^&#\s]{3,})/g)) {
+        if (!isCredentialName(q[1])) continue;
+        let v = q[2]; try { v = decodeURIComponent(v); } catch {}
+        for (const x of new Set([q[2], v])) if (x.length >= 3) inventory.push({ kind: 'SECRET', value: x });
+      }
+      return label('LINK', m);
+    });
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));

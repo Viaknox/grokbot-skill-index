@@ -1264,3 +1264,10 @@ test('r69: the rest of a share link (path tail, query) is redacted with it: Driv
     assert.match(r.text, /^see \[LINK_1\]\. ok$/); assert.equal(s.unscrub('[LINK_1]'), u);
   }
 });
+
+test('r70: a credential in a share link\'s query is still found when repeated; Drive uc with several params (viaknox PR #33 review)', () => {
+  const s = scrubber(); const r = s.sanitize('User: https://docs.google.com/document/d/abc/edit?password=hunter2\nBot: hunter2');
+  assert.ok(!r.text.includes('hunter2'), r.text);
+  const d = scrubber().sanitize('get https://drive.google.com/uc?export=download&confirm=t&id=1sd4D8rRF1Bv0Yumc9N6ENzC8xUlSHKS0 now');
+  assert.equal(d.held, false, d.text); assert.ok(!d.text.includes('1sd4D8rR'), d.text);
+});
