@@ -1175,3 +1175,16 @@ test('r63: IDs in links to known sharing sites are not secrets; query strings, o
   const key = t('https://claude.ai/artifact/sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUvWx');
   assert.ok(key.held || !key.text.includes('AbCdEf1234567890'), key.text);
 });
+
+test('r64: share links with %-escapes, Claude Code sessions, upper-case hosts, Markdown underscores and long slugs', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['https://www.notion.so/Caf%C3%A9-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://claude.ai/code/session_01A2mqnwASb4jTHXiQoNPzPE',
+    'HTTPS://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8', 'https://CLAUDE.AI/artifact/6sAkHYbhygfFtdDg7z4Yy8', '_https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8_',
+    'https://www.notion.so/' + 'a-'.repeat(160) + 'kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    assert.equal(t(x).held, false, x.slice(0, 80));
+  }
+  for (const x of ['https://claude.ai/code/settings?token=kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'xhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
+  }
+  const t0 = Date.now(); try { t('https://www.notion.so/' + '%41'.repeat(60000) + ' x'); } catch {} assert.ok(Date.now() - t0 < 1500);   // ~180 KB; quadratic would be minutes
+});

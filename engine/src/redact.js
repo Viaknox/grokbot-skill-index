@@ -1493,7 +1493,7 @@ function shannon(str) {
 // Figma file, a Loom video) is an address, not a key, so it is not entropy evidence (smoke test 2026-10-15: one
 // claude.ai artifact link held a whole chat). Only the path counts: anything after "?" or "#" (where access tokens
 // live) is still scanned, and known key formats are caught by the type rules before this whatever URL they sit in.
-const SHARE_LINK = /\bhttps?:\/\/(?:claude\.ai\/(?:code\/)?(?:artifact|chat|share|project)\/|chatgpt\.com\/(?:share|c|g)\/|docs\.google\.com\/(?:document|spreadsheets|presentation|forms|drawings)\/(?:u\/\d{1,2}\/)?d\/(?:e\/)?|drive\.google\.com\/(?:file\/d\/|drive\/(?:u\/\d{1,2}\/)?folders\/)|(?:www\.)?notion\.so\/|(?:www\.)?figma\.com\/(?:file|design|board|proto|slides)\/|(?:www\.)?loom\.com\/share\/)[A-Za-z0-9_\-\/.]{1,300}/g;
+const SHARE_LINK = /(?<![A-Za-z0-9])https?:\/\/(?:claude\.ai\/(?:code\/(?:session_|(?:artifact|chat|share|project)\/)|(?:artifact|chat|share|project)\/)|chatgpt\.com\/(?:share|c|g)\/|docs\.google\.com\/(?:document|spreadsheets|presentation|forms|drawings)\/(?:u\/\d{1,2}\/)?d\/(?:e\/)?|drive\.google\.com\/(?:file\/d\/|drive\/(?:u\/\d{1,2}\/)?folders\/)|(?:www\.)?notion\.so\/|(?:www\.)?figma\.com\/(?:file|design|board|proto|slides)\/|(?:www\.)?loom\.com\/share\/)(?:[A-Za-z0-9_\-\/.]|%[0-9A-Fa-f]{2})+/gi;   // scheme and host in any case, %XX in the path, no length cap (one class, linear) (tune-up PR #21 review)
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
