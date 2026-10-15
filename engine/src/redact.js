@@ -1519,7 +1519,7 @@ export function residual(text, { terms = [] } = {}) {
     // no credential word on the line, and no digit or # straight after the word, so a passphrase in prose
     // ("ok so Name#2024 is it", "bob, Name, admin") still counts (tune-up PR #20 adversarial review).
     const ls = sp.lastIndexOf('\n', mm.index) + 1, le0 = sp.indexOf('\n', mm.index), ln = sp.slice(ls, le0 < 0 ? sp.length : le0);
-    const codeLine = (/[;{}]|=>/.test(ln) || /^[ \t]*at[ \t]+[\w$.]+\(/.test(ln) || /^[ \t]*(?:public|private|protected|internal)\b/.test(ln)) && !/pass(?:word|wd|phrase|code)?|pwd|secret|token|credential|api[-_ ]?key|\bkey\b/i.test(ln)
+    const codeLine = (/[;{}]|=>/.test(ln) || /^[ \t]*at[ \t]+[\w$./]+\(/.test(ln) || /^[ \t]*(?:public|private|protected|internal)\b/.test(ln)) && !/pass(?:word|wd|phrase|code)?|pwd|secret|token|credential|api[-_ ]?key|\bkey\b/i.test(ln)
       && !/^(?:#|(?:[(<.]|::)?\d)/.test(sp.slice(mm.index + run.length, mm.index + run.length + 3));
     if (codeLine && /^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
       const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 80);
@@ -1529,8 +1529,8 @@ export function residual(text, { terms = [] } = {}) {
       // inside a list ((Name ident, / , Name ident)). Prose ("use Name tonight;") has no modifier, so it still counts.
       if (/[<,][ \t]*$/.test(before) && /^[ \t]*[>,\[]/.test(after)) continue;
       if (/^\[\]/.test(after)) continue;
-      if (MODIFIER_BEFORE.test(before) && /^[ \t]+[A-Za-z_$][\w$]*(?:[ \t]*[;=]|\()/.test(after)) continue;
-      if (/[(,][ \t]*$/.test(before) && /^[ \t]+[A-Za-z_$][\w$]*[ \t]*[,)]/.test(after)) continue;
+      if (MODIFIER_BEFORE.test(before) && /^\??[ \t]+[A-Za-z_$][\w$]*(?:[ \t]*[;=]|\()/.test(after)) continue;   // Type? is a nullable type
+      if (/[(,][ \t]*$/.test(before) && /^\??[ \t]+[A-Za-z_$][\w$]*[ \t]*[,)]/.test(after)) continue;
     }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }

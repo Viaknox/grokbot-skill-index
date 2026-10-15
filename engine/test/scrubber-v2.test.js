@@ -1146,3 +1146,10 @@ test('r61: let/var/val before a word are not type positions', () => {
     const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x);
   }
 });
+
+test('r62: module-qualified Java stack frames and nullable type positions stay unheld', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)',
+    'private AbstractQueuedSynchronizer? synchronizer;', 'void Run(AbstractQueuedSynchronizer? sync) {']) assert.equal(t(x).held, false, x);
+  const r = t('use PurpleMonkeyDishwasherSatellite? tonight;'); assert.ok(r.held || !r.text.includes('PurpleMonkey'));
+});
