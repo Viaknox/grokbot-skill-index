@@ -423,7 +423,7 @@ const ASSIGN_START = new RegExp(
   // Each whitespace run is matched atomically ((?=(x*))\N), so a credential word followed by thousands of spaces is
   // read once instead of being re-split between adjacent runs (that was cubic; PR #16 review). Groups 3-6 are only
   // these runs; callers use m[0], m[1] and m[2].
-  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|//[^\\n]{0,80}\\n)*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|//[^\\n]{0,80}\\n)*;){1,3}(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|//[^\\n]{0,80}\\n)*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*;){1,3}(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -524,7 +524,12 @@ function csvRow(s, i, delim = ',') {
 }
 // A header cell is an identifier or a short label; a quoted cell is unescaped by CSV rules ("" is a quote) first, so
 // "last,name" and "last,""name""" count as labels (tune-up PR #20 / viaknox PR #29 reviews).
-const headerCellOk = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); const v = q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
+const headerCellOk = (c) => { const v = /^[ \t]*"/.test(c) ? headerCellText(c) : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
+// Declaration modifiers that mark the word after them as a type (public Name get(), private Name x;).
+const MODIFIER_BEFORE = /\b(?:public|private|protected|internal|static|final|readonly|const|var|val|let|override|virtual|abstract|sealed|async)[ \t]+$/;
+// A header cell's text as a name: quotes unescaped by CSV rules ("" is a quote), commas and quotes as spaces, so
+// "access,token" reads as access token for both the shape check and the credential check (tune-up PR #20 review).
+const headerCellText = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); return q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c.trim().replace(/^["']|["']$/g, ''); };
 const trailingName = (tok) => (tok.replace(/[:=]+$/, '').replace(/["']$/, '').match(/[\p{L}\p{N}_$.\-]+$/u) || [''])[0];
 // The judge's own role labels ("USER: AUTH x", "AGENT: …") are not part of the line a person typed (PR #27 review).
 const ROLE_PREFIX = /^(?:USER|AGENT|AGENT INSTRUCTIONS|USER ACTION \(not a message the user typed\)):[ \t]*/;
@@ -560,7 +565,7 @@ function scrubLineForms(s, label, resolve) {
       const hcells = csvRow(line, 0).cells.map(([a, b]) => line.slice(a, b));
       while (hcells.length > 2 && !hcells[hcells.length - 1].trim()) hcells.pop();   // trailing commas from a spreadsheet export
       if (!csv && hcells.length >= 2 && hcells.every(headerCellOk)) {
-        const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
+        const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(headerCellText(c)))) cols.add(k); });
         if (cols.size) csv = { n: hcells.length, cols, dl: ',' };
       }
     } else if ((m = YAML_Q.exec(line)) && isCredentialName(resolve(m[1])) && nl < s.length) {
@@ -597,7 +602,7 @@ function scrubLineForms(s, label, resolve) {
           if (csv.cols.has(k) && core && a + lead >= at && !isPlaceholderValue(core)) { out += s.slice(at, a + lead) + label('SECRET', core); at = a + lead + core.length; }
         }
         nl = Math.max(nl, row.end);
-      } else if (row.cells.length >= 2) {
+      } else {
         // A row with a different width than the header cannot be aligned to the credential column, so the whole row
         // goes (fails closed; viaknox PR #29 security review).
         const [a0] = row.cells[0], core = s.slice(a0, row.end).replace(/\r$/, ''), lead = core.length - core.trimStart().length, body = core.trim();
@@ -610,7 +615,7 @@ function scrubLineForms(s, label, resolve) {
       const dl = line.includes(',') ? ',' : '\t', hdr = csvRow(s, i, dl), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
       while (cells.length > 2 && !cells[cells.length - 1].trim()) cells.pop();   // trailing commas from a spreadsheet export
       if (cells.length >= 2 && hdr.end <= nl && cells.every(headerCellOk)) {
-        const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
+        const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(headerCellText(c)))) cols.add(k); });
         if (cols.size) csv = { n: cells.length, cols, dl };
       }
     }
@@ -1514,16 +1519,17 @@ export function residual(text, { terms = [] } = {}) {
     // no credential word on the line, and no digit or # straight after the word, so a passphrase in prose
     // ("ok so Name#2024 is it", "bob, Name, admin") still counts (tune-up PR #20 adversarial review).
     const ls = sp.lastIndexOf('\n', mm.index) + 1, le0 = sp.indexOf('\n', mm.index), ln = sp.slice(ls, le0 < 0 ? sp.length : le0);
-    const codeLine = (/[;{}]|=>/.test(ln) || /^[ \t]*at[ \t]+[\w$.]+\(/.test(ln)) && !/pass(?:word|wd|phrase|code)?|pwd|secret|token|credential|api[-_ ]?key|\bkey\b/i.test(ln)
+    const codeLine = (/[;{}]|=>/.test(ln) || /^[ \t]*at[ \t]+[\w$.]+\(/.test(ln) || /^[ \t]*(?:public|private|protected|internal)\b/.test(ln)) && !/pass(?:word|wd|phrase|code)?|pwd|secret|token|credential|api[-_ ]?key|\bkey\b/i.test(ln)
       && !/^(?:#|(?:[(<.]|::)?\d)/.test(sp.slice(mm.index + run.length, mm.index + run.length + 3));
     if (codeLine && /^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
       const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 80);
       if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|[(<#]|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
       // Type positions (tune-up PR #20 review): a generic argument (List<Name>, Map<K, Name>), an array type (Name[]),
-      // a declaration (Name ident; / Name ident =), a method return type (Name ident() and a parameter inside a list
-      // ((Name ident, / , Name ident)). Prose ("my password Name thanks,") matches none of these, so it still counts.
+      // a declaration or method return type after a modifier (private Name ident; / public Name ident() and a parameter
+      // inside a list ((Name ident, / , Name ident)). Prose ("use Name tonight;") has no modifier, so it still counts.
       if (/[<,][ \t]*$/.test(before) && /^[ \t]*[>,\[]/.test(after)) continue;
-      if (/^(?:\[\]|[ \t]+[A-Za-z_$][\w$]*(?:[ \t]*[;=]|\())/.test(after)) continue;
+      if (/^\[\]/.test(after)) continue;
+      if (MODIFIER_BEFORE.test(before) && /^[ \t]+[A-Za-z_$][\w$]*(?:[ \t]*[;=]|\()/.test(after)) continue;
       if (/[(,][ \t]*$/.test(before) && /^[ \t]+[A-Za-z_$][\w$]*[ \t]*[,)]/.test(after)) continue;
     }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);

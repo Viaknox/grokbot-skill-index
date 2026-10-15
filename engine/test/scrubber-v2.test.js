@@ -1062,7 +1062,7 @@ test('r56: long whitespace inside and after a C# accessor block stays fast', () 
 
 test('r57: camel-case type positions stay unheld; prose after a passphrase still counts', () => {
   const t = (x) => scrubber({ terms: [] }).sanitize(x);
-  for (const x of ['AbstractQueuedSynchronizer synchronizer;', 'List<AbstractQueuedSynchronizer> values;', 'Map<String, AbstractQueuedSynchronizer> m;',
+  for (const x of ['private AbstractQueuedSynchronizer synchronizer;', 'List<AbstractQueuedSynchronizer> values;', 'Map<String, AbstractQueuedSynchronizer> m;',
     'public AbstractQueuedSynchronizer getSync() {', 'AbstractQueuedSynchronizer[] all;', 'void run(AbstractQueuedSynchronizer sync, int n) {']) {
     assert.equal(t(x).held, false, x);
   }
@@ -1120,4 +1120,15 @@ test('r60: CSV trailing commas from spreadsheet exports and stray quotes inside 
   assert.ok(keep.text.includes('bob'), keep.text);
   const q = t('password,note\nhunter2,"a, b"\nhunter3,"say ""hi"""\n');
   assert.ok(!/hunter2|hunter3/.test(q.text) && q.text.includes('"a, b"'), q.text);
+});
+
+test('r61: prose with a trailing semicolon, long accessor comments, one-cell rows, quoted credential headers, Allman methods', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  const W = 'PurpleMonkeyDishwasherSatellite';
+  for (const x of [`use ${W} tonight;`, `bob ${W} admin;`, `user=bob ${W} ok;`]) { const r = t(x); assert.ok(r.held || !r.text.includes(W), x); }
+  for (const x of ['public string Password { get; /*' + 'x'.repeat(2000) + '*/ set; } = "huntertwo";', 'public string Password {\n get; //' + 'y'.repeat(500) + '\n set;\n} = "huntertwo";',
+    'password,user\nhuntertwo', 'user,"access,token"\nbob,huntertwo']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('huntertwo'), x.slice(0, 60));
+  }
+  for (const x of ['public AbstractQueuedSynchronizer getSync()\n{', 'private AbstractQueuedSynchronizer synchronizer;', 'public AbstractQueuedSynchronizer getSync() {']) assert.equal(t(x).held, false, x);
 });
