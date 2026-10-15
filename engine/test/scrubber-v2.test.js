@@ -1160,3 +1160,18 @@ test('r62: bare PascalCase calls are not a code context; many quotes in one CSV 
   const big = 'password,user\nab' + 'c"'.repeat(150000) + ',bob\n';
   const t0 = Date.now(); try { t(big); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
 });
+
+test('r63: IDs in links to known sharing sites are not secrets; query strings, other hosts and key formats still are', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['see https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8 please', 'https://claude.ai/code/artifact/2f7ee35f-0e3b-4c1c-a8fc-4feb0f36789b',
+    'doc: https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit', 'https://drive.google.com/file/d/1QwErTyUiOpAsDfGhJkLzXcVbNm123456/view',
+    'https://www.notion.so/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.figma.com/design/Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op/Home', 'https://chatgpt.com/share/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718']) {
+    assert.equal(t(x).held, false, x);
+  }
+  for (const x of ['https://docs.google.com/document/d/abc/edit?resourcekey=0-Xk9QpL2mZr7TvB4nWc8YsJ1d', 'https://example.com/share/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    'https://claude.ai.evil.example/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR') && !r.text.includes('Xk9QpL2m'), x);
+  }
+  const key = t('https://claude.ai/artifact/sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUvWx');
+  assert.ok(key.held || !key.text.includes('AbCdEf1234567890'), key.text);
+});
