@@ -1205,3 +1205,20 @@ test('r65: only the ID segment of a share link is exempt; extra segments and Not
     const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
   }
 });
+
+test('r66: share links are replaced whole by [LINK_n], so the ID never reaches the checker (viaknox PR #31 security review)', () => {
+  const s = scrubber({ terms: [] });
+  for (const [x, id] of [['open https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit now', '1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf'],
+    ['https://docs.google.com/videos/d/1Y9zTG21uMxHmqs7EG0nQubcJKpkhwXax3WcIZkv9Cvw/edit', '1Y9zTG21uMxHmqs7EG0nQubcJKpkhwXax3WcIZkv9Cvw'],
+    ['https://drive.google.com/file/u/0/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view', '1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV'],
+    ['https://app.notion.com/p/Scratchpad-91e1838c7bae82319d990137ca5ef7b6', '91e1838c7bae82319d990137ca5ef7b6'],
+    ['https://www.notion.so/Plan-8F2A9C4B7E1D4A6B9C3E5F7A1B2C4D6E', '8F2A9C4B7E1D4A6B9C3E5F7A1B2C4D6E'],
+    ['https://acme.notion.site/k9f3m7q2x8c4v6b1n5z7p2r8t4w6y9', 'k9f3m7q2x8c4v6b1n5z7p2r8t4w6y9'],
+    ['see https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8.', '6sAkHYbhygfFtdDg7z4Yy8']]) {
+    const r = s.sanitize(x);
+    assert.equal(r.held, false, x); assert.ok(!r.text.includes(id), r.text); assert.match(r.text, /\[LINK_\d+\]/);
+  }
+  assert.ok(s.counts().LINK >= 7);
+  const r = s.sanitize('éhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm');
+  assert.ok(r.held || !r.text.includes('kQzPbXwR'), r.text);
+});

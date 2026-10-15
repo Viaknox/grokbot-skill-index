@@ -1489,26 +1489,24 @@ function shannon(str) {
   for (const k in freq) { const p = freq[k] / len; h -= p * Math.log2(p); }
   return h;
 }
-// The random ID in a link to a known sharing site (a Claude artifact, a ChatGPT share, a Google Doc, a Notion page, a
-// Figma file, a Loom video) is an address, not a key, so it is not entropy evidence (smoke test 2026-10-15: one
-// claude.ai artifact link held a whole chat). Only the path counts: anything after "?" or "#" (where access tokens
-// live) is still scanned, and known key formats are caught by the type rules before this whatever URL they sit in.
-// One path segment only, and only in the place the service puts its ID, so a token in an extra segment
-// (claude.ai/artifact/<id>/<token>) is still scanned (tune-up PR #21 review, P1). A Notion workspace name before the page
-// is kept in the text and scanned too; a Notion page ID is always 32 hex characters at the end of the segment.
-// Only the scheme and host match in any case (URLs fold those); the route stays case-sensitive, so a look-alike
-// claude.ai/ARTIFACT/<token> is still scanned. Nothing glued to a letter or digit of any script counts as a link start
-// (éhttps://…). A Notion site's subdomain is kept in the text and scanned, like the workspace (tune-up PR #21 review, P1).
+// A link to a known sharing site (a Claude artifact, a ChatGPT share, a Google Doc, a Notion page, a Figma file, a Loom
+// video) is replaced whole by [LINK_n] in the main pass. Its random ID is not a key, so the chat is not held for it
+// (smoke test 2026-10-15: one claude.ai artifact link held a whole chat), but anyone with the link can open the file,
+// so the ID never goes to the checker either (viaknox PR #31 security review). Only the scheme, host, route and ONE
+// ID segment are taken: anything after it (an extra segment, "?", "#") stays in the text and is scanned as usual.
+// Scheme and host match in any case; routes are case-sensitive (a look-alike claude.ai/ARTIFACT/… is scanned, not
+// taken). Nothing glued to a letter, mark or digit of any script counts as a link start (tune-up PR #21 review).
 const ci = (h) => h.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`).replace(/\./g, '\\.');
 const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})+';
-const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{N}])' + ci('http') + '[sS]?://(?:'
-  + '(?:' + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
+const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?://(?:'
+  + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
   + '|' + ci('chatgpt.com') + '/(?:g/' + SEG + '/c/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
-  + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings)/(?:u/\\d{1,2}/)?d/(?:e/)?'
-  + '|' + ci('drive.google.com') + '/(?:file/d/|drive/(?:u/\\d{1,2}/)?folders/)'
+  + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings|videos)/(?:u/\\d{1,2}/)?d/(?:e/)?'
+  + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/)'
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
-  + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/)' + SEG
-  + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|([A-Za-z0-9-]{1,63})\\.' + ci('notion.site') + ')/([A-Za-z0-9_-]{1,64}/)?(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*?[0-9a-f]{32}(?![A-Za-z0-9_\\-.%]))', 'gu');
+  + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
+  + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
+  + ')' + SEG, 'gu');
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
@@ -1521,7 +1519,7 @@ export function residual(text, { terms = [] } = {}) {
   // letter and at least 3 bits/char of entropy; a base64-class run needs at least two of {upper, lower, digit} (which keeps
   // lowercase URL paths and camelCase identifiers out) and entropy over 4 bits/char.
   // Public keys and certificates are meant to be shared: their bodies are not entropy evidence (PR #27 review).
-  const sp = s.replace(SHARE_LINK, (m, site, ws) => ' ' + (site || '') + ' ' + (ws || '')).replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ')
+  const sp = s.replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ')
     // One-line OpenSSH public keys (authorized_keys, known_hosts) too, only when the base64 body really encodes the named
     // key type, so an arbitrary token after "ssh-rsa " still counts (PR #27 review).
     .replace(/(?<![A-Za-z0-9-])((?:ssh-(?:rsa|dss|ed25519|ed448)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)(?:-cert-v01@openssh\.com)?)[ \t]+(AAAA[A-Za-z0-9+/]{16,16384}={0,3})(?![A-Za-z0-9+/=])/g,
@@ -1702,6 +1700,7 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(/"(?:\\.|[^"\\\n])*"/g, (m) => (/\\"/.test(m) ? label('SECRET', m) : m));
     // Known key shapes on the folded view (a soft hyphen inside "ghp_…" does not hide it), then the plain PII shapes.
     s = applyOnView(s, V(s), KEY_SHAPE_RE, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'KEY' }));
+    s = s.replace(SHARE_LINK, (m) => label('LINK', m));   // before the PII shapes, so an ID is never half-read as a phone or IP
     for (const [kind, re] of PATTERNS) {
       s = s.replace(re, (m) => {
         if (kind === 'CARD') { const d = m.replace(/\D/g, ''); if (d.length < 13 || !luhn(d)) return m; }
