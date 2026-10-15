@@ -1193,7 +1193,7 @@ test('r65: only the ID segment of a share link is exempt; extra segments and Not
   const t = (x) => scrubber({ terms: [] }).sanitize(x);
   for (const x of ['https://acme.notion.site/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/acme/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',
     'https://docs.google.com/spreadsheets/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit', 'https://www.figma.com/design/Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op/Viaknox-Website-v2',
-    'https://chatgpt.com/g/g-Ab1Cd2Ef3-trip-planner/c/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718', 'https://www.loom.com/share/8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e?sid=1']) {
+    'https://chatgpt.com/g/g-Ab1Cd2Ef3-trip-planner/c/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718', 'https://www.loom.com/share/8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e?sid=1', 'https://chatgpt.com/s/t_6aa37d6d2cf08191a58f07a61903307a']) {
     assert.equal(t(x).held, false, x);
   }
   for (const x of ['https://claude.ai/artifact/public-id/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm/Page-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',

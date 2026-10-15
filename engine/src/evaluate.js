@@ -21,11 +21,11 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
   const perCase = await pool(suite.cases, CONCURRENCY, async (c) => {
     const runs = [];
     for (let rep = 1; rep <= (suite.repeats || 1); rep++) {
-      const history = []; const turns = []; let held = false;
+      const history = []; const turns = []; let held = false, heldCap = false;
       for (const message of c.turns) {
         let t;
         // The replay model's input was held back (a secret survived scrubbing): no call was made; the run is unsure.
-        try { t = await adapter.turn({ history, message, instructions }); } catch (e) { if (e instanceof HeldBack) { held = true; break; } throw e; }
+        try { t = await adapter.turn({ history, message, instructions }); } catch (e) { if (e instanceof HeldBack) { held = true; heldCap = e.cap; break; } throw e; }
         turns.push(t);
         // Keep tool calls and results in the history when the adapter exposes them (model adapter), not just the reply.
         history.push({ role: 'user', content: message }, ...(t.messages || [{ role: 'assistant', content: t.reply }]));
@@ -33,7 +33,7 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
       // A held run still keeps the failures its completed turns already proved and that later turns cannot undo (a false
       // "done", a forbidden call or phrase); end-of-run expectations are not judged for turns that never ran (PR #16 review).
       const MONOTONE = new Set(['false_done', 'must_not_call', 'must_not_say']);
-      const findings = held ? [heldFinding(), ...(turns.length ? checkCase(c, turns, adapter).filter(f => MONOTONE.has(f.code) && !f.ok && !f.unsure) : [])]
+      const findings = held ? [heldFinding(heldCap), ...(turns.length ? checkCase(c, turns, adapter).filter(f => MONOTONE.has(f.code) && !f.ok && !f.unsure) : [])]
         : [...checkCase(c, turns, adapter), ...await judge(or, scrub, transcript(c, instructions, turns, adapter.observesTools))];
       const passed = runPassed(findings);
       runs.push({ case: c.id, rep, passed, findings, turns: turns.map(t => ({ reply: t.reply, tools: t.tools, ...(t.truncated ? { truncated: true } : {}) })),

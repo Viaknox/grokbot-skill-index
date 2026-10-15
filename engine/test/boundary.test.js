@@ -254,3 +254,14 @@ test('round 42: cli.js check finishes with a report when a pasted chat exceeds t
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--out', join(d, 'o')], { encoding: 'utf8', maxBuffer: 256e6 });
   assert.equal(r.status, 0, r.stderr);
 });
+
+test('[promised] boundary: a scrubber cap in the replay adapter is a cap hold (cap: true), a secret hold is not (tune-up PR #21 review)', async () => {
+  const { or, calls } = recorder();
+  const real = scrubber(); const capped = { ...real, sanitize: (t) => real.sanitize(t, { maxChars: 5 }) };
+  const rep = await evaluate({ suite: { cases: [{ id: 'c', turns: ['hello there'] }] }, instructions: 'x', adapter: modelAdapter({ model: 'm' }, or, { scrub: capped }), or, scrub: capped });
+  const rules = JSON.stringify(rep.buckets.find(b => b.id === 'rules'));
+  assert.match(rules, /too long or complex to scrub safely/); assert.doesNotMatch(rules, /protect a secret/);
+  assert.equal(calls.length, 0);
+  const e = new HeldBack(); assert.equal(e.cap, false); assert.match(e.message, /protect a secret/);
+  assert.match(new HeldBack(true).message, /too long or complex/);
+});

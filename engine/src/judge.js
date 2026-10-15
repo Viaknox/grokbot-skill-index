@@ -80,7 +80,7 @@ async function ask(or, sanitized, QS) {
   const questions = Object.fromEntries(Object.entries(QS).map(([k, q]) => [k, { type: 'noul', instructions: q.text }]));
   let rs;
   try { rs = await Promise.all(Array.from({ length: VOTES }, () => outbound(or, 'decide', sanitized, (state) => ({ model: JUDGE_MODEL, state, questions })))); }
-  catch (e) { if (e instanceof HeldBack) return [heldFinding()]; throw e; }
+  catch (e) { if (e instanceof HeldBack) return [heldFinding(e.cap)]; throw e; }
   return Object.entries(QS).map(([k, q]) => {
     const p = rs.reduce((a, r) => a + r.answers[k].noul, 0) / rs.length;
     const yes = p >= 0.5, unsure = p > 0.35 && p < 0.65;

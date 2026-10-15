@@ -43,9 +43,10 @@ export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fe
   };
 }
 
-// Raised instead of a call when the residual scan found something secret-looking. The message is what the user sees.
+// Raised instead of a call when the residual scan found something secret-looking, or (cap = true) when the scrubber hit
+// its size, time or work cap, so the finding can name the right fix (tune-up PR #21 review). The message is what the user sees.
 export class HeldBack extends Error {
-  constructor() { super('unsure: we held back part of this chat to protect a secret'); this.name = 'HeldBack'; }
+  constructor(cap = false) { super(cap ? 'unsure: we held back this chat because it was too long or complex to scrub safely' : 'unsure: we held back part of this chat to protect a secret'); this.name = 'HeldBack'; this.cap = cap; }
 }
 
 // The ONE door through which judge and writer text leaves this machine (brief item 7). It accepts only a Sanitized

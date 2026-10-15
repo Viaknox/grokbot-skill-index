@@ -1499,7 +1499,7 @@ function shannon(str) {
 const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})+';
 const SHARE_LINK = new RegExp('(?<![A-Za-z0-9])https?://(?:'
   + '(?:claude\\.ai/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
-  + '|chatgpt\\.com/(?:g/' + SEG + '/c/|share/|c/|g/)'   // a custom GPT's chat: /g/<gpt>/c/<chat>
+  + '|chatgpt\\.com/(?:g/' + SEG + '/c/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|docs\\.google\\.com/(?:document|spreadsheets|presentation|forms|drawings)/(?:u/\\d{1,2}/)?d/(?:e/)?'
   + '|drive\\.google\\.com/(?:file/d/|drive/(?:u/\\d{1,2}/)?folders/)'
   + '|(?:www\\.)?figma\\.com/(?:file|design|board|proto|slides)/'
