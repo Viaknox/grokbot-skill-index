@@ -1638,6 +1638,9 @@ export function scrubber({ terms = [] } = {}) {
       // A SECRET value may already hold a PRIVATE sentinel; store the value in public [KIND_n] form so unscrub nests.
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
       inventory.push({ kind, value });
+      // An email taken from a URL query also took the text before it (/edit?contact=jo@x.com: the local part allows / ? =),
+      // so the address itself is inventoried too and its echo is still an echo (viaknox PR #35 review).
+      if (kind === 'EMAIL' && /[\/?=&]/.test(value)) { const a = value.slice(Math.max(value.lastIndexOf('/'), value.lastIndexOf('?'), value.lastIndexOf('='), value.lastIndexOf('&')) + 1); if (a.includes('@') && a.length >= 3) inventory.push({ kind, value: a }); }
       if (kind === 'SECRET') {
         // A quoted value followed by a comment ("hunter2" # backup) inventories the text inside the quotes (PR #16 review).
         let core = value.trim(); const qm = /^(["'])((?:\\.|(?!\1)[^\n])*)\1[ \t]*(?:[#;][^\n]*)?$/.exec(core);
