@@ -1329,3 +1329,11 @@ test('r74: link tail runs after key/PII rules, passes over placeholders; Drive p
   assert.ok(!t.text.includes('ZZdbl9988'), t.text);
 });
 
+
+test('r75: scrubbing already-scrubbed link output changes nothing (tune-up PR #23 review)', () => {
+  const s = scrubber({ terms: ['Acme'] });
+  for (const t of ['https://docs.google.com/document/d/abc/edit?usp=sharing', 'https://drive.google.com/open?password=hunter2&id=abc123&resourcekey=0-zz',
+    'https://docs.google.com/document/d/abc/edit?foo=Acme&resourcekey=abc123 ok', 'see https://claude.ai/share/x1/y?z=1).']) {
+    const a = s.scrub(t); assert.equal(s.scrub(a), a, t);
+  }
+});

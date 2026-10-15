@@ -1508,11 +1508,12 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
   + ')' + SEG, 'gu');
 // A [LINK_n] placeholder followed by more of its URL (path, query, fragment, even after //), up to whitespace or a quote.
-// The tail may also start with a placeholder (an email rule can take "?contact=…@…" before this runs).
+// The tail may also start with a placeholder (an email rule can take "?contact=…@…" before this runs). Another [LINK_n]
+// never joins a tail, so scrubbing already-scrubbed text changes nothing ([LINK_1][LINK_2] stays; PR #23 review).
 const TRAIL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', ']', "'", '"']);
 // Placeholders an earlier rule put inside the tail ([PRIVATE_1], [SECRET_1]) are passed over, not taken as its end, so
 // the rest of the link (a resourcekey after a never-send term) still joins it (tune-up PR #22 post-merge review).
-const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:[\/?&#]|\uE000[A-Z]+_\d+\uE001)(?:[^\s\uE000\uE001"'<>]|\uE000[A-Z]+_\d+\uE001)*)/g;
+const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:[\/?&#]|\uE000(?!LINK_)[A-Z]+_\d+\uE001)(?:[^\s\uE000\uE001"'<>]|\uE000(?!LINK_)[A-Z]+_\d+\uE001)*)/g;
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
