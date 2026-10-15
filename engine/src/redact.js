@@ -1674,10 +1674,11 @@ export function scrubber({ terms = [] } = {}) {
     // A credential in the link's query (?password=…, &token=…) is inventoried first, so a bare repeat elsewhere is still
     // replaced as a secret (viaknox PR #33 review).
     s = s.replace(SHARE_LINK, (m) => {
-      for (const q of m.matchAll(/[?&]([A-Za-z0-9_.\-]{1,64})=([^&#\s]{3,})/g)) {
-        if (!isCredentialName(q[1])) continue;
-        let v = q[2]; try { v = decodeURIComponent(v); } catch {}
-        for (const x of new Set([q[2], v])) if (x.length >= 3) inventory.push({ kind: 'SECRET', value: x });
+      // Form encoding too: "+" is a space and %XX an escape, in the name and the value (api+key=…; viaknox PR #33 review).
+      const dec = (/** @type {string} */ x, plus) => { const y = plus ? x.replace(/\+/g, ' ') : x; try { return decodeURIComponent(y); } catch { return y; } };
+      for (const q of m.matchAll(/[?&]([A-Za-z0-9_.%+\-]{1,64})=([^&#\s]{3,})/g)) {
+        if (!isCredentialName(dec(q[1], true)) && !isCredentialName(q[1])) continue;
+        for (const x of new Set([q[2], dec(q[2], false), dec(q[2], true)])) if (x.length >= 3) inventory.push({ kind: 'SECRET', value: x });
       }
       return label('LINK', m);
     });

@@ -1268,6 +1268,10 @@ test('r69: the rest of a share link (path tail, query) is redacted with it: Driv
 test('r70: a credential in a share link\'s query is still found when repeated; Drive uc with several params (viaknox PR #33 review)', () => {
   const s = scrubber(); const r = s.sanitize('User: https://docs.google.com/document/d/abc/edit?password=hunter2\nBot: hunter2');
   assert.ok(!r.text.includes('hunter2'), r.text);
+  for (const [u, said] of [['api+key=hunter2', 'hunter2'], ['password=correct+horse+battery', 'correct horse battery'], ['pass%77ord=s3cr%21t', 's3cr!t']]) {
+    const t = scrubber().sanitize('User: https://docs.google.com/document/d/abc/edit?' + u + '\nBot: ' + said);
+    assert.ok(!t.text.includes(said), u + ' -> ' + t.text);
+  }
   const d = scrubber().sanitize('get https://drive.google.com/uc?export=download&confirm=t&id=1sd4D8rRF1Bv0Yumc9N6ENzC8xUlSHKS0 now');
   assert.equal(d.held, false, d.text); assert.ok(!d.text.includes('1sd4D8rR'), d.text);
 });
