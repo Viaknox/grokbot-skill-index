@@ -418,11 +418,12 @@ const ASSIGN_START = new RegExp(
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
   // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review). A C# accessor block too
-  // (public string Password { get; set; } = "x"; PR #27 review), also spread over several lines (viaknox PR #28 review).
+  // (public string Password { get; set; } = "x"; PR #27 review), also spread over several lines and with comments
+  // between accessors (viaknox PR #28, tune-up PR #20 reviews).
   // Each whitespace run is matched atomically ((?=(x*))\N), so a credential word followed by thousands of spaces is
   // read once instead of being re-split between adjacent runs (that was cubic; PR #16 review). Groups 3-6 are only
   // these runs; callers use m[0], m[1] and m[2].
-  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:[ \\t\\r\\n]*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)[ \\t\\r\\n]*;){1,3}[ \\t\\r\\n]*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|//[^\\n]{0,80}\\n)*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|//[^\\n]{0,80}\\n)*;){1,3}(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|//[^\\n]{0,80}\\n)*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -548,7 +549,8 @@ function scrubLineForms(s, label, resolve) {
       // The header is split with the quote-aware CSV parser so it counts columns the same way as the rows below
       // (password,"last,name" is two columns; viaknox PR #28 review).
       const hcells = csvRow(line, 0).cells.map(([a, b]) => line.slice(a, b));
-      const cellOk = (c) => { const q = /^[ \t]*"([^"]*)"[ \t]*$/.exec(c); const v = q ? q[1].replace(/,/g, ' ') : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
+      // A quoted cell is unescaped by CSV rules ("" is a quote) before its shape is checked (tune-up PR #20 review).
+      const cellOk = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); const v = q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
       if (!csv && hcells.length >= 2 && hcells.every(cellOk)) {
         const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: hcells.length, cols, dl: ',' };

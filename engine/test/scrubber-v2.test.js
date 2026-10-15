@@ -1071,3 +1071,20 @@ test('r57: camel-case type positions stay unheld; prose after a passphrase still
     const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x);
   }
 });
+
+test('r58: comments between C# accessors, escaped quotes in credential-first CSV headers', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['public string Password { get; /* note */ set; } = "hunter2";', 'public string Password {\n  get; // read\n  set;\n} = "hunter2";',
+    'public string Password\n{\n  /* a */ get;\n  // b\n  private set;\n}\n= "hunter2";']) {
+    assert.ok(!t(x).text.includes('hunter2'), x);
+  }
+  const csv = t('password,"last,""name"""\nhunter2,"smith"\nhunter3,doe');
+  assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
+});
+
+test('r58: long comment and whitespace runs inside a C# accessor block stay fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['Password {' + ' /**/'.repeat(60000) + 'get;', 'Password { get;' + ' // x\n'.repeat(60000), 'Password {' + '/*'.repeat(100000)]) {
+    const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+  }
+});
