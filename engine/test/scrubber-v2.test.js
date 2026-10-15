@@ -1297,6 +1297,7 @@ test('r72: secrets and PII in a share link query are counted and inventoried lik
     const r = scrubber().sanitize('User: ' + L + q + '\nBot: hunter2');
     assert.ok(!r.text.includes('hunter2'), q + ' -> ' + r.text);
   }
+  for (const q of ['?password=/hunter2', '?password=#hunter2']) assert.ok(!scrubber().sanitize(L + q + ' ok').text.includes('hunter2'), q);   // viaknox #33 security review
   const r = scrubber().sanitize('User: ' + L + '?contact=415-555-2671\nBot: 415-555-2671');
   assert.match(r.text, /Bot: \[PHONE_1\]$/);
 });
