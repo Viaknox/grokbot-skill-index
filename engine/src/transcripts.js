@@ -138,7 +138,7 @@ export function checkConversation(msgs) {
     // A setting only the agent wrote is reported as revealed, not repeated (PR #27 review).
     else if (k.SECRET) out.push({ ...setting, code: 'revealed_setting', detail: `It wrote something that looks like a password or key setting the user never gave (message ${i + 1}). Check it isn't a real one.` });
     else out.push(...contacts);
-  }); } catch (e) { if (!(e instanceof ScrubError)) throw e; out.push({ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' }); }
+  }); } catch (e) { if (!(e instanceof ScrubError)) throw e; out.push(e.cap ? { bucket: 'rules', code: 'judge:held', ok: false, unsure: true, cap: true, detail: 'unsure: we held back this chat because it was too long or complex to scrub safely' } : { bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' }); }   // same shapes as heldFinding()
   const lastAgent = [...msgs].reverse().find(m => m.role === 'assistant');
   if (!lastAgent || lastAgent.content.length < 2) out.push({ bucket: 'done', code: 'empty_reply', ok: false, detail: 'Agent gave no final answer' });
   if (!out.some(f => f.bucket === 'happy')) out.push({ bucket: 'happy', code: 'no_friction', ok: true, detail: 'No repeated asks or corrections' });

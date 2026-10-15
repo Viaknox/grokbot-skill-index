@@ -3,7 +3,7 @@
 // placeholder appeared. Fixtures are templates expanded at run time, so no secret shape sits in the repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubber, Sanitized, isCredentialName, residual } from '../src/redact.js';
+import { scrubber, Sanitized, isCredentialName, residual, ScrubError } from '../src/redact.js';
 import { fixture, expand, gen, makeRng, seedOf, attackRounds } from './corpus/expand.js';
 
 const V2 = () => import('../src/redact.js');   // new exports are reached dynamically so a missing one fails one test, not the file
@@ -1159,4 +1159,98 @@ test('r62: bare PascalCase calls are not a code context; many quotes in one CSV 
   for (const x of ['PurpleMonkeyDishwasherSatellite();', 'x = PurpleMonkeyDishwasherSatellite#;']) { const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x); }
   const big = 'password,user\nab' + 'c"'.repeat(150000) + ',bob\n';
   const t0 = Date.now(); try { t(big); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+});
+
+test('r63: IDs in links to known sharing sites are not secrets; query strings, other hosts and key formats still are', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['see https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8 please', 'https://claude.ai/code/artifact/2f7ee35f-0e3b-4c1c-a8fc-4feb0f36789b',
+    'doc: https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit', 'https://drive.google.com/file/d/1QwErTyUiOpAsDfGhJkLzXcVbNm123456/view',
+    'https://www.notion.so/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.figma.com/design/Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op/Home', 'https://chatgpt.com/share/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718']) {
+    assert.equal(t(x).held, false, x);
+  }
+  for (const x of ['https://docs.google.com/document/d/abc/edit?resourcekey=0-Xk9QpL2mZr7TvB4nWc8YsJ1d', 'https://example.com/share/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    'https://claude.ai.evil.example/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR') && !r.text.includes('Xk9QpL2m'), x);
+  }
+  const key = t('https://claude.ai/artifact/sk-proj-AbCdEf1234567890GhIjKlMnOpQrStUvWx');
+  assert.ok(key.held || !key.text.includes('AbCdEf1234567890'), key.text);
+});
+
+test('r64: share links with %-escapes, Claude Code sessions, upper-case hosts, Markdown underscores and long slugs', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['https://www.notion.so/Caf%C3%A9-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://claude.ai/code/session_01A2mqnwASb4jTHXiQoNPzPE',
+    'HTTPS://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8', 'https://CLAUDE.AI/artifact/6sAkHYbhygfFtdDg7z4Yy8', '_https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8_',
+    'https://www.notion.so/' + 'a-'.repeat(160) + '8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e']) {
+    assert.equal(t(x).held, false, x.slice(0, 80));
+  }
+  for (const x of ['https://claude.ai/code/settings?token=kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'xhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
+  }
+  const t0 = Date.now(); try { t('https://www.notion.so/' + '%41'.repeat(60000) + ' x'); } catch {} assert.ok(Date.now() - t0 < 1500);   // ~180 KB; quadratic would be minutes
+});
+
+test('r65: only the ID segment of a share link is exempt; extra segments and Notion workspaces are still scanned', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['https://acme.notion.site/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/acme/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',
+    'https://docs.google.com/spreadsheets/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit', 'https://www.figma.com/design/Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op/Viaknox-Website-v2',
+    'https://chatgpt.com/g/g-Ab1Cd2Ef3-trip-planner/c/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718', 'https://www.loom.com/share/8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e?sid=1', 'https://chatgpt.com/s/t_6aa37d6d2cf08191a58f07a61903307a',
+    'https://www.figma.com/deck/abttA1F3GxZdZlkI9t5s99/Example', 'https://www.figma.com/make/abttA1F3GxZdZlkI9t5s99/Example']) {
+    assert.equal(t(x).held, false, x);
+  }
+  for (const x of ['https://claude.ai/artifact/public-id/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm/Page-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',
+    'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://docs.google.com/document/d/abc/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    'https://claude.ai/ARTIFACT/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://docs.google.com/DOCUMENT/d/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    'https://kQzPbXwRtYmNvLsDfGhJkLzXcVbNm.notion.site/page-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'éhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    '٣https://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
+  }
+});
+
+test('r66: share links are replaced whole by [LINK_n], so the ID never reaches the checker (viaknox PR #31 security review)', () => {
+  const s = scrubber({ terms: [] });
+  for (const [x, id] of [['open https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit now', '1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf'],
+    ['https://docs.google.com/videos/d/1Y9zTG21uMxHmqs7EG0nQubcJKpkhwXax3WcIZkv9Cvw/edit', '1Y9zTG21uMxHmqs7EG0nQubcJKpkhwXax3WcIZkv9Cvw'],
+    ['https://drive.google.com/file/u/0/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view', '1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV'],
+    ['https://app.notion.com/p/Scratchpad-91e1838c7bae82319d990137ca5ef7b6', '91e1838c7bae82319d990137ca5ef7b6'],
+    ['https://www.notion.so/Plan-8F2A9C4B7E1D4A6B9C3E5F7A1B2C4D6E', '8F2A9C4B7E1D4A6B9C3E5F7A1B2C4D6E'],
+    ['https://acme.notion.site/k9f3m7q2x8c4v6b1n5z7p2r8t4w6y9', 'k9f3m7q2x8c4v6b1n5z7p2r8t4w6y9'],
+    ['see https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8.', '6sAkHYbhygfFtdDg7z4Yy8']]) {
+    const r = s.sanitize(x);
+    assert.equal(r.held, false, x); assert.ok(!r.text.includes(id), r.text); assert.match(r.text, /\[LINK_\d+\]/);
+  }
+  assert.ok(s.counts().LINK >= 7);
+  const r = s.sanitize('éhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm');
+  assert.ok(r.held || !r.text.includes('kQzPbXwR'), r.text);
+});
+
+test('r67: [LINK_n] is a reserved placeholder: a literal one is never restored to the real link (tune-up PR #21 review, P1)', () => {
+  const s = scrubber(); const url = 'https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit';
+  assert.equal(s.unscrub(s.scrub('see ' + url)), 'see ' + url);
+  s.scrub('the user typed [LINK_1] literally');
+  assert.ok(!s.unscrub('echo [LINK_1]').includes('1aBcDeFg'));
+  assert.ok(!scrubber().scrub('[LINK_1] then ' + url).includes('[LINK_1] then [LINK_1]'));   // our own numbering skips a literal one
+});
+
+test('r68: whole links even with a never-send term inside; ChatGPT workspace shares; trailing punctuation stays out; cap vs failure (tune-up PR #21 review)', () => {
+  const s = scrubber({ terms: ['Acme'] });
+  const a = s.sanitize('https://www.notion.so/Acme-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e');
+  assert.ok(a.held || !a.text.includes('8f2a9c4b'), a.text);
+  const b = scrubber().sanitize('see https://chatgpt.com/share/e/6741e46b-82d0-8005-90a2-27780552fe70 ok');
+  assert.ok(!b.text.includes('6741e46b'), b.text);
+  const c = scrubber(); const out = c.scrub('Open https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8. Then https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd_');
+  assert.match(out, /^Open \[LINK_1\]\. Then \[LINK_2\]$/);
+  assert.equal(c.unscrub('[LINK_1]'), 'https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8');
+  assert.equal(c.unscrub('[LINK_2]'), 'https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd_');   // a trailing "_" is part of an opaque ID
+  let capErr; try { scrubber().sanitize('a'.repeat(10), { maxChars: 5 }); } catch (e) { capErr = e; }
+  assert.equal(capErr.cap, true);
+  assert.equal(new ScrubError('scrubber failed (TypeError); holding back').cap, false);
+  const rk = scrubber().sanitize('https://drive.google.com/file/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view?usp=sharing&resourcekey=0-JI_CQrZzk6ZkIu1Uqn3s_w ok');
+  assert.equal(rk.held, false, rk.text); assert.ok(!rk.text.includes('JI_CQrZ') && !rk.text.includes('1tQe2R9'), rk.text);
+  for (const u of ['https://www.notion.so/Café-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/Cafe\u0301-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/計画-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e']) {
+    const r = scrubber().sanitize(u); assert.ok(!r.text.includes('8f2a9c4b'), r.text);
+  }
+  let tagErr; try { scrubber().sanitize('<input type="password" value="hunter2'); } catch (e) { tagErr = e; }
+  assert.equal(tagErr.cap, false);   // an unclosed tag is not a size cap
+  const d = scrubber().sanitize('old link https://chat.openai.com/share/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718x9Q ok');
+  assert.ok(!d.text.includes('68e0f1a2'), d.text); assert.match(d.text, /\[LINK_1\]/);
 });

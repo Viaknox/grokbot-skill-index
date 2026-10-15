@@ -104,7 +104,7 @@ function namesWithPrivate(cfg, privateTerms) {
 export function modelAdapter(cfg, or, { scrub, privateTerms = [] } = {}) {
   // Every piece sent to the replay model goes through sanitize(): its residual scan holds the run back (no call) when a
   // secret survived scrubbing, exactly as the judge's outbound boundary does (PR #16 review).
-  const S = (t) => { if (!scrub) return t; let z; try { z = scrub.sanitize(t); } catch (e) { if (e instanceof ScrubError) throw new HeldBack(); throw e; } if (z.held) throw new HeldBack(); return z.text; };
+  const S = (t) => { if (!scrub) return t; let z; try { z = scrub.sanitize(t); } catch (e) { if (e instanceof ScrubError) throw new HeldBack(e.cap === true); throw e; } if (z.held) throw new HeldBack(); return z.text; };
   const U = (t) => (scrub ? scrub.unscrub(t) : t);
   const clash = namesWithPrivate(cfg, privateTerms);
   if (clash.length) throw new Error(`A word from your --private list is in the model id, a tool name, a parameter name or a required list (${clash.length} place${clash.length > 1 ? 's' : ''}); it cannot be scrubbed without breaking the tool, so nothing was sent. Rename it or remove the word from the list.`);   // also $defs/definitions names (PR #16 review)
