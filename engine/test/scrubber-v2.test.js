@@ -1237,9 +1237,10 @@ test('r68: whole links even with a never-send term inside; ChatGPT workspace sha
   assert.ok(a.held || !a.text.includes('8f2a9c4b'), a.text);
   const b = scrubber().sanitize('see https://chatgpt.com/share/e/6741e46b-82d0-8005-90a2-27780552fe70 ok');
   assert.ok(!b.text.includes('6741e46b'), b.text);
-  const c = scrubber(); const out = c.scrub('Open https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8. Or _https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8_');
-  assert.match(out, /^Open \[LINK_1\]\. Or _\[LINK_1\]_$/);
+  const c = scrubber(); const out = c.scrub('Open https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8. Then https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd_');
+  assert.match(out, /^Open \[LINK_1\]\. Then \[LINK_2\]$/);
   assert.equal(c.unscrub('[LINK_1]'), 'https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8');
+  assert.equal(c.unscrub('[LINK_2]'), 'https://docs.google.com/document/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcd_');   // a trailing "_" is part of an opaque ID
   let capErr; try { scrubber().sanitize('a'.repeat(10), { maxChars: 5 }); } catch (e) { capErr = e; }
   assert.equal(capErr.cap, true);
   assert.equal(new ScrubError('scrubber failed (TypeError); holding back').cap, false);
