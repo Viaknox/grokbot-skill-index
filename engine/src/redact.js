@@ -1623,18 +1623,6 @@ export function scrubber({ terms = [] } = {}) {
   const next = {};                   // last placeholder number handed out, per kind
   const reserved = new Map();        // kind -> numbers that already appeared as literal [KIND_n] text in some input
   const inventory = [];              // { kind, value } of every value scrubbed, for echoes()
-  // ID-like pieces of a share link (its ID, a path segment, a query value such as Figma t=) are inventoried on their own,
-  // so a later bare repeat of one is replaced too, not only a repeat of the whole link (tune-up PR #22 follow-up).
-  // Plain words (edit, sharing, resourcekey) are left alone: a piece must be 8+ characters with a digit, or 16+.
-  // The scheme and host are skipped, query names are skipped (public syntax; only values are pieces), dotted IDs count, and
-  // each piece is inventoried once per scrubber (a link repeated over thousands of turns stays linear; PR #23 review).
-  const linkSeen = new Set();
-  const linkPieces = (v) => {
-    const r = v.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/?#\s]*/, ''), q = r.search(/[?&#]/);
-    const pieces = (q < 0 ? r : r.slice(0, q)).split('/');
-    if (q >= 0) for (const kv of r.slice(q).split(/[?&#]/)) if (kv) { const e = kv.indexOf('='); pieces.push(e < 0 ? kv : kv.slice(e + 1)); }
-    for (const p of pieces) if (!linkSeen.has(p) && !/[\uE000\uE001]/.test(p) && ((p.length >= 8 && /\d/.test(p)) || p.length >= 16)) { linkSeen.add(p); inventory.push({ kind: 'LINK', value: p }); }
-  };
   const ambiguous = new Set();       // public [KIND_n] we minted that later also arrived as literal text: never restored
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
@@ -1692,7 +1680,7 @@ export function scrubber({ terms = [] } = {}) {
     // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
     // A Drive open?…&id= link: the parameters before id= are left in place for the credential rules (open?password=x&id=…),
     // then join the link with its tail; the base and the id= part are taken now (tune-up PR #22 post-merge review).
-    s = s.replace(SHARE_LINK, (m) => { linkPieces(m); const q = m.indexOf('?'), i = m.lastIndexOf('id=');
+    s = s.replace(SHARE_LINK, (m) => { const q = m.indexOf('?'), i = m.lastIndexOf('id=');
       return q < 0 || i === q + 1 ? label('LINK', m) : label('LINK', m.slice(0, q)) + m.slice(q, i) + label('LINK', m.slice(i)); });
     const V = viewer();
     s = scrubPem(s, label);
@@ -1746,7 +1734,7 @@ export function scrubber({ terms = [] } = {}) {
     // stays outside.
     // Trailing punctuation is trimmed with a loop, not /[...]+$/: that regex restarts at every position of a long run that
     // is followed by another character, which is quadratic (a 300 KB run stalled for minutes; tune-up PR #22 follow-up).
-    s = s.replace(LINK_TAIL, (m, ph, tail) => { let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; linkPieces(t); return ph + label('LINK', t) + tail.slice(e); });
+    s = s.replace(LINK_TAIL, (m, ph, tail) => { let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; return ph + label('LINK', t) + tail.slice(e); });
     // A term beside "@" that the email rule did not consume (`user@Acme`, `jo@acme`: a handle or a single-label host) is
     // still the term. The first sweep keeps "@" out so a one-letter term cannot eat a host label inside a real address
     // (jo@x.example); real addresses are [EMAIL_n] by now, so this sweep may touch "@" freely (PR #16 review).
@@ -1756,7 +1744,7 @@ export function scrubber({ terms = [] } = {}) {
     // A value wrapping a never-send placeholder (password=Acme-x is [PRIVATE_1]-x) still recurs as that same text, so it
     // stays eligible; the part outside the placeholder must still be at least four characters (PR #16 review).
     const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 3; };
-    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY' || e.kind === 'LINK') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
+    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
     // settings), and

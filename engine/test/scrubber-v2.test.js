@@ -1302,14 +1302,11 @@ test('r72: secrets and PII in a share link query are counted and inventoried lik
   assert.match(r.text, /Bot: \[PHONE_1\]$/);
 });
 
-test('r73: long punctuation after a share link stays linear; link IDs and tail values are caught when repeated bare (tune-up PR #22 follow-up)', () => {
+test('r73: long punctuation after a share link stays linear (tune-up PR #22 follow-up)', () => {
   const L = 'https://claude.ai/share/abcd-1234-efgh-5678';
   for (const v of [L + '?x=' + '!,'.repeat(150000) + 'a', L + '/' + '.'.repeat(300000) + 'a']) {
     const t = Date.now(); scrubber().sanitize(v); assert.ok(Date.now() - t < 1500, 'took ' + (Date.now() - t) + ' ms');
   }
-  const s = scrubber(); s.sanitize(L + '/ZZpathseg9988?t=ZZnonCred9988');
-  const r = s.sanitize('bare ZZpathseg9988, ZZnonCred9988 and abcd-1234-efgh-5678');
-  for (const v of ['ZZpathseg9988', 'ZZnonCred9988', 'abcd-1234-efgh-5678']) assert.ok(!r.text.includes(v), r.text);
   const d = scrubber().sanitize('https://docs.google.com/document/d/1AbCdEfGh/edit?usp=sharing then edit sharing usp');
   assert.match(d.text, /then edit sharing usp$/);
 });
@@ -1332,12 +1329,3 @@ test('r74: link tail runs after key/PII rules, passes over placeholders; Drive p
   assert.ok(!t.text.includes('ZZdbl9988'), t.text);
 });
 
-test('r75: link pieces: dotted IDs kept, query names skipped, each piece inventoried once (tune-up PR #23 review)', () => {
-  const s = scrubber(); s.sanitize('https://claude.ai/share/abcd.1234efgh');
-  assert.equal(s.sanitize('bare abcd.1234efgh').text, 'bare [LINK_2]');
-  const n = scrubber(); n.sanitize('https://claude.ai/share/abcd-1234?this_is_a_long_parameter=ok');
-  assert.equal(n.sanitize('use this_is_a_long_parameter').text, 'use this_is_a_long_parameter');
-  const r = scrubber(); const t = Date.now();
-  for (let i = 0; i < 8000; i++) r.scrub('User: https://claude.ai/share/abcd-1234-efgh-5678/ZZpath9988?t=ZZtok99887');
-  assert.ok(Date.now() - t < 6000, 'took ' + (Date.now() - t) + ' ms');
-});
