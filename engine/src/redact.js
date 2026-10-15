@@ -515,10 +515,11 @@ function csvRow(s, i, delim = ',') {
   const cells = []; let j = i, start = i, q = false;
   // A quote opens a quoted field only at the start of a cell (RFC 4180); a stray quote inside a value (hun"ter2) is a
   // literal character and must not swallow the delimiters after it (tune-up PR #20 adversarial review).
-  for (; j < s.length; j++) {
+  // seen = a non-space character has appeared in this cell (a flag, not a re-slice, so many quotes stay linear).
+  for (let seen = false; j < s.length; j++) {
     const c = s[j];
-    if (c === '"') { if (q) { if (s[j + 1] === '"') j++; else q = false; } else if (!s.slice(start, j).trim()) q = true; continue; }
-    if (!q && c === delim) { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break;
+    if (c === '"') { if (q) { if (s[j + 1] === '"') j++; else q = false; } else if (!seen) q = true; seen = true; continue; }
+    if (!q && c === delim) { cells.push([start, j]); start = j + 1; seen = false; } else if (!q && c === '\n') break; else if (c !== ' ' && c !== '\t') seen = true;
   }
   cells.push([start, j]); return { cells, end: j };
 }
@@ -1523,7 +1524,7 @@ export function residual(text, { terms = [] } = {}) {
       && !/^(?:#|(?:[(<.]|::)?\d)/.test(sp.slice(mm.index + run.length, mm.index + run.length + 3));
     if (codeLine && /^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
       const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 80);
-      if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|[(<#]|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
+      if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|<|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
       // Type positions (tune-up PR #20 review): a generic argument (List<Name>, Map<K, Name>), an array type (Name[]),
       // a declaration or method return type after a modifier (private Name ident; / public Name ident() and a parameter
       // inside a list ((Name ident, / , Name ident)). Prose ("use Name tonight;") has no modifier, so it still counts.

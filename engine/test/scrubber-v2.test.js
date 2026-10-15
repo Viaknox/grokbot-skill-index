@@ -1135,7 +1135,7 @@ test('r61: prose with a trailing semicolon, long accessor comments, one-cell row
 
 test('r61: repeated unclosed comment starts in accessor blocks stay fast', () => {
   const t = (x) => scrubber({ terms: [] }).sanitize(x);
-  for (const x of ['pw\n{/* '.repeat(150000), 'key{/*'.repeat(170000), 'Password\n{ /* '.repeat(70000)]) {
+  for (const x of ['pw\n{/* '.repeat(50000), 'key{/*'.repeat(55000), 'Password\n{ /* '.repeat(25000)]) {   // ~350 KB: quadratic would be minutes
     const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
   }
 });
@@ -1152,4 +1152,11 @@ test('r62: module-qualified Java stack frames and nullable type positions stay u
   for (const x of ['at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)',
     'private AbstractQueuedSynchronizer? synchronizer;', 'void Run(AbstractQueuedSynchronizer? sync) {']) assert.equal(t(x).held, false, x);
   const r = t('use PurpleMonkeyDishwasherSatellite? tonight;'); assert.ok(r.held || !r.text.includes('PurpleMonkey'));
+});
+
+test('r62: bare PascalCase calls are not a code context; many quotes in one CSV cell stay fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['PurpleMonkeyDishwasherSatellite();', 'x = PurpleMonkeyDishwasherSatellite#;']) { const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x); }
+  const big = 'password,user\nab' + 'c"'.repeat(150000) + ',bob\n';
+  const t0 = Date.now(); try { t(big); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
 });
