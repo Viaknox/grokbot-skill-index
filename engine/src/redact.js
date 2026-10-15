@@ -423,7 +423,7 @@ const ASSIGN_START = new RegExp(
   // Each whitespace run is matched atomically ((?=(x*))\N), so a credential word followed by thousands of spaces is
   // read once instead of being re-split between adjacent runs (that was cubic; PR #16 review). Groups 3-6 are only
   // these runs; callers use m[0], m[1] and m[2].
-  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*;){1,3}(?:[ \\t\\r\\n]|/\\*(?:[^*]|\\*(?!/)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:(?:[ \\t\\r\\n]|/\\*(?:[^*/]|\\*(?!/)|/(?!\\*)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)(?:[ \\t\\r\\n]|/\\*(?:[^*/]|\\*(?!/)|/(?!\\*)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*;){1,3}(?:[ \\t\\r\\n]|/\\*(?:[^*/]|\\*(?!/)|/(?!\\*)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -526,7 +526,7 @@ function csvRow(s, i, delim = ',') {
 // "last,name" and "last,""name""" count as labels (tune-up PR #20 / viaknox PR #29 reviews).
 const headerCellOk = (c) => { const v = /^[ \t]*"/.test(c) ? headerCellText(c) : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
 // Declaration modifiers that mark the word after them as a type (public Name get(), private Name x;).
-const MODIFIER_BEFORE = /\b(?:public|private|protected|internal|static|final|readonly|const|var|val|let|override|virtual|abstract|sealed|async)[ \t]+$/;
+const MODIFIER_BEFORE = /\b(?:public|private|protected|internal|static|final|readonly|const|override|virtual|abstract|sealed|async)[ \t]+$/;
 // A header cell's text as a name: quotes unescaped by CSV rules ("" is a quote), commas and quotes as spaces, so
 // "access,token" reads as access token for both the shape check and the credential check (tune-up PR #20 review).
 const headerCellText = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); return q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c.trim().replace(/^["']|["']$/g, ''); };

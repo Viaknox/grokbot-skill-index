@@ -1132,3 +1132,17 @@ test('r61: prose with a trailing semicolon, long accessor comments, one-cell row
   }
   for (const x of ['public AbstractQueuedSynchronizer getSync()\n{', 'private AbstractQueuedSynchronizer synchronizer;', 'public AbstractQueuedSynchronizer getSync() {']) assert.equal(t(x).held, false, x);
 });
+
+test('r61: repeated unclosed comment starts in accessor blocks stay fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['pw\n{/* '.repeat(150000), 'key{/*'.repeat(170000), 'Password\n{ /* '.repeat(70000)]) {
+    const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+  }
+});
+
+test('r61: let/var/val before a word are not type positions', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['let PurpleMonkeyDishwasherSatellite go;', 'I will let PurpleMonkeyDishwasherSatellite stay; thanks', 'var PurpleMonkeyDishwasherSatellite x;']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x);
+  }
+});
