@@ -1059,3 +1059,15 @@ test('r56: long whitespace inside and after a C# accessor block stays fast', () 
     const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
   }
 });
+
+test('r57: camel-case type positions stay unheld; prose after a passphrase still counts', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['AbstractQueuedSynchronizer synchronizer;', 'List<AbstractQueuedSynchronizer> values;', 'Map<String, AbstractQueuedSynchronizer> m;',
+    'public AbstractQueuedSynchronizer getSync() {', 'AbstractQueuedSynchronizer[] all;', 'void run(AbstractQueuedSynchronizer sync, int n)']) {
+    assert.equal(t(x).held, false, x);
+  }
+  for (const x of ['PurpleMonkeyDishwasherSatellite is my password', 'use PurpleMonkeyDishwasherSatellite tonight', 'PurpleMonkeyDishwasherSatellite',
+    'my password PurpleMonkeyDishwasherSatellite thanks,', 'PurpleMonkeyDishwasherSatellite works, right?', 'it is PurpleMonkeyDishwasherSatellite (new)']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x);
+  }
+});

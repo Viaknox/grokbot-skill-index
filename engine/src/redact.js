@@ -1493,8 +1493,14 @@ export function residual(text, { terms = [] } = {}) {
     // Name::, Name#) or a declaration keyword before it. A bare word-like passphrase (PurpleMonkeyDishwasherSatellite)
     // still counts (tune-up PR #19 / viaknox PR #28 review).
     if (/^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
-      const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 2);
+      const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 80);
       if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|[(<#]|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
+      // Type positions (tune-up PR #20 review): a generic argument (List<Name>, Map<K, Name>), an array type (Name[]),
+      // a declaration (Name ident; / Name ident =), a method return type (Name ident() and a parameter inside a list
+      // ((Name ident, / , Name ident)). Prose ("my password Name thanks,") matches none of these, so it still counts.
+      if (/[<,][ \t]*$/.test(before) && /^[ \t]*[>,\[]/.test(after)) continue;
+      if (/^(?:\[\]|[ \t]+[A-Za-z_$][\w$]*(?:[ \t]*[;=]|\())/.test(after)) continue;
+      if (/[(,][ \t]*$/.test(before) && /^[ \t]+[A-Za-z_$][\w$]*[ \t]*[,)]/.test(after)) continue;
     }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }
