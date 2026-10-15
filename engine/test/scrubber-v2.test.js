@@ -1288,3 +1288,15 @@ test('r71: the rest of a share link is taken after the credential rules, so they
     assert.ok(!r.text.split('\n')[1].includes(said), tail + ' -> ' + r.text);
   }
 });
+
+test('r72: secrets and PII in a share link query are counted and inventoried like any other (tune-up PR #22 review on eaf75f8)', () => {
+  const L = 'https://claude.ai/share/abcd-1234';
+  const s1 = scrubber(); s1.sanitize(L + '?password=hunter2');
+  assert.equal(s1.counts().SECRET, 1);
+  for (const q of ['?this_is_a_very_long_application_namespace_for_the_primary_database_password=hunter2', '?next=password=hunter2']) {
+    const r = scrubber().sanitize('User: ' + L + q + '\nBot: hunter2');
+    assert.ok(!r.text.includes('hunter2'), q + ' -> ' + r.text);
+  }
+  const r = scrubber().sanitize('User: ' + L + '?contact=415-555-2671\nBot: 415-555-2671');
+  assert.match(r.text, /Bot: \[PHONE_1\]$/);
+});
