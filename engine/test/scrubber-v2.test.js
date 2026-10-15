@@ -1197,7 +1197,10 @@ test('r65: only the ID segment of a share link is exempt; extra segments and Not
     assert.equal(t(x).held, false, x);
   }
   for (const x of ['https://claude.ai/artifact/public-id/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm/Page-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',
-    'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://docs.google.com/document/d/abc/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://docs.google.com/document/d/abc/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    'https://claude.ai/ARTIFACT/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://docs.google.com/DOCUMENT/d/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    'https://kQzPbXwRtYmNvLsDfGhJkLzXcVbNm.notion.site/page-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'éhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm',
+    '٣https://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
     const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
   }
 });

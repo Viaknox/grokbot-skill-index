@@ -1496,15 +1496,19 @@ function shannon(str) {
 // One path segment only, and only in the place the service puts its ID, so a token in an extra segment
 // (claude.ai/artifact/<id>/<token>) is still scanned (tune-up PR #21 review, P1). A Notion workspace name before the page
 // is kept in the text and scanned too; a Notion page ID is always 32 hex characters at the end of the segment.
+// Only the scheme and host match in any case (URLs fold those); the route stays case-sensitive, so a look-alike
+// claude.ai/ARTIFACT/<token> is still scanned. Nothing glued to a letter or digit of any script counts as a link start
+// (éhttps://…). A Notion site's subdomain is kept in the text and scanned, like the workspace (tune-up PR #21 review, P1).
+const ci = (h) => h.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`).replace(/\./g, '\\.');
 const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})+';
-const SHARE_LINK = new RegExp('(?<![A-Za-z0-9])https?://(?:'
-  + '(?:claude\\.ai/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
-  + '|chatgpt\\.com/(?:g/' + SEG + '/c/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
-  + '|docs\\.google\\.com/(?:document|spreadsheets|presentation|forms|drawings)/(?:u/\\d{1,2}/)?d/(?:e/)?'
-  + '|drive\\.google\\.com/(?:file/d/|drive/(?:u/\\d{1,2}/)?folders/)'
-  + '|(?:www\\.)?figma\\.com/(?:file|design|board|proto|slides)/'
-  + '|(?:www\\.)?loom\\.com/share/)' + SEG
-  + '|(?:(?:www\\.)?notion\\.so|[A-Za-z0-9-]{1,63}\\.notion\\.site)/([A-Za-z0-9_-]{1,64}/)?(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*?[0-9a-f]{32}(?![A-Za-z0-9_\\-.%]))', 'gi');   // scheme and host in any case (tune-up PR #21 review)
+const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{N}])' + ci('http') + '[sS]?://(?:'
+  + '(?:' + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
+  + '|' + ci('chatgpt.com') + '/(?:g/' + SEG + '/c/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
+  + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings)/(?:u/\\d{1,2}/)?d/(?:e/)?'
+  + '|' + ci('drive.google.com') + '/(?:file/d/|drive/(?:u/\\d{1,2}/)?folders/)'
+  + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides)/'
+  + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/)' + SEG
+  + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|([A-Za-z0-9-]{1,63})\\.' + ci('notion.site') + ')/([A-Za-z0-9_-]{1,64}/)?(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*?[0-9a-f]{32}(?![A-Za-z0-9_\\-.%]))', 'gu');
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
@@ -1517,7 +1521,7 @@ export function residual(text, { terms = [] } = {}) {
   // letter and at least 3 bits/char of entropy; a base64-class run needs at least two of {upper, lower, digit} (which keeps
   // lowercase URL paths and camelCase identifiers out) and entropy over 4 bits/char.
   // Public keys and certificates are meant to be shared: their bodies are not entropy evidence (PR #27 review).
-  const sp = s.replace(SHARE_LINK, (m, ws) => ' ' + (ws || '')).replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ')
+  const sp = s.replace(SHARE_LINK, (m, site, ws) => ' ' + (site || '') + ' ' + (ws || '')).replace(/-----BEGIN[ \t]+(?:PUBLIC KEY|RSA PUBLIC KEY|CERTIFICATE|TRUSTED CERTIFICATE|CERTIFICATE REQUEST|NEW CERTIFICATE REQUEST|X509 CRL|PKCS7|SSH2 PUBLIC KEY)-----[\s\S]{0,65536}?-----END[ \t]+[A-Z0-9 ]{1,40}-----/g, ' ')
     // One-line OpenSSH public keys (authorized_keys, known_hosts) too, only when the base64 body really encodes the named
     // key type, so an arbitrary token after "ssh-rsa " still counts (PR #27 review).
     .replace(/(?<![A-Za-z0-9-])((?:ssh-(?:rsa|dss|ed25519|ed448)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)(?:-cert-v01@openssh\.com)?)[ \t]+(AAAA[A-Za-z0-9+/]{16,16384}={0,3})(?![A-Za-z0-9+/=])/g,
