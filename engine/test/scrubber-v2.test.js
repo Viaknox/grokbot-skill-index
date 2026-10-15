@@ -1243,4 +1243,8 @@ test('r68: whole links even with a never-send term inside; ChatGPT workspace sha
   let capErr; try { scrubber().sanitize('a'.repeat(10), { maxChars: 5 }); } catch (e) { capErr = e; }
   assert.equal(capErr.cap, true);
   assert.equal(new ScrubError('scrubber failed (TypeError); holding back').cap, false);
+  let tagErr; try { scrubber().sanitize('<input type="password" value="hunter2'); } catch (e) { tagErr = e; }
+  assert.equal(tagErr.cap, false);   // an unclosed tag is not a size cap
+  const d = scrubber().sanitize('old link https://chat.openai.com/share/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718x9Q ok');
+  assert.ok(!d.text.includes('68e0f1a2'), d.text); assert.match(d.text, /\[LINK_1\]/);
 });

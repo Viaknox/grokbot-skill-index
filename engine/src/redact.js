@@ -974,7 +974,7 @@ function scrubHtmlAttrs(s, label, resolve) {
   // A credential-cue tag that TAG could not parse (an attribute value past its 2 KB bound, an unclosed quote) holds the
   // text back rather than leaving its element's value unscrubbed (PR #16 review).
   CUE_TAG.lastIndex = 0;
-  for (let c; (c = CUE_TAG.exec(s));) if (!seen.has(c.index)) throw new ScrubError('a credential tag too long to parse; holding back', true);
+  for (let c; (c = CUE_TAG.exec(s));) if (!seen.has(c.index)) throw new ScrubError('a credential tag too long to parse; holding back');   // unclosed syntax, not a size cap: shortening may not help (tune-up PR #21 review)
   return applyIntervals(s, ivs, label);
 }
 
@@ -1500,7 +1500,7 @@ const ci = (h) => h.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`).replace
 const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*(?:[A-Za-z0-9]|%[0-9A-Fa-f]{2})';   // ends on a letter, digit or %XX: a sentence's "." or Markdown's "_" stays outside
 const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?://(?:'
   + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
-  + '|' + ci('chatgpt.com') + '/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
+  + '|(?:' + ci('chatgpt.com') + '|' + ci('chat.openai.com') + ')/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings|videos)/(?:u/\\d{1,2}/)?d/(?:e/)?'
   + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/)'
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
