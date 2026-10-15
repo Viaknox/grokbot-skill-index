@@ -1180,11 +1180,24 @@ test('r64: share links with %-escapes, Claude Code sessions, upper-case hosts, M
   const t = (x) => scrubber({ terms: [] }).sanitize(x);
   for (const x of ['https://www.notion.so/Caf%C3%A9-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://claude.ai/code/session_01A2mqnwASb4jTHXiQoNPzPE',
     'HTTPS://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8', 'https://CLAUDE.AI/artifact/6sAkHYbhygfFtdDg7z4Yy8', '_https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8_',
-    'https://www.notion.so/' + 'a-'.repeat(160) + 'kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    'https://www.notion.so/' + 'a-'.repeat(160) + '8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e']) {
     assert.equal(t(x).held, false, x.slice(0, 80));
   }
   for (const x of ['https://claude.ai/code/settings?token=kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'xhttps://claude.ai/artifact/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
     const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
   }
   const t0 = Date.now(); try { t('https://www.notion.so/' + '%41'.repeat(60000) + ' x'); } catch {} assert.ok(Date.now() - t0 < 1500);   // ~180 KB; quadratic would be minutes
+});
+
+test('r65: only the ID segment of a share link is exempt; extra segments and Notion workspaces are still scanned', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['https://acme.notion.site/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/acme/Launch-Plan-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',
+    'https://docs.google.com/spreadsheets/d/1aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789abcdEf/edit', 'https://www.figma.com/design/Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op/Viaknox-Website-v2',
+    'https://chatgpt.com/g/g-Ab1Cd2Ef3-trip-planner/c/68e0f1a2-9b3c-8000-a1b2-c3d4e5f60718', 'https://www.loom.com/share/8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e?sid=1']) {
+    assert.equal(t(x).held, false, x);
+  }
+  for (const x of ['https://claude.ai/artifact/public-id/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm/Page-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e',
+    'https://www.notion.so/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm', 'https://docs.google.com/document/d/abc/kQzPbXwRtYmNvLsDfGhJkLzXcVbNm']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('kQzPbXwR'), x);
+  }
 });
