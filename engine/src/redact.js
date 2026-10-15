@@ -1679,10 +1679,11 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
     // Share links first, before any rule inserts a placeholder inside one (a never-send term in a Notion title would
     // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
-    // A Drive open?…&id= link: the parameters before id= are left in place for the credential rules (open?password=x&id=…),
-    // then join the link with its tail; the base and the id= part are taken now (tune-up PR #22 post-merge review).
+    // A Drive open?…&id= link: the parameters before id= go through the query credential rule first (open?password=x&id=…
+    // gives one [SECRET_n], inventoried for later repeats), then the whole link is one [LINK_n] wrapping it (tune-up PR #22
+    // post-merge review; viaknox PR #35 review: splitting it let a later rule count the secret twice).
     s = s.replace(SHARE_LINK, (m) => { const q = m.indexOf('?'), i = m.lastIndexOf('id=');
-      return q < 0 || i === q + 1 ? label('LINK', m) : label('LINK', m.slice(0, q)) + m.slice(q, i) + label('LINK', m.slice(i)); });
+      return label('LINK', q < 0 || i === q + 1 ? m : m.slice(0, q) + scrubQuery(m.slice(q, i), label, resolve) + m.slice(i)); });
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));

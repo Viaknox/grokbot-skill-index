@@ -1337,3 +1337,9 @@ test('r75: scrubbing already-scrubbed link output changes nothing (tune-up PR #2
     const a = s.scrub(t); assert.equal(s.scrub(a), a, t);
   }
 });
+
+test('r76: a credential before id= in a Drive link is one secret, not two (viaknox PR #35 review)', () => {
+  const s = scrubber(); const t = 'User: https://drive.google.com/open?password=hunter2&id=ABC123456789\nBot: hunter2';
+  const r = s.sanitize(t);
+  assert.equal(s.counts().SECRET, 1); assert.ok(!r.text.includes('hunter2')); assert.equal(s.unscrub(r.text), t); assert.equal(s.scrub(r.text), r.text);
+});
