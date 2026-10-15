@@ -120,7 +120,7 @@ test('[promised] boundary: a ScrubError in evaluate marks the run unsure with ju
   const rep = await evaluate({ suite: { cases: [{ id: 'c', turns: ['hi'] }] }, instructions: 'x', adapter, or, scrub });
   const rules = rep.buckets.find(b => b.id === 'rules');
   assert.equal(rules.status, 'warn'); assert.equal(rules.unsure, 1); assert.equal(rules.failed, 0);
-  assert.match(JSON.stringify(rules), /held back part of this chat/);
+  assert.match(JSON.stringify(rules), /too long or complex to scrub safely/);   // a cap hold, not a secret (viaknox PR #31 review)
   assert.equal(rep.runs[0].passed, true, 'an unsure finding never fails a run on its own');
   assert.equal(calls.length, 0);
   assert.throws(() => real.sanitize('a'.repeat(10), { maxChars: 5 }), ScrubError);
@@ -195,7 +195,7 @@ test('[promised] judgeHeld turns a ScrubError into the judge:held finding for th
   const real = scrubber(); const capped = { ...real, sanitize: (t) => real.sanitize(t, { maxChars: 5 }) };
   const state = chatState('', [{ role: 'user', content: 'hello there' }, { role: 'assistant', content: 'hi' }]);
   const f = await judgeHeld(capped, state, (s) => judgeConversation(or, s, { hasInstructions: false }));
-  assert.deepEqual(f, [{ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' }]);
+  assert.deepEqual(f, [{ bucket: 'rules', code: 'judge:held', ok: false, unsure: true, cap: true, detail: 'unsure: we held back this chat because it was too long or complex to scrub safely' }]);   // a cap hold says so (viaknox PR #31 review)
   assert.equal(calls.length, 0);
   const ok = await judgeHeld(real, state, (s) => judgeConversation(or, s, { hasInstructions: false }));
   assert.ok(ok.length > 1 && ok.every(x => x.code !== 'judge:held'), JSON.stringify(ok));
@@ -212,7 +212,7 @@ test('[promised] cli check --consent on a conversation over the size cap exits 0
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8', maxBuffer: 256e6 });
   assert.equal(r.status, 0, r.stderr.slice(-500));
   const rep = readFileSync(join(d, 'o', 'report.json'), 'utf8');
-  assert.ok(rep.includes('held back part of this chat'), 'no held finding in the report');   // the report card carries the finding text, not its code
+  assert.ok(rep.includes('too long or complex to scrub safely'), 'no cap-held finding in the report');   // the report card carries the finding text, not its code
   assert.ok(!rep.includes('ScrubError') && !r.stderr.includes('ScrubError'));
 });
 
