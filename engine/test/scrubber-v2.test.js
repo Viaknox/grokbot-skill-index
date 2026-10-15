@@ -1330,3 +1330,13 @@ test('r74: link tail runs after key/PII rules, passes over placeholders; Drive p
   const t = scrubber().sanitize(L + '//ZZdbl9988 ok');
   assert.ok(!t.text.includes('ZZdbl9988'), t.text);
 });
+
+test('r75: link pieces: dotted IDs kept, query names skipped, each piece inventoried once (tune-up PR #23 review)', () => {
+  const s = scrubber(); s.sanitize('https://claude.ai/share/abcd.1234efgh');
+  assert.equal(s.sanitize('bare abcd.1234efgh').text, 'bare [LINK_2]');
+  const n = scrubber(); n.sanitize('https://claude.ai/share/abcd-1234?this_is_a_long_parameter=ok');
+  assert.equal(n.sanitize('use this_is_a_long_parameter').text, 'use this_is_a_long_parameter');
+  const r = scrubber(); const t = Date.now();
+  for (let i = 0; i < 8000; i++) r.scrub('User: https://claude.ai/share/abcd-1234-efgh-5678/ZZpath9988?t=ZZtok99887');
+  assert.ok(Date.now() - t < 6000, 'took ' + (Date.now() - t) + ' ms');
+});

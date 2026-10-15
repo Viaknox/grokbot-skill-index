@@ -1626,7 +1626,15 @@ export function scrubber({ terms = [] } = {}) {
   // ID-like pieces of a share link (its ID, a path segment, a query value such as Figma t=) are inventoried on their own,
   // so a later bare repeat of one is replaced too, not only a repeat of the whole link (tune-up PR #22 follow-up).
   // Plain words (edit, sharing, resourcekey) are left alone: a piece must be 8+ characters with a digit, or 16+.
-  const linkPieces = (v) => { for (const p of v.split(/[\/?&#=:]+/)) if (!/[\uE000\uE001]/.test(p) && ((p.length >= 8 && /\d/.test(p)) || p.length >= 16) && !/^https?$/i.test(p) && !/\./.test(p)) inventory.push({ kind: 'LINK', value: p }); };
+  // The scheme and host are skipped, query names are skipped (public syntax; only values are pieces), dotted IDs count, and
+  // each piece is inventoried once per scrubber (a link repeated over thousands of turns stays linear; PR #23 review).
+  const linkSeen = new Set();
+  const linkPieces = (v) => {
+    const r = v.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\/?#\s]*/, ''), q = r.search(/[?&#]/);
+    const pieces = (q < 0 ? r : r.slice(0, q)).split('/');
+    if (q >= 0) for (const kv of r.slice(q).split(/[?&#]/)) if (kv) { const e = kv.indexOf('='); pieces.push(e < 0 ? kv : kv.slice(e + 1)); }
+    for (const p of pieces) if (!linkSeen.has(p) && !/[\uE000\uE001]/.test(p) && ((p.length >= 8 && /\d/.test(p)) || p.length >= 16)) { linkSeen.add(p); inventory.push({ kind: 'LINK', value: p }); }
+  };
   const ambiguous = new Set();       // public [KIND_n] we minted that later also arrived as literal text: never restored
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
