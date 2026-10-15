@@ -67,7 +67,7 @@ export const heldFinding = (cap = false) => cap
 export async function judgeHeld(scrub, text, ask) {
   let sanitized;
   try { sanitized = scrub.sanitize(text); }
-  catch (e) { if (e instanceof ScrubError) return [heldFinding(true)]; throw e; }
+  catch (e) { if (e instanceof ScrubError) return [heldFinding(e.cap === true)]; throw e; }
   return ask(sanitized);
 }
 

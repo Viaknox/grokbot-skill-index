@@ -3,7 +3,7 @@
 // placeholder appeared. Fixtures are templates expanded at run time, so no secret shape sits in the repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scrubber, Sanitized, isCredentialName, residual } from '../src/redact.js';
+import { scrubber, Sanitized, isCredentialName, residual, ScrubError } from '../src/redact.js';
 import { fixture, expand, gen, makeRng, seedOf, attackRounds } from './corpus/expand.js';
 
 const V2 = () => import('../src/redact.js');   // new exports are reached dynamically so a missing one fails one test, not the file
@@ -1229,4 +1229,18 @@ test('r67: [LINK_n] is a reserved placeholder: a literal one is never restored t
   s.scrub('the user typed [LINK_1] literally');
   assert.ok(!s.unscrub('echo [LINK_1]').includes('1aBcDeFg'));
   assert.ok(!scrubber().scrub('[LINK_1] then ' + url).includes('[LINK_1] then [LINK_1]'));   // our own numbering skips a literal one
+});
+
+test('r68: whole links even with a never-send term inside; ChatGPT workspace shares; trailing punctuation stays out; cap vs failure (tune-up PR #21 review)', () => {
+  const s = scrubber({ terms: ['Acme'] });
+  const a = s.sanitize('https://www.notion.so/Acme-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e');
+  assert.ok(a.held || !a.text.includes('8f2a9c4b'), a.text);
+  const b = scrubber().sanitize('see https://chatgpt.com/share/e/6741e46b-82d0-8005-90a2-27780552fe70 ok');
+  assert.ok(!b.text.includes('6741e46b'), b.text);
+  const c = scrubber(); const out = c.scrub('Open https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8. Or _https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8_');
+  assert.match(out, /^Open \[LINK_1\]\. Or _\[LINK_1\]_$/);
+  assert.equal(c.unscrub('[LINK_1]'), 'https://claude.ai/artifact/6sAkHYbhygfFtdDg7z4Yy8');
+  let capErr; try { scrubber().sanitize('a'.repeat(10), { maxChars: 5 }); } catch (e) { capErr = e; }
+  assert.equal(capErr.cap, true);
+  assert.equal(new ScrubError('scrubber failed (TypeError); holding back').cap, false);
 });

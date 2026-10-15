@@ -696,7 +696,7 @@ function braceEnd(s, open) {
     if (c === '/' && s[i + 1] === '*') { const e = s.indexOf('*/', i + 2); i = e < 0 || e >= lim ? lim : e + 1; continue; }
     if (c === '{') d++; else if (c === '}' && --d === 0) break;
   }
-  if ((braceBudget -= i - open + 1) < 0) throw new ScrubError('scrubbing took too long; holding back');
+  if ((braceBudget -= i - open + 1) < 0) throw new ScrubError('scrubbing took too long; holding back', true);
   return i < lim ? i : lim;
 }
 // A JSON "kind": "Secret" pair, with JSON escapes in the key or value decoded ("\u0053ecret" is "Secret"; PR #16 review).
@@ -974,7 +974,7 @@ function scrubHtmlAttrs(s, label, resolve) {
   // A credential-cue tag that TAG could not parse (an attribute value past its 2 KB bound, an unclosed quote) holds the
   // text back rather than leaving its element's value unscrubbed (PR #16 review).
   CUE_TAG.lastIndex = 0;
-  for (let c; (c = CUE_TAG.exec(s));) if (!seen.has(c.index)) throw new ScrubError('a credential tag too long to parse; holding back');
+  for (let c; (c = CUE_TAG.exec(s));) if (!seen.has(c.index)) throw new ScrubError('a credential tag too long to parse; holding back', true);
   return applyIntervals(s, ivs, label);
 }
 
@@ -1497,10 +1497,10 @@ function shannon(str) {
 // Scheme and host match in any case; routes are case-sensitive (a look-alike claude.ai/ARTIFACT/… is scanned, not
 // taken). Nothing glued to a letter, mark or digit of any script counts as a link start (tune-up PR #21 review).
 const ci = (h) => h.replace(/[a-z]/g, (c) => `[${c}${c.toUpperCase()}]`).replace(/\./g, '\\.');
-const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})+';
+const SEG = '(?:[A-Za-z0-9_\\-.]|%[0-9A-Fa-f]{2})*(?:[A-Za-z0-9]|%[0-9A-Fa-f]{2})';   // ends on a letter, digit or %XX: a sentence's "." or Markdown's "_" stays outside
 const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?://(?:'
   + ci('claude.ai') + '/(?:code/session_|(?:code/)?(?:artifact|chat|share|project)/)'
-  + '|' + ci('chatgpt.com') + '/(?:g/' + SEG + '/c/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
+  + '|' + ci('chatgpt.com') + '/(?:g/' + SEG + '/c/|share/e/|share/|c/|g/|s/)'   // /g/<gpt>/c/<chat>: a custom GPT's chat; s/: shared tasks and other shares (help.openai.com/en/articles/7925741)
   + '|' + ci('docs.google.com') + '/(?:document|spreadsheets|presentation|forms|drawings|videos)/(?:u/\\d{1,2}/)?d/(?:e/)?'
   + '|' + ci('drive.google.com') + '/(?:file/(?:u/\\d{1,2}/)?d/|drive/(?:u/\\d{1,2}/)?folders/)'
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
@@ -1588,7 +1588,9 @@ export class Sanitized {
   }
   static is(x) { try { return x instanceof Sanitized && x.#brand === true; } catch { return false; } }
 }
-export class ScrubError extends Error { constructor(m) { super(m); this.name = 'ScrubError'; } }
+// cap = true when the size, time or work cap stopped scrubbing; false when a scanner itself failed, so a report only
+// says "too long or complex" when that is the cause (tune-up PR #21 review).
+export class ScrubError extends Error { constructor(m, cap = false) { super(m); this.name = 'ScrubError'; this.cap = cap; } }
 
 // Returns a scrubber that keeps one placeholder per distinct value across every text it sees, so the judge can tell the
 // same secret recurred without seeing it.
@@ -1664,6 +1666,9 @@ export function scrubber({ terms = [] } = {}) {
     // A literal that equals a placeholder we already minted can no longer be told apart from it, so unscrub leaves that
     // placeholder as text from now on rather than risk turning a literal into the real value (PR #16 review).
     s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
+    // Share links first, before any rule inserts a placeholder inside one (a never-send term in a Notion title would
+    // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
+    s = s.replace(SHARE_LINK, (m) => label('LINK', m));
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
@@ -1700,7 +1705,6 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(/"(?:\\.|[^"\\\n])*"/g, (m) => (/\\"/.test(m) ? label('SECRET', m) : m));
     // Known key shapes on the folded view (a soft hyphen inside "ghp_…" does not hide it), then the plain PII shapes.
     s = applyOnView(s, V(s), KEY_SHAPE_RE, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'KEY' }));
-    s = s.replace(SHARE_LINK, (m) => label('LINK', m));   // before the PII shapes, so an ID is never half-read as a phone or IP
     for (const [kind, re] of PATTERNS) {
       s = s.replace(re, (m) => {
         if (kind === 'CARD') { const d = m.replace(/\D/g, ''); if (d.length < 13 || !luhn(d)) return m; }
@@ -1738,7 +1742,7 @@ export function scrubber({ terms = [] } = {}) {
       for (let i = 0; i < s.length; i++) {
         // The sanitize deadline is checked inside the loop: many distinct lengths sharing a first character could
         // otherwise run far past it before the check after scrubbing (PR #16 review). Past it, sanitize holds.
-        if ((i & 1023) === 0 && Date.now() > deadline) throw new ScrubError('scrubbing took too long; holding back');
+        if ((i & 1023) === 0 && Date.now() > deadline) throw new ScrubError('scrubbing took too long; holding back', true);
         if (!firsts.has(s[i])) continue;
         const lens = byPre.get(s.substr(i, 3)); if (!lens) continue;
         for (const L of lens) {
@@ -1790,15 +1794,15 @@ export function scrubber({ terms = [] } = {}) {
     // or enormous input means "no call", never a silent partial scrub.
     sanitize(text, { maxMs = 2000, maxChars = 4_000_000 } = {}) {
       const s = String(text ?? '');
-      if (s.length > maxChars) throw new ScrubError(`input of ${s.length} characters is over the ${maxChars} cap; holding back`);
+      if (s.length > maxChars) throw new ScrubError(`input of ${s.length} characters is over the ${maxChars} cap; holding back`, true);
       const t0 = Date.now();
       // Any unexpected failure inside the scrubber is a ScrubError, so callers hold the text back instead of crashing.
       let scrubbed;
       deadline = t0 + maxMs;
-      try { scrubbed = scrubOnce(s); } catch (e) { throw new ScrubError(`scrubber failed (${e && e.name}); holding back`); } finally { deadline = Infinity; }
+      try { scrubbed = scrubOnce(s); } catch (e) { if (e instanceof ScrubError) throw e; throw new ScrubError(`scrubber failed (${e && e.name}); holding back`); } finally { deadline = Infinity; }
       // The residual scan is inside the time budget too (PR #16 review).
       let r; try { r = residual(scrubbed, { terms: own }); } catch (e) { throw new ScrubError(`residual scan failed (${e && e.name}); holding back`); }
-      if (Date.now() - t0 > maxMs) throw new ScrubError(`scrubbing took longer than ${maxMs} ms; holding back`);
+      if (Date.now() - t0 > maxMs) throw new ScrubError(`scrubbing took longer than ${maxMs} ms; holding back`, true);
       return new Sanitized({ text: scrubbed, held: r.held, reasons: r.reasons, version: SCRUBBER_VERSION }, MINT);
     },
     // `text` with every inventoried user-side value blanked out, so a caller can ask whether a key, card or SSN shape is
