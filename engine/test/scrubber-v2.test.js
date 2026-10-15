@@ -1301,3 +1301,45 @@ test('r72: secrets and PII in a share link query are counted and inventoried lik
   const r = scrubber().sanitize('User: ' + L + '?contact=415-555-2671\nBot: 415-555-2671');
   assert.match(r.text, /Bot: \[PHONE_1\]$/);
 });
+
+test('r73: long punctuation after a share link stays linear (tune-up PR #22 follow-up)', () => {
+  const L = 'https://claude.ai/share/abcd-1234-efgh-5678';
+  for (const v of [L + '?x=' + '!,'.repeat(150000) + 'a', L + '/' + '.'.repeat(300000) + 'a']) {
+    const t = Date.now(); scrubber().sanitize(v); assert.ok(Date.now() - t < 1500, 'took ' + (Date.now() - t) + ' ms');
+  }
+  const d = scrubber().sanitize('https://docs.google.com/document/d/1AbCdEfGh/edit?usp=sharing then edit sharing usp');
+  assert.match(d.text, /then edit sharing usp$/);
+});
+
+test('r74: link tail runs after key/PII rules, passes over placeholders; Drive params before id are scanned; + is a space only in queries (tune-up PR #22 post-merge review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const L = 'https://claude.ai/share/abcd-1234';
+  const codes = checkConversation([{ role: 'user', content: L + '?contact=415-555-2671' }, { role: 'assistant', content: 'call 415-555-2671' }]).map(f => f.code);
+  assert.ok(codes.includes('echoed_contact') && !codes.includes('revealed_contact'), codes.join());
+  const p = scrubber({ terms: ['Acme'] }).sanitize('https://docs.google.com/document/d/abc/edit?foo=Acme&resourcekey=abc123 ok');
+  assert.ok(!p.text.includes('abc123') && !p.text.includes('resourcekey'), p.text);
+  const d = scrubber().sanitize('User: https://drive.google.com/open?password=hunter2&id=abc123\nBot: hunter2');
+  assert.ok(!d.text.includes('hunter2') && !d.text.includes('abc123'), d.text);
+  // A form body has no ? to mark it, so + is decoded for every secret: missing the echo would leak (viaknox PR #35 review).
+  const s = scrubber(); s.sanitize('password=correct+horse+battery');
+  assert.ok(!s.sanitize('it is correct horse battery').text.includes('horse'));
+  const q = scrubber(); q.sanitize(L + '?password=correct+horse+battery');
+  assert.ok(!q.sanitize('it was correct horse battery').text.includes('horse'));
+  const t = scrubber().sanitize(L + '//ZZdbl9988 ok');
+  assert.ok(!t.text.includes('ZZdbl9988'), t.text);
+});
+
+
+test('r75: scrubbing already-scrubbed link output changes nothing (tune-up PR #23 review)', () => {
+  const s = scrubber({ terms: ['Acme'] });
+  for (const t of ['https://docs.google.com/document/d/abc/edit?usp=sharing', 'https://drive.google.com/open?password=hunter2&id=abc123&resourcekey=0-zz',
+    'https://docs.google.com/document/d/abc/edit?foo=Acme&resourcekey=abc123 ok', 'see https://claude.ai/share/x1/y?z=1).']) {
+    const a = s.scrub(t); assert.equal(s.scrub(a), a, t);
+  }
+});
+
+test('r76: a credential before id= in a Drive link is one secret, not two (viaknox PR #35 review)', () => {
+  const s = scrubber(); const t = 'User: https://drive.google.com/open?password=hunter2&id=ABC123456789\nBot: hunter2';
+  const r = s.sanitize(t);
+  assert.equal(s.counts().SECRET, 1); assert.ok(!r.text.includes('hunter2')); assert.equal(s.unscrub(r.text), t); assert.equal(s.scrub(r.text), r.text);
+});

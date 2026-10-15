@@ -1507,8 +1507,13 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
   + ')' + SEG, 'gu');
-// A [LINK_n] placeholder followed by more of its URL: path segments and a query, up to whitespace or another placeholder.
-const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:\/[^\s\/?#\uE000\uE001"'<>]+)*\/?(?:[?&][^\s#\uE000\uE001"'<>]*)?(?:#[^\s\uE000\uE001"'<>]*)?)/g;
+// A [LINK_n] placeholder followed by more of its URL (path, query, fragment, even after //), up to whitespace or a quote.
+// The tail may also start with a placeholder (an email rule can take "?contact=…@…" before this runs). Another [LINK_n]
+// never joins a tail, so scrubbing already-scrubbed text changes nothing ([LINK_1][LINK_2] stays; PR #23 review).
+const TRAIL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', ']', "'", '"']);
+// Placeholders an earlier rule put inside the tail ([PRIVATE_1], [SECRET_1]) are passed over, not taken as its end, so
+// the rest of the link (a resourcekey after a never-send term) still joins it (tune-up PR #22 post-merge review).
+const LINK_TAIL = /(\uE000LINK_\d+\uE001)((?:[\/?&#]|\uE000(?!LINK_)[A-Z]+_\d+\uE001)(?:[^\s\uE000\uE001"'<>]|\uE000(?!LINK_)[A-Z]+_\d+\uE001)*)/g;
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
@@ -1639,7 +1644,9 @@ export function scrubber({ terms = [] } = {}) {
         core = qm ? qm[2] : core.replace(/^["']|["']$/g, ''); if (core && core !== value) inventory.push({ kind, value: core });
         // The decoded spelling too ("hunter\u0074wo" is echoed as huntertwo; PR #16 review).
         if (/[\\%&]/.test(core)) { const dec = decodeName(core); if (dec !== core && dec.trim().length >= 3) inventory.push({ kind, value: dec }); }
-        // Form encoding: a query value's "+" is a space (password=correct+horse+battery; tune-up PR #22 review).
+        // Form encoding: a query value's "+" is a space (password=correct+horse+battery; tune-up PR #22 review). Applied to every
+        // secret, not just query values: a pasted form body (password=correct+horse+battery) has no ? to mark it, and a
+        // missed decoded echo is a leak while an extra one only over-redacts (viaknox PR #35 security review).
         if (/^\S*\+\S*$/.test(core)) { const sp = decodeName(core.replace(/\+/g, ' ')); if (sp.trim().length >= 3) inventory.push({ kind, value: sp }); }
         // The token itself, without a trailing comment or sibling setting ("hunter2 # temporary"), so an echo of just
         // the token is still found (viaknox PR #27 review).
@@ -1672,7 +1679,11 @@ export function scrubber({ terms = [] } = {}) {
     s = s.replace(PUB, (m, kind, n) => { if (real.has(m)) ambiguous.add(m); if (!reserved.has(kind)) reserved.set(kind, new Set()); reserved.get(kind).add(Number(n)); return OPEN + kind + '_' + n + CLOSE; });
     // Share links first, before any rule inserts a placeholder inside one (a never-send term in a Notion title would
     // split the link and leave its ID behind; tune-up PR #21 review). See SHARE_LINK.
-    s = s.replace(SHARE_LINK, (m) => label('LINK', m));
+    // A Drive open?…&id= link: the parameters before id= go through the query credential rule first (open?password=x&id=…
+    // gives one [SECRET_n], inventoried for later repeats), then the whole link is one [LINK_n] wrapping it (tune-up PR #22
+    // post-merge review; viaknox PR #35 review: splitting it let a later rule count the secret twice).
+    s = s.replace(SHARE_LINK, (m) => { const q = m.indexOf('?'), i = m.lastIndexOf('id=');
+      return label('LINK', q < 0 || i === q + 1 ? m : m.slice(0, q) + scrubQuery(m.slice(q, i), label, resolve) + m.slice(i)); });
     const V = viewer();
     s = scrubPem(s, label);
     if (ownRe) s = applyOnView(s, V(s), ownRe, label, (m) => ({ from: m.index, to: m.index + m[0].length, kind: 'PRIVATE' }));
@@ -1704,11 +1715,6 @@ export function scrubber({ terms = [] } = {}) {
     s = scrubLineForms(s, label, resolve);
     s = scrubCallArg(s, label, resolve);
     s = scrubBareAuth(s, label);
-    // The rest of a share link (more path, the query: a Drive resourcekey, Figma's t=, a redirect) is taken only now,
-    // after every credential rule has run on it (?password=…, /password/…), so those are still found and inventoried;
-    // whatever is left joins the link as its own [LINK_n] and is never sent (tune-up PR #22 review). A trailing "." or ","
-    // stays outside.
-    s = s.replace(LINK_TAIL, (m, ph, tail) => { const t = tail.replace(/[.,;:!?)\]'"]+$/, ''); return t ? ph + label('LINK', t) + tail.slice(t.length) : m; });
     // Any quoted string carrying an escaped quote (\") is a smuggling attempt: scrub the whole string. Benign values
     // like "jo" have no escaped quote and stay. The pattern is the classic linear JSON-string match.
     s = s.replace(/"(?:\\.|[^"\\\n])*"/g, (m) => (/\\"/.test(m) ? label('SECRET', m) : m));
@@ -1724,6 +1730,13 @@ export function scrubber({ terms = [] } = {}) {
         return label(kind, m.trim());
       });
     }
+    // The rest of a share link (more path, the query: a Drive resourcekey, Figma's t=, a redirect) is taken only now,
+    // after every credential, key and PII rule has run on it (a phone in ?contact= is inventoried, so its echo is an echo; PR #22 post-merge review) (?password=…, /password/…), so those are still found and inventoried;
+    // whatever is left joins the link as its own [LINK_n] and is never sent (tune-up PR #22 review). A trailing "." or ","
+    // stays outside.
+    // Trailing punctuation is trimmed with a loop, not /[...]+$/: that regex restarts at every position of a long run that
+    // is followed by another character, which is quadratic (a 300 KB run stalled for minutes; tune-up PR #22 follow-up).
+    s = s.replace(LINK_TAIL, (m, ph, tail) => { let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; return ph + label('LINK', t) + tail.slice(e); });
     // A term beside "@" that the email rule did not consume (`user@Acme`, `jo@acme`: a handle or a single-label host) is
     // still the term. The first sweep keeps "@" out so a one-letter term cannot eat a host label inside a real address
     // (jo@x.example); real addresses are [EMAIL_n] by now, so this sweep may touch "@" freely (PR #16 review).
