@@ -418,11 +418,12 @@ const ASSIGN_START = new RegExp(
   // A short qualifier may sit between the name and the separator: "password (prod):", "token [staging]:", "key/prod:",
   // and an empty or indexed array suffix (password[]=x, password[0]=x; PR #16 review). A line comment may also end the
   // name's line with the operator on the next one (const password // prod\n= "x"; PR #27 review). A C# accessor block too
-  // (public string Password { get; set; } = "x"; PR #27 review).
+  // (public string Password { get; set; } = "x"; PR #27 review), also spread over several lines and with comments
+  // between accessors (viaknox PR #28, tune-up PR #20 reviews).
   // Each whitespace run is matched atomically ((?=(x*))\N), so a credential word followed by thousands of spaces is
   // read once instead of being re-split between adjacent runs (that was cubic; PR #16 review). Groups 3-6 are only
   // these runs; callers use m[0], m[1] and m[2].
-  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:\\{(?:[ \\t]*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)[ \\t]*;){1,3}[ \\t]*\\}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
+  '(?:(?<=["\'])(?=([ \\t\\r\\n]*))\\3)?(?=([ \\t]*))\\4(?:(?:(?:\\r?\\n[ \\t]*)?\\{(?:(?:[ \\t\\r\\n]|/\\*(?:[^*/]|\\*(?!/)|/(?!\\*)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*(?:(?:public|private|protected|internal)[ \\t]+)?(?:get|set|init)(?:[ \\t\\r\\n]|/\\*(?:[^*/]|\\*(?!/)|/(?!\\*)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*;){1,3}(?:[ \\t\\r\\n]|/\\*(?:[^*/]|\\*(?!/)|/(?!\\*)){0,4000}\\*/|//[^\\n]{0,1000}\\n)*\\}(?:[ \\t]*\\r?\\n){0,3}|//[^\\n]{0,80}\\n[ \\t]*|/\\*(?:[^*]|\\*(?!/)){0,200}\\*/|\\([^()\\n]{1,40}\\)|\\[[^\\[\\]\\n]{0,40}\\]|/[\\p{L}\\p{N}_\\-]{1,40})(?=([ \\t]*))\\5)?\\]?(?=([ \\t]*))\\6(::=|:=|\\?\\?=|\\|\\|=|&&=|\\?=|\\+=|=>|->|~=|!=|==|<<<|[:=\\u2236\\uA789\\uFE55\\uFF1D\\uFF1A\\u2192])[ \\t]*', 'gu');
 
 // Scans the folded view for a credential NAME + separator and removes the value (measured on the original text, so
 // quotes, brackets and continuation lines are honoured) to its end; a non-credential name is left in place and scanning
@@ -512,9 +513,24 @@ const SEP_LINE = /^[ \t]*(:=|=>|->|~=|[:=\u2236\uA789\uFE55\uFF1D\uFF1A\u2192])[
 // and the index of the newline that ends the row.
 function csvRow(s, i, delim = ',') {
   const cells = []; let j = i, start = i, q = false;
-  for (; j < s.length; j++) { const c = s[j]; if (c === '"') { q = !q; continue; } if (!q && c === delim) { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break; }
+  // A quote opens a quoted field only at the start of a cell (RFC 4180); a stray quote inside a value (hun"ter2) is a
+  // literal character and must not swallow the delimiters after it (tune-up PR #20 adversarial review).
+  // seen = a non-space character has appeared in this cell (a flag, not a re-slice, so many quotes stay linear).
+  for (let seen = false; j < s.length; j++) {
+    const c = s[j];
+    if (c === '"') { if (q) { if (s[j + 1] === '"') j++; else q = false; } else if (!seen) q = true; seen = true; continue; }
+    if (!q && c === delim) { cells.push([start, j]); start = j + 1; seen = false; } else if (!q && c === '\n') break; else if (c !== ' ' && c !== '\t') seen = true;
+  }
   cells.push([start, j]); return { cells, end: j };
 }
+// A header cell is an identifier or a short label; a quoted cell is unescaped by CSV rules ("" is a quote) first, so
+// "last,name" and "last,""name""" count as labels (tune-up PR #20 / viaknox PR #29 reviews).
+const headerCellOk = (c) => { const v = /^[ \t]*"/.test(c) ? headerCellText(c) : c; return IDENT_CELL.test(v) || LABEL_CELL.test(v); };
+// Declaration modifiers that mark the word after them as a type (public Name get(), private Name x;).
+const MODIFIER_BEFORE = /\b(?:public|private|protected|internal|static|final|readonly|const|override|virtual|abstract|sealed|async)[ \t]+$/;
+// A header cell's text as a name: quotes unescaped by CSV rules ("" is a quote), commas and quotes as spaces, so
+// "access,token" reads as access token for both the shape check and the credential check (tune-up PR #20 review).
+const headerCellText = (c) => { const q = /^[ \t]*"((?:[^"]|"")*)"[ \t]*$/.exec(c); return q ? q[1].replace(/""/g, '"').replace(/[",]+/g, ' ').replace(/ {2,}/g, ' ').trim() : c.trim().replace(/^["']|["']$/g, ''); };
 const trailingName = (tok) => (tok.replace(/[:=]+$/, '').replace(/["']$/, '').match(/[\p{L}\p{N}_$.\-]+$/u) || [''])[0];
 // The judge's own role labels ("USER: AUTH x", "AGENT: …") are not part of the line a person typed (PR #27 review).
 const ROLE_PREFIX = /^(?:USER|AGENT|AGENT INSTRUCTIONS|USER ACTION \(not a message the user typed\)):[ \t]*/;
@@ -540,14 +556,17 @@ function scrubLineForms(s, label, resolve) {
     } else if ((m = TWO_TOKENS.exec(line)) && isCredentialName(resolve(trailingName(m[1])))) {
       const vStart = i + line.lastIndexOf(m[2]), vEnd = vStart + m[2].length;
       if (vStart >= at && !isPlaceholderValue(m[2])) { out += s.slice(at, vStart) + label('SECRET', m[2]); at = vEnd; }
-    } else if ((m = NAME_COMMA.exec(line)) && isCredentialName(resolve(m[1]))) {
+    } else if (!csv && (m = NAME_COMMA.exec(line)) && isCredentialName(resolve(m[1]))) {   // inside a table a row is data, not a name (Other1pass,amy; PR #20 review)
       const vStart = i + m[0].length, end = valueEnd(s, vStart);
       if (vStart >= at && s.slice(vStart, end).trim() && !isPlaceholderValue(s.slice(vStart, end))) { out += s.slice(at, vStart) + label('SECRET', s.slice(vStart, end)); at = end; nl = Math.max(nl, end); }
       // A credential-first CSV header (password,username) also starts a table, so the rows below lose their credential
       // cells too (PR #27 review). The rest of the header line still goes, which errs on the safe side.
-      const hcells = line.split(',');
-      if (!csv && hcells.length >= 2 && hcells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
-        const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
+      // The header is split with the quote-aware CSV parser so it counts columns the same way as the rows below
+      // (password,"last,name" is two columns; viaknox PR #28 review).
+      const hcells = csvRow(line, 0).cells.map(([a, b]) => line.slice(a, b));
+      while (hcells.length > 2 && !hcells[hcells.length - 1].trim()) hcells.pop();   // trailing commas from a spreadsheet export
+      if (!csv && hcells.length >= 2 && hcells.every(headerCellOk)) {
+        const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(headerCellText(c)))) cols.add(k); });
         if (cols.size) csv = { n: hcells.length, cols, dl: ',' };
       }
     } else if ((m = YAML_Q.exec(line)) && isCredentialName(resolve(m[1])) && nl < s.length) {
@@ -577,19 +596,27 @@ function scrubLineForms(s, label, resolve) {
     } else if (csv) {
       // A data row under a credential column (cells may be quoted and span lines): scrub those cells.
       const row = csvRow(s, i, csv.dl);
+      while (row.cells.length > csv.n && !s.slice(...row.cells[row.cells.length - 1]).replace(/\r$/, '').trim()) row.cells.pop();   // trailing commas
       if (row.cells.length === csv.n) {
         for (let k = 0; k < row.cells.length; k++) {
           const [a, b] = row.cells[k]; const cell = s.slice(a, b), lead = cell.length - cell.trimStart().length, core = cell.trim();
           if (csv.cols.has(k) && core && a + lead >= at && !isPlaceholderValue(core)) { out += s.slice(at, a + lead) + label('SECRET', core); at = a + lead + core.length; }
         }
         nl = Math.max(nl, row.end);
+      } else {
+        // A row with a different width than the header cannot be aligned to the credential column, so the whole row
+        // goes (fails closed; viaknox PR #29 security review).
+        const [a0] = row.cells[0], core = s.slice(a0, row.end).replace(/\r$/, ''), lead = core.length - core.trimStart().length, body = core.trim();
+        if (body && a0 + lead >= at) { out += s.slice(at, a0 + lead) + label('SECRET', body); at = a0 + lead + body.length; }
+        nl = Math.max(nl, row.end);
       }
     } else if ((line.includes(',') || line.includes('\t')) && !csv) {
       // Header cells may be multiword labels ("Login Name", "Password"; PR #27 review): each column is judged on its own.
       // Tab-separated pastes (a spreadsheet copy) too, when the header has tabs and no commas (PR #27 review).
       const dl = line.includes(',') ? ',' : '\t', hdr = csvRow(s, i, dl), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
-      if (cells.length >= 2 && hdr.end <= nl && cells.every(c => IDENT_CELL.test(c) || LABEL_CELL.test(c))) {
-        const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
+      while (cells.length > 2 && !cells[cells.length - 1].trim()) cells.pop();   // trailing commas from a spreadsheet export
+      if (cells.length >= 2 && hdr.end <= nl && cells.every(headerCellOk)) {
+        const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(headerCellText(c)))) cols.add(k); });
         if (cols.size) csv = { n: cells.length, cols, dl };
       }
     }
@@ -1485,8 +1512,27 @@ export function residual(text, { terms = [] } = {}) {
     // A bare "sha"/"hash" label is not enough: those still hold (a password hash is not public).
     if (/^[0-9a-f]{40}$|^[0-9a-f]{64}$/.test(run) && /\b(?:commit|commits|committed|revision|merge|merged|cherry-pick|cherry-picked|revert|reverted|blob|tree|git)\b[^\n]{0,40}$/i.test(sp.slice(Math.max(0, mm.index - 60), mm.index))) continue;
     if (/^[0-9a-fA-F]+$/.test(run)) { if (/[a-fA-F]/.test(run) && shannon(run) >= 3.0) { reasons.push('high-entropy hex run'); break; } continue; }
-    // A camel/Pascal-case identifier made of word-like parts (AbstractQueuedSynchronizer) is code, not a token (PR #27 review).
-    if (/^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) continue;
+    // A camel/Pascal-case identifier made of word-like parts (AbstractQueuedSynchronizer) is code, not a token (PR #27
+    // review), but only where the text shows it is code: a member access or call (pkg.Name, Name.method, Name(, Name<,
+    // Name::, Name#) or a declaration keyword before it. A bare word-like passphrase (PurpleMonkeyDishwasherSatellite)
+    // still counts (tune-up PR #19 / viaknox PR #28 review).
+    // Every rule below also needs the whole line to read as code (a ; { } or => on it, or a stack frame "at pkg.Name"),
+    // no credential word on the line, and no digit or # straight after the word, so a passphrase in prose
+    // ("ok so Name#2024 is it", "bob, Name, admin") still counts (tune-up PR #20 adversarial review).
+    const ls = sp.lastIndexOf('\n', mm.index) + 1, le0 = sp.indexOf('\n', mm.index), ln = sp.slice(ls, le0 < 0 ? sp.length : le0);
+    const codeLine = (/[;{}]|=>/.test(ln) || /^[ \t]*at[ \t]+[\w$./]+\(/.test(ln) || /^[ \t]*(?:public|private|protected|internal)\b/.test(ln)) && !/pass(?:word|wd|phrase|code)?|pwd|secret|token|credential|api[-_ ]?key|\bkey\b/i.test(ln)
+      && !/^(?:#|(?:[(<.]|::)?\d)/.test(sp.slice(mm.index + run.length, mm.index + run.length + 3));
+    if (codeLine && /^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
+      const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 80);
+      if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|<|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
+      // Type positions (tune-up PR #20 review): a generic argument (List<Name>, Map<K, Name>), an array type (Name[]),
+      // a declaration or method return type after a modifier (private Name ident; / public Name ident() and a parameter
+      // inside a list ((Name ident, / , Name ident)). Prose ("use Name tonight;") has no modifier, so it still counts.
+      if (/[<,][ \t]*$/.test(before) && /^[ \t]*[>,\[]/.test(after)) continue;
+      if (/^\[\]/.test(after)) continue;
+      if (MODIFIER_BEFORE.test(before) && /^\??[ \t]+[A-Za-z_$][\w$]*(?:[ \t]*[;=]|\()/.test(after)) continue;   // Type? is a nullable type
+      if (/[(,][ \t]*$/.test(before) && /^\??[ \t]+[A-Za-z_$][\w$]*[ \t]*[,)]/.test(after)) continue;
+    }
     const classes = (/[A-Z]/.test(run) ? 1 : 0) + (/[a-z]/.test(run) ? 1 : 0) + (/[0-9]/.test(run) ? 1 : 0);
     if (classes >= 2 && shannon(run) > 4.0) { reasons.push('high-entropy token'); break; }
   }

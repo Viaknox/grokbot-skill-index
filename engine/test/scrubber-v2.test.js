@@ -1006,7 +1006,8 @@ test('r53: credential-first CSV headers, C# auto-property initializers, camel-ca
   const csv = t('password,username\nhunter2,alice\nhunter3,bob');
   assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
   assert.ok(!t('public string Password { get; set; } = "hunter2";').text.includes('hunter2'));
-  assert.equal(t('how does AbstractQueuedSynchronizer work').held, false);
+  assert.equal(t('at java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)').held, false);
+  assert.equal(t('var s = new AbstractQueuedSynchronizer();').held, false);
   const rnd = t('token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm'); assert.ok(rnd.held || !rnd.text.includes('kQzPbXwR'), rnd.text);
 });
 
@@ -1037,4 +1038,125 @@ test('r55: underscore-prefixed international phones, long gaps after SSN/phone c
   for (const x of ['phone' + ' '.repeat(300000) + '4155552671', 'a-'.repeat(200000) + 'x', '1'.repeat(300000) + '://a:b@c']) {
     const t0 = Date.now(); scrubber({ terms: [] }).sanitize(x); assert.ok(Date.now() - t0 < 1500, String(Date.now() - t0));
   }
+});
+
+// Round 56 (tune-up PR #19 / viaknox PR #28 Codex review of f3870f0).
+test('r56: bare camel-case passphrases still count, quoted commas in credential-first CSV headers, multi-line C# accessors', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['value PurpleMonkeyDishwasherSatellite', 'VelvetQuartzDragonNimbusCipher', 'value PurpleMonkeyDishwasherSatellite.']) {
+    const r = t(x); assert.ok(r.held || !/PurpleMonkey|VelvetQuartz/.test(r.text), x);
+  }
+  const csv = t('password,"last,name"\nhunter2,"smith, j"\nhunter3,doe');
+  assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
+  for (const x of ['public string Password {\n  get;\n  set;\n} = "hunter2";', 'public string Password\n{\n    get; private set;\n}\n= "hunter2";']) {
+    assert.ok(!t(x).text.includes('hunter2'), x);
+  }
+});
+
+test('r56: long whitespace inside and after a C# accessor block stays fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['Password {' + ' \n'.repeat(100000) + 'get;}', 'Password { get; }' + ' '.repeat(300000) + 'x', 'Password { get;' + '\n '.repeat(100000)]) {
+    const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+  }
+});
+
+test('r57: camel-case type positions stay unheld; prose after a passphrase still counts', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['private AbstractQueuedSynchronizer synchronizer;', 'List<AbstractQueuedSynchronizer> values;', 'Map<String, AbstractQueuedSynchronizer> m;',
+    'public AbstractQueuedSynchronizer getSync() {', 'AbstractQueuedSynchronizer[] all;', 'void run(AbstractQueuedSynchronizer sync, int n) {']) {
+    assert.equal(t(x).held, false, x);
+  }
+  for (const x of ['PurpleMonkeyDishwasherSatellite is my password', 'use PurpleMonkeyDishwasherSatellite tonight', 'PurpleMonkeyDishwasherSatellite',
+    'my password PurpleMonkeyDishwasherSatellite thanks,', 'PurpleMonkeyDishwasherSatellite works, right?', 'it is PurpleMonkeyDishwasherSatellite (new)']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x);
+  }
+});
+
+test('r58: comments between C# accessors, escaped quotes in credential-first CSV headers', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['public string Password { get; /* note */ set; } = "hunter2";', 'public string Password {\n  get; // read\n  set;\n} = "hunter2";',
+    'public string Password\n{\n  /* a */ get;\n  // b\n  private set;\n}\n= "hunter2";']) {
+    assert.ok(!t(x).text.includes('hunter2'), x);
+  }
+  const csv = t('password,"last,""name"""\nhunter2,"smith"\nhunter3,doe');
+  assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
+});
+
+test('r58: long comment and whitespace runs inside a C# accessor block stay fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['Password {' + ' /**/'.repeat(60000) + 'get;', 'Password { get;' + ' // x\n'.repeat(60000), 'Password {' + '/*'.repeat(100000)]) {
+    const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+  }
+});
+
+test('r59: CSV rows wider or narrower than a credential header fail closed', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['password,"last,name"\nhuntertwo,Doe,Jane', '"last,name",password\nDoe,Jane,huntertwo', 'user,password,role\nalice,huntertwo']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('huntertwo'), `${x} -> ${r.text}`);
+  }
+  const ok = t('password,user\nhuntertwo,alice\n\nhope that helps');
+  assert.ok(ok.text.includes('hope that helps') && !ok.text.includes('huntertwo'), ok.text);
+});
+
+test('r60: camel-case exemption needs a code line with no credential word; prose passphrase shapes still count', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  const W = 'PurpleMonkeyDishwasherSatellite';
+  for (const x of [`ok so ${W}#2024 is it`, `with ${W}#`, `ok ${W}(2024) works`, `${W}<3`, `${W}::1`, `ok ${W}.Xx`, `x.${W}`,
+    `bob, ${W}, admin`, `(${W} admin)`, `pw catch ${W}`, `password import ${W}`, `password = new ${W}();`, `token: x.${W};`, `use ${W}#1;`]) {
+    const r = t(x); assert.ok(r.held || !r.text.includes(W), x);
+  }
+  for (const x of ['at java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)', 'List<AbstractQueuedSynchronizer> values;',
+    'class Foo extends AbstractQueuedSynchronizer {', 'private AbstractQueuedSynchronizer synchronizer;']) {
+    assert.equal(t(x).held, false, x);
+  }
+});
+
+test('r60: CSV trailing commas from spreadsheet exports and stray quotes inside values', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['password,username,\nHunter2xyz!,bob,\n', 'user,password\nbob,Hun"ter2xyz!\nalice,Second1pass\n', 'password,username\nHunt"er2xyz!,bob\nOther1pass,amy\n']) {
+    const r = t(x); assert.ok(r.held || !/Hunter2xyz|Hun"ter2xyz|Hunt"er2xyz|Second1pass|Other1pass/.test(r.text), `${x} -> ${r.text}`);
+  }
+  const keep = t('password,username,\nHunter2xyz!,bob,\n');
+  assert.ok(keep.text.includes('bob'), keep.text);
+  const q = t('password,note\nhunter2,"a, b"\nhunter3,"say ""hi"""\n');
+  assert.ok(!/hunter2|hunter3/.test(q.text) && q.text.includes('"a, b"'), q.text);
+});
+
+test('r61: prose with a trailing semicolon, long accessor comments, one-cell rows, quoted credential headers, Allman methods', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  const W = 'PurpleMonkeyDishwasherSatellite';
+  for (const x of [`use ${W} tonight;`, `bob ${W} admin;`, `user=bob ${W} ok;`]) { const r = t(x); assert.ok(r.held || !r.text.includes(W), x); }
+  for (const x of ['public string Password { get; /*' + 'x'.repeat(2000) + '*/ set; } = "huntertwo";', 'public string Password {\n get; //' + 'y'.repeat(500) + '\n set;\n} = "huntertwo";',
+    'password,user\nhuntertwo', 'user,"access,token"\nbob,huntertwo']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('huntertwo'), x.slice(0, 60));
+  }
+  for (const x of ['public AbstractQueuedSynchronizer getSync()\n{', 'private AbstractQueuedSynchronizer synchronizer;', 'public AbstractQueuedSynchronizer getSync() {']) assert.equal(t(x).held, false, x);
+});
+
+test('r61: repeated unclosed comment starts in accessor blocks stay fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['pw\n{/* '.repeat(50000), 'key{/*'.repeat(55000), 'Password\n{ /* '.repeat(25000)]) {   // ~350 KB: quadratic would be minutes
+    const t0 = Date.now(); try { t(x); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+  }
+});
+
+test('r61: let/var/val before a word are not type positions', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['let PurpleMonkeyDishwasherSatellite go;', 'I will let PurpleMonkeyDishwasherSatellite stay; thanks', 'var PurpleMonkeyDishwasherSatellite x;']) {
+    const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x);
+  }
+});
+
+test('r62: module-qualified Java stack frames and nullable type positions stay unheld', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)',
+    'private AbstractQueuedSynchronizer? synchronizer;', 'void Run(AbstractQueuedSynchronizer? sync) {']) assert.equal(t(x).held, false, x);
+  const r = t('use PurpleMonkeyDishwasherSatellite? tonight;'); assert.ok(r.held || !r.text.includes('PurpleMonkey'));
+});
+
+test('r62: bare PascalCase calls are not a code context; many quotes in one CSV cell stay fast', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['PurpleMonkeyDishwasherSatellite();', 'x = PurpleMonkeyDishwasherSatellite#;']) { const r = t(x); assert.ok(r.held || !r.text.includes('PurpleMonkey'), x); }
+  const big = 'password,user\nab' + 'c"'.repeat(150000) + ',bob\n';
+  const t0 = Date.now(); try { t(big); } catch {} assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
 });
