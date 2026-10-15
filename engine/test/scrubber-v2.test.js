@@ -1007,7 +1007,7 @@ test('r53: credential-first CSV headers, C# auto-property initializers, camel-ca
   assert.ok(!csv.text.includes('hunter2') && !csv.text.includes('hunter3'), csv.text);
   assert.ok(!t('public string Password { get; set; } = "hunter2";').text.includes('hunter2'));
   assert.equal(t('at java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)').held, false);
-  assert.equal(t('new AbstractQueuedSynchronizer() is abstract').held, false);
+  assert.equal(t('var s = new AbstractQueuedSynchronizer();').held, false);
   const rnd = t('token kQzPbXwRtYmNvLsDfGhJkLzXcVbNm'); assert.ok(rnd.held || !rnd.text.includes('kQzPbXwR'), rnd.text);
 });
 
@@ -1063,7 +1063,7 @@ test('r56: long whitespace inside and after a C# accessor block stays fast', () 
 test('r57: camel-case type positions stay unheld; prose after a passphrase still counts', () => {
   const t = (x) => scrubber({ terms: [] }).sanitize(x);
   for (const x of ['AbstractQueuedSynchronizer synchronizer;', 'List<AbstractQueuedSynchronizer> values;', 'Map<String, AbstractQueuedSynchronizer> m;',
-    'public AbstractQueuedSynchronizer getSync() {', 'AbstractQueuedSynchronizer[] all;', 'void run(AbstractQueuedSynchronizer sync, int n)']) {
+    'public AbstractQueuedSynchronizer getSync() {', 'AbstractQueuedSynchronizer[] all;', 'void run(AbstractQueuedSynchronizer sync, int n) {']) {
     assert.equal(t(x).held, false, x);
   }
   for (const x of ['PurpleMonkeyDishwasherSatellite is my password', 'use PurpleMonkeyDishwasherSatellite tonight', 'PurpleMonkeyDishwasherSatellite',
@@ -1096,4 +1096,28 @@ test('r59: CSV rows wider or narrower than a credential header fail closed', () 
   }
   const ok = t('password,user\nhuntertwo,alice\n\nhope that helps');
   assert.ok(ok.text.includes('hope that helps') && !ok.text.includes('huntertwo'), ok.text);
+});
+
+test('r60: camel-case exemption needs a code line with no credential word; prose passphrase shapes still count', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  const W = 'PurpleMonkeyDishwasherSatellite';
+  for (const x of [`ok so ${W}#2024 is it`, `with ${W}#`, `ok ${W}(2024) works`, `${W}<3`, `${W}::1`, `ok ${W}.Xx`, `x.${W}`,
+    `bob, ${W}, admin`, `(${W} admin)`, `pw catch ${W}`, `password import ${W}`, `password = new ${W}();`, `token: x.${W};`, `use ${W}#1;`]) {
+    const r = t(x); assert.ok(r.held || !r.text.includes(W), x);
+  }
+  for (const x of ['at java.util.concurrent.locks.AbstractQueuedSynchronizer.acquire(AbstractQueuedSynchronizer.java:1)', 'List<AbstractQueuedSynchronizer> values;',
+    'class Foo extends AbstractQueuedSynchronizer {', 'private AbstractQueuedSynchronizer synchronizer;']) {
+    assert.equal(t(x).held, false, x);
+  }
+});
+
+test('r60: CSV trailing commas from spreadsheet exports and stray quotes inside values', () => {
+  const t = (x) => scrubber({ terms: [] }).sanitize(x);
+  for (const x of ['password,username,\nHunter2xyz!,bob,\n', 'user,password\nbob,Hun"ter2xyz!\nalice,Second1pass\n', 'password,username\nHunt"er2xyz!,bob\nOther1pass,amy\n']) {
+    const r = t(x); assert.ok(r.held || !/Hunter2xyz|Hun"ter2xyz|Hunt"er2xyz|Second1pass|Other1pass/.test(r.text), `${x} -> ${r.text}`);
+  }
+  const keep = t('password,username,\nHunter2xyz!,bob,\n');
+  assert.ok(keep.text.includes('bob'), keep.text);
+  const q = t('password,note\nhunter2,"a, b"\nhunter3,"say ""hi"""\n');
+  assert.ok(!/hunter2|hunter3/.test(q.text) && q.text.includes('"a, b"'), q.text);
 });

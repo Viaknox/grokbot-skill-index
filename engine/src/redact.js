@@ -513,7 +513,13 @@ const SEP_LINE = /^[ \t]*(:=|=>|->|~=|[:=\u2236\uA789\uFE55\uFF1D\uFF1A\u2192])[
 // and the index of the newline that ends the row.
 function csvRow(s, i, delim = ',') {
   const cells = []; let j = i, start = i, q = false;
-  for (; j < s.length; j++) { const c = s[j]; if (c === '"') { q = !q; continue; } if (!q && c === delim) { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break; }
+  // A quote opens a quoted field only at the start of a cell (RFC 4180); a stray quote inside a value (hun"ter2) is a
+  // literal character and must not swallow the delimiters after it (tune-up PR #20 adversarial review).
+  for (; j < s.length; j++) {
+    const c = s[j];
+    if (c === '"') { if (q) { if (s[j + 1] === '"') j++; else q = false; } else if (!s.slice(start, j).trim()) q = true; continue; }
+    if (!q && c === delim) { cells.push([start, j]); start = j + 1; } else if (!q && c === '\n') break;
+  }
   cells.push([start, j]); return { cells, end: j };
 }
 // A header cell is an identifier or a short label; a quoted cell is unescaped by CSV rules ("" is a quote) first, so
@@ -544,7 +550,7 @@ function scrubLineForms(s, label, resolve) {
     } else if ((m = TWO_TOKENS.exec(line)) && isCredentialName(resolve(trailingName(m[1])))) {
       const vStart = i + line.lastIndexOf(m[2]), vEnd = vStart + m[2].length;
       if (vStart >= at && !isPlaceholderValue(m[2])) { out += s.slice(at, vStart) + label('SECRET', m[2]); at = vEnd; }
-    } else if ((m = NAME_COMMA.exec(line)) && isCredentialName(resolve(m[1]))) {
+    } else if (!csv && (m = NAME_COMMA.exec(line)) && isCredentialName(resolve(m[1]))) {   // inside a table a row is data, not a name (Other1pass,amy; PR #20 review)
       const vStart = i + m[0].length, end = valueEnd(s, vStart);
       if (vStart >= at && s.slice(vStart, end).trim() && !isPlaceholderValue(s.slice(vStart, end))) { out += s.slice(at, vStart) + label('SECRET', s.slice(vStart, end)); at = end; nl = Math.max(nl, end); }
       // A credential-first CSV header (password,username) also starts a table, so the rows below lose their credential
@@ -552,6 +558,7 @@ function scrubLineForms(s, label, resolve) {
       // The header is split with the quote-aware CSV parser so it counts columns the same way as the rows below
       // (password,"last,name" is two columns; viaknox PR #28 review).
       const hcells = csvRow(line, 0).cells.map(([a, b]) => line.slice(a, b));
+      while (hcells.length > 2 && !hcells[hcells.length - 1].trim()) hcells.pop();   // trailing commas from a spreadsheet export
       if (!csv && hcells.length >= 2 && hcells.every(headerCellOk)) {
         const cols = new Set(); hcells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: hcells.length, cols, dl: ',' };
@@ -583,6 +590,7 @@ function scrubLineForms(s, label, resolve) {
     } else if (csv) {
       // A data row under a credential column (cells may be quoted and span lines): scrub those cells.
       const row = csvRow(s, i, csv.dl);
+      while (row.cells.length > csv.n && !s.slice(...row.cells[row.cells.length - 1]).replace(/\r$/, '').trim()) row.cells.pop();   // trailing commas
       if (row.cells.length === csv.n) {
         for (let k = 0; k < row.cells.length; k++) {
           const [a, b] = row.cells[k]; const cell = s.slice(a, b), lead = cell.length - cell.trimStart().length, core = cell.trim();
@@ -600,6 +608,7 @@ function scrubLineForms(s, label, resolve) {
       // Header cells may be multiword labels ("Login Name", "Password"; PR #27 review): each column is judged on its own.
       // Tab-separated pastes (a spreadsheet copy) too, when the header has tabs and no commas (PR #27 review).
       const dl = line.includes(',') ? ',' : '\t', hdr = csvRow(s, i, dl), cells = hdr.cells.map(([a, b]) => s.slice(a, b).replace(/\r$/, '').replace(/^\uFEFF/, ''));   // a UTF-8 BOM is not part of the first label (PR #27 review)
+      while (cells.length > 2 && !cells[cells.length - 1].trim()) cells.pop();   // trailing commas from a spreadsheet export
       if (cells.length >= 2 && hdr.end <= nl && cells.every(headerCellOk)) {
         const cols = new Set(); cells.forEach((c, k) => { if (isCredentialName(resolve(c.trim().replace(/^["']|["']$/g, '')))) cols.add(k); });
         if (cols.size) csv = { n: cells.length, cols, dl };
@@ -1501,7 +1510,13 @@ export function residual(text, { terms = [] } = {}) {
     // review), but only where the text shows it is code: a member access or call (pkg.Name, Name.method, Name(, Name<,
     // Name::, Name#) or a declaration keyword before it. A bare word-like passphrase (PurpleMonkeyDishwasherSatellite)
     // still counts (tune-up PR #19 / viaknox PR #28 review).
-    if (/^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
+    // Every rule below also needs the whole line to read as code (a ; { } or => on it, or a stack frame "at pkg.Name"),
+    // no credential word on the line, and no digit or # straight after the word, so a passphrase in prose
+    // ("ok so Name#2024 is it", "bob, Name, admin") still counts (tune-up PR #20 adversarial review).
+    const ls = sp.lastIndexOf('\n', mm.index) + 1, le0 = sp.indexOf('\n', mm.index), ln = sp.slice(ls, le0 < 0 ? sp.length : le0);
+    const codeLine = (/[;{}]|=>/.test(ln) || /^[ \t]*at[ \t]+[\w$.]+\(/.test(ln)) && !/pass(?:word|wd|phrase|code)?|pwd|secret|token|credential|api[-_ ]?key|\bkey\b/i.test(ln)
+      && !/^(?:#|(?:[(<.]|::)?\d)/.test(sp.slice(mm.index + run.length, mm.index + run.length + 3));
+    if (codeLine && /^[A-Za-z][a-z]+(?:[A-Z][a-z]{2,}){1,}$/.test(run)) {
       const before = sp.slice(Math.max(0, mm.index - 12), mm.index), after = sp.slice(mm.index + run.length, mm.index + run.length + 80);
       if (/\.$/.test(before) || /^(?:\.[A-Za-z_]|[(<#]|::)/.test(after) || /\b(?:new|class|extends|implements|interface|import|struct|enum|throws|catch)[ \t]+$/.test(before)) continue;
       // Type positions (tune-up PR #20 review): a generic argument (List<Name>, Map<K, Name>), an array type (Name[]),
