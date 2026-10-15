@@ -1244,6 +1244,8 @@ test('r68: whole links even with a never-send term inside; ChatGPT workspace sha
   let capErr; try { scrubber().sanitize('a'.repeat(10), { maxChars: 5 }); } catch (e) { capErr = e; }
   assert.equal(capErr.cap, true);
   assert.equal(new ScrubError('scrubber failed (TypeError); holding back').cap, false);
+  const rk = scrubber().sanitize('https://drive.google.com/file/d/1tQe2R9a3ERgXUWuyYiJbjKGA4uT16tmV/view?usp=sharing&resourcekey=0-JI_CQrZzk6ZkIu1Uqn3s_w ok');
+  assert.equal(rk.held, false, rk.text); assert.ok(!rk.text.includes('JI_CQrZ') && !rk.text.includes('1tQe2R9'), rk.text);
   for (const u of ['https://www.notion.so/Café-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/Cafe\u0301-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e', 'https://www.notion.so/計画-8f2a9c4b7e1d4a6b9c3e5f7a1b2c4d6e']) {
     const r = scrubber().sanitize(u); assert.ok(!r.text.includes('8f2a9c4b'), r.text);
   }

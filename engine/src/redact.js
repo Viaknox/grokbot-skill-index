@@ -1506,7 +1506,10 @@ const SHARE_LINK = new RegExp('(?<![\\p{L}\\p{M}\\p{N}])' + ci('http') + '[sS]?:
   + '|(?:' + ci('www.') + ')?' + ci('figma.com') + '/(?:file|design|board|proto|slides|deck|site|buzz|make)/'   // help.figma.com/hc/en-us/articles/1500005554982
   + '|(?:' + ci('www.') + ')?' + ci('loom.com') + '/share/'
   + '|(?:(?:' + ci('www.') + ')?' + ci('notion.so') + '|' + ci('app.notion.com') + '/p|[A-Za-z0-9-]{1,63}\\.' + ci('notion.site') + ')/(?:[A-Za-z0-9_-]{1,64}/)?'
-  + ')' + SEG, 'gu');
+  + ')' + SEG
+  // A Drive/Docs query that carries a resourcekey (part of the access, developers.google.com/workspace/drive/api/guides/resource-keys)
+  // goes into [LINK_n] with the link; any other query stays outside and is scanned (viaknox PR #31 review).
+  + '(?:(?:/[A-Za-z]{1,20})?\\?(?:[A-Za-z0-9_\\-.=%~+]*&)?resourcekey=[A-Za-z0-9_\\-]+(?:&[A-Za-z0-9_\\-.=%~+]*)*)?', 'gu');
 
 export function residual(text, { terms = [] } = {}) {
   // Our own placeholders are safe. Each becomes a sentinel character (not a space) so "PASSWORD=[SECRET_1]" is not
