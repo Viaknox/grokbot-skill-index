@@ -1386,4 +1386,6 @@ test('r80: OAuth values: code_verifier is a secret, all-letter values and 16-cha
   assert.equal(scrubber().sanitize('see https://a.example/?state=Abcd123456789012.').text, 'see https://a.example/?state=[LINK_1].');
   const r = scrubber().sanitize('https://x.example/?state=Qm9X2kLp7RtYw4ZcVb8NaE then Qm9X2kLp7RtYw4ZcVb8NaE');
   assert.equal(r.held, false); assert.equal(r.text, 'https://x.example/?state=[LINK_1] then [LINK_1]');
+  const d = scrubber().sanitize('?state=AbCdEfGhIjKl%2D12345 then AbCdEfGhIjKl-12345');
+  assert.ok(!d.text.includes('AbCdEfGhIjKl-12345'), d.text);   // decoded repeat (viaknox PR #36 review)
 });

@@ -1407,7 +1407,7 @@ function scrubQuery(s, label, resolve) {
     // /[…]+$/ (quadratic). It recurs like a secret, so a bare repeat in a log line is replaced too (PR #24 review).
     let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e), dv = decodeName(core);
     if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
-    return pre + label('LINK', core, true) + v.slice(core.length);
+    return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
 
@@ -1645,7 +1645,7 @@ export function scrubber({ terms = [] } = {}) {
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
   // indistinguishable. counts() still reports distinct values only; numbering just skips the reserved ones.
-  const label = (kind, value, recur = false) => {
+  const label = (kind, value, recur = false, alias = null) => {
     const k = kind + '\u0000' + value;
     if (!seen.has(k)) {
       let n = (next[kind] || 0) + 1; while (reserved.has(kind) && reserved.get(kind).has(n)) n++;
@@ -1655,6 +1655,7 @@ export function scrubber({ terms = [] } = {}) {
       // A SECRET value may already hold a PRIVATE sentinel; store the value in public [KIND_n] form so unscrub nests.
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
       inventory.push(recur ? { kind, value, recur } : { kind, value });
+      if (alias) inventory.push({ kind, value: alias, recur });
       if (kind === 'SECRET') {
         // A quoted value followed by a comment ("hunter2" # backup) inventories the text inside the quotes (PR #16 review).
         let core = value.trim(); const qm = /^(["'])((?:\\.|(?!\1)[^\n])*)\1[ \t]*(?:[#;][^\n]*)?$/.exec(core);
