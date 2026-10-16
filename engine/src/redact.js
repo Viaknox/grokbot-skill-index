@@ -1416,16 +1416,6 @@ function scrubQuery(s, label, resolve) {
     // A known key shape (ghp_…) or a card number is left for the key and PII rules, so it is counted and echo-checked as
     // what it is (tune-up PR #24 review).
     if (KEY_SHAPE_ONE.test(dv) || (/^\d{13,19}$/.test(dv) && luhn(dv))) return m;
-    // A value that starts with a valid phone or SSN (415-555-2671-AbCd) is hidden here under that kind, so it is reported
-    // as contact data. It is labelled here, not left for the PII pass, because that pass reads only the raw text and
-    // would miss an encoded spelling (415%2D555…; tune-up PR #25 review). Only a leading match counts: a UUID's later
-    // all-digit groups must not read as a phone. A "+" number must have 8-15 digits, as in the PII pass.
-    const head = dv.slice(0, 64);
-    for (const [kind, re] of PII_LEAD) {
-      const x = re.exec(head); if (!x || x.index !== 0) continue;
-      if (kind === 'PHONE' && x[0].startsWith('+')) { const d = x[0].replace(/\D/g, '').length; if (d < 8 || d > 15) continue; }
-      return pre + label(kind, core, false, dv !== core ? dv : null) + v.slice(core.length);
-    }
     return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
@@ -1494,8 +1484,6 @@ const PATTERNS = [
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])|(?<![\w:])::(?:[0-9a-f]{1,4}:){1,6}[0-9a-f]{1,4}(?![\w:])/gi],   // ::ffff:c000:0280 (leading compression; PR #27 review)
 ];
-// Phone and SSN shapes, non-global, for the leading-match check on OAuth values in scrubQuery.
-const PII_LEAD = PATTERNS.filter(([k]) => k === 'PHONE' || k === 'SSN').map(([k, re]) => [k, new RegExp(re.source, re.flags.replace('g', ''))]);
 
 function luhn(digits) {
   let sum = 0, alt = false;
