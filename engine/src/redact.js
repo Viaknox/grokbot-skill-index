@@ -274,7 +274,7 @@ export const isProseValue = (v, after) => {
   // Only one closing "." or "," is read as sentence punctuation: "required!" may be a real password (tune-up PR #26).
   const w = t.replace(/[.,]$/, '').split(/\s+/);
   if (!w.every(x => /^[\p{Ll}-]+$/u.test(x))) return false;
-  return w.length === 1 ? PROSE_STATUS.has(w[0]) : w.length <= 3 && /^(?:not|no|never)$/.test(w[0]) && w.slice(1).every(x => PROSE_TAIL.has(x));
+  return w.length === 1 ? PROSE_STATUS.has(w[0]) : w.length <= 3 && /^(?:not|no|never)$/.test(w[0]) && w.slice(1).every(x => PROSE_TAIL.has(x) || PROSE_STATUS.has(x));
 };
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);

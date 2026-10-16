@@ -1440,7 +1440,7 @@ test('r86: prose after a credential word is still hidden, but not reported as a 
   assert.ok(!scrubber().sanitize("so its token won't be lost").text.includes('won'));
   assert.ok(!scrubber().sanitize('The password is required.').text.includes('required'));
   // ...but ordinary English is not reported as the agent revealing a password or key setting.
-  for (const t of ["I'll refresh the `agent-tune-up` login and leave the one-time-token page open so its token won't be lost.", 'the password is required', 'the token is not set', 'the token is no longer valid.', "the password can't be shared", 'The password is required.']) assert.ok(!codes(t).includes('revealed_setting'), t);
+  for (const t of ["I'll refresh the `agent-tune-up` login and leave the one-time-token page open so its token won't be lost.", 'the password is required', 'the token is not set', 'the token is no longer valid.', "the password can't be shared", 'the token is not missing', 'the password is not invalid', 'The password is required.']) assert.ok(!codes(t).includes('revealed_setting'), t);
   // Real-looking values are still reported, including status words with symbols, capitals, passphrases and mixes.
   for (const t of ['my password is sunshine', 'The service password is required!', 'my password is Not Correct', 'my password is not correct horse battery staple', "use password AbCdE'd!", 'the password is required and the token is s3cr3tXYZ', 'the password is "required"']) assert.ok(codes(t).includes('revealed_setting'), t);
 });
