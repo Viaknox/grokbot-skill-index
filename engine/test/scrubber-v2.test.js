@@ -1433,3 +1433,12 @@ test('r84: OAuth values: base64 may start with / or +, but not . or ~; UUIDs sta
   const p = scrubber().sanitize('https://a.example/?state=415%2D555%2D2671%2DAbCd then 415%2D555%2D2671%2DAbCd');
   assert.ok(!p.text.includes('2671'), p.text);   // a phone-led value is hidden whole, repeats too
 });
+test('r86: ordinary English after a credential word is not a value: contractions and status words (viaknox Codex chat 2026-10-16)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const msg12 = "I'll refresh the `agent-tune-up` login and leave the one-time-token page open so its token won't be lost.";
+  assert.equal(scrubber().sanitize(msg12).text, msg12);
+  assert.ok(!checkConversation([{ role: 'user', content: 'reload it' }, { role: 'assistant', content: msg12 }]).some(f => f.code === 'revealed_setting'));
+  for (const t of ['the password is required', 'the token is not set', 'the token is invalid.', "the password doesn't work", "your token didn't arrive"]) assert.equal(scrubber().sanitize(t).text, t);
+  // Real values are still taken: plain words, multiword passphrases, quoted status words, digits.
+  for (const [t, v] of [['my password is sunshine', 'sunshine'], ['my password is correct horse battery staple', 'correct horse'], ['the password is "required"', '"required"'], ['my password is no longer hunter2', 'hunter2'], ['my password is now sunshine', 'sunshine']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
+});

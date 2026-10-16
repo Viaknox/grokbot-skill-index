@@ -253,6 +253,20 @@ function scrubPem(s, label) {
 // after a closer or delimiter (`[SECRET_1])CorrectHorse9!`, `[SECRET_1], CorrectHorse9!`) is data pasted beside an old
 // placeholder, and the whole value goes (PR #16 review).
 const SIBLING_AFTER = /^[\s"'`)\]}]*[,;][\s"']*(?:\uE000[A-Z]+_\d+\uE001|(?:"[^"\n]{1,160}"|'[^'\n]{1,160}'|[\w.\-]{1,160})[ \t]*[:=])/;
+// Ordinary English after "the token is …" / "its token …" is not a value: a contraction ("its token won't be lost",
+// "the password doesn't work") or an unquoted status word ("the password is required", "the token is not set",
+// "the token is invalid"). Agents say these all the time, and hiding the word made the report claim the agent revealed
+// a password setting (viaknox Codex chat, 2026-10-16). A quoted value ('the password is "required"') is still taken.
+const PROSE_STATUS = new Set(['not', 'no', 'never', 'required', 'needed', 'missing', 'invalid', 'valid', 'expired', 'revoked', 'wrong', 'incorrect', 'correct', 'empty', 'blank', 'null', 'none', 'unset', 'optional', 'mandatory', 'saved', 'stored', 'sent', 'shown', 'hidden', 'available', 'unavailable', 'active', 'inactive', 'enabled', 'disabled', 'ready', 'pending', 'generated', 'created', 'encrypted', 'hashed', 'protected', 'still', 'already', 'now', 'only', 'also', 'being', 'too', 'used', 'case-sensitive']);
+const isProseValue = (v, after) => {
+  const t = String(v).trim();
+  if (/^["'`]/.test(t)) return false;
+  if (/^\p{L}+$/u.test(t) && /^['\u2019](?:t|ll|re|ve|d)(?![\p{L}\p{N}])/iu.test(after)) return true;   // won't, can't, didn't, it'll
+  const w = t.replace(/[.,;:!?]+$/, '').toLowerCase().split(/\s+/);
+  // One word must be a status word; several words only when led by a negation and made of plain letters ("not set",
+  // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
+  return w.length === 1 ? PROSE_STATUS.has(w[0]) : /^(?:not|no|never)$/.test(w[0]) && w.every(x => /^\p{Ll}+$/u.test(x));
+};
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);
   if (!m) return false;
@@ -1299,9 +1313,9 @@ function scrubCopula(s, label) {
   s = s.replace(CONFIG_SET_RE, (m, q, name, v) => !isCredentialName(name) || isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   s = s.replace(CHANGE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   s = s.replace(PAST_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  const out = s.replace(COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  const mid = out.replace(QUAL_COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  return mid.replace(NOUN_VALUE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  const out = s.replace(COPULA_RE, (m, v, o, str) => isPlaceholderValue(v) || isProseValue(v, str.slice(o + m.length)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  const mid = out.replace(QUAL_COPULA_RE, (m, v, o, str) => isPlaceholderValue(v) || isProseValue(v, str.slice(o + m.length)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  return mid.replace(NOUN_VALUE_RE, (m, v, o, str) => isPlaceholderValue(v) || isProseValue(v, str.slice(o + m.length)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
 }
 
 // A credential phrase written as separate words before a colon or equals: "api key: X", "openai api key = X",
