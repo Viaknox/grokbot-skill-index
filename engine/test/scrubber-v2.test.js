@@ -1343,3 +1343,12 @@ test('r76: a credential before id= in a Drive link is one secret, not two (viakn
   const r = s.sanitize(t);
   assert.equal(s.counts().SECRET, 1); assert.ok(!r.text.includes('hunter2')); assert.equal(s.unscrub(r.text), t); assert.equal(s.scrub(r.text), r.text);
 });
+
+test('r77: an OAuth sign-in URL (state, PKCE challenge, client_id) is scrubbed, not held (Codex sign-in flow)', () => {
+  const url = 'https://abcdefghijklmnopqrst.supabase.co/auth/v1/oauth/authorize?response_type=code&client_id=fc2d0b81-27aa-4c3e-9b1f-0a1b2c3d4e5f'
+    + '&state=Qm9X2kLp7RtYw4ZcVb8NaE&code_challenge=Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S&code_challenge_method=S256'
+    + '&redirect_uri=http%3A%2F%2F127.0.0.1%3A41234%2Fcallback&scope=openid';
+  const r = scrubber().sanitize('Assistant: Authorize the MCP server by opening this URL in your browser: ' + url);
+  assert.equal(r.held, false, JSON.stringify(r.reasons));
+  for (const v of ['Qm9X2kLp7RtYw4ZcVb8NaE', 'Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S', 'fc2d0b81-27aa']) assert.ok(!r.text.includes(v), v);
+});

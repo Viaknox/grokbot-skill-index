@@ -1383,7 +1383,7 @@ function scrubCommands(s, label) {
 
 // URL query parameters whose name is a credential (code, auth, sig, token, session, …, or anything isCredentialName
 // accepts) have their value replaced.
-const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp']);
+const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp', 'state', 'nonce', 'code_challenge', 'code_verifier', 'client_id']);
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
   // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review), and "+" is a space
