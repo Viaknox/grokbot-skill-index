@@ -1424,3 +1424,12 @@ test('r83: OAuth values: key and card shapes keep their kind, re-scrub keeps lat
   const t0 = Date.now(); const r = scrubber().sanitize(big); /* default 2 s budget */ const ms = Date.now() - t0;
   assert.equal(r.held, false); assert.ok(ms < 2000, `${ms} ms`);
 });
+test('r84: OAuth values: base64 may start with / or +, but not . or ~; UUIDs stay links (tune-up PR #24/#25 review)', async () => {
+  const b = scrubber().sanitize('https://a.example/?state=%2FAbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd');
+  assert.equal(b.held, false); assert.equal(b.text, 'https://a.example/?state=[LINK_1]');
+  assert.equal(scrubber().sanitize('https://a.example/?state=.pleaseOpenModal2').text, 'https://a.example/?state=.pleaseOpenModal2');
+  const u = scrubber().sanitize('https://a.example/?client_id=12345678-1234-5678-9012-123456789012&scope=openid');
+  assert.equal(u.held, false); assert.equal(u.text, 'https://a.example/?client_id=[LINK_1]&scope=openid');
+  const p = scrubber().sanitize('https://a.example/?state=415%2D555%2D2671%2DAbCd then 415%2D555%2D2671%2DAbCd');
+  assert.ok(!p.text.includes('2671'), p.text);   // a phone-led value is hidden whole, repeats too
+});
