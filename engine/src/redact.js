@@ -267,7 +267,7 @@ const PROSE_TAIL = new Set(['set', 'longer', 'yet', 'valid', 'required', 'needed
 export const isProseValue = (v, after) => {
   const t = String(v).trim();
   if (/^["'`]/.test(t)) return false;
-  if (CONTRACTION_STEMS.has(t) && /^['\u2019](?:t|ll|re|ve|d)[.,]?(?![^\s])/u.test(after)) return true;   // won't, can't, it'll
+  if (CONTRACTION_STEMS.has(t) && /^['\u2019](?:t|ll|re|ve|d)(?:[.,](?=\s|$)|[ \t]+\p{Ll}[\p{Ll}-]*(?=[\s.,;:!?]|$)|$)/u.test(after)) return true;   // won't, can't, it'll
   // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
   // taken (tune-up PR #26 review). One word must be a status word; several only when led by a negation ("not set",
   // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
