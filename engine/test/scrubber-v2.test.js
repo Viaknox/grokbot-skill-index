@@ -1343,3 +1343,84 @@ test('r76: a credential before id= in a Drive link is one secret, not two (viakn
   const r = s.sanitize(t);
   assert.equal(s.counts().SECRET, 1); assert.ok(!r.text.includes('hunter2')); assert.equal(s.unscrub(r.text), t); assert.equal(s.scrub(r.text), r.text);
 });
+
+test('r77: an OAuth sign-in URL (state, PKCE challenge, client_id) is scrubbed, not held (Codex sign-in flow)', () => {
+  const url = 'https://abcdefghijklmnopqrst.supabase.co/auth/v1/oauth/authorize?response_type=code&client_id=fc2d0b81-27aa-4c3e-9b1f-0a1b2c3d4e5f'
+    + '&state=Qm9X2kLp7RtYw4ZcVb8NaE&code_challenge=Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S&code_challenge_method=S256'
+    + '&redirect_uri=http%3A%2F%2F127.0.0.1%3A41234%2Fcallback&scope=openid';
+  const r = scrubber().sanitize('Assistant: Authorize the MCP server by opening this URL in your browser: ' + url);
+  assert.equal(r.held, false, JSON.stringify(r.reasons));
+  for (const v of ['Qm9X2kLp7RtYw4ZcVb8NaE', 'Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S', 'fc2d0b81-27aa']) assert.ok(!r.text.includes(v), v);
+  const p = scrubber().sanitize('Open https://app.example/form?state=open&client_id=web and verify the modal stays open');
+  assert.equal(p.text, 'Open https://app.example/form?state=open&client_id=web and verify the modal stays open');   // PR #24 review
+  const q = scrubber().sanitize('See https://app.example/form?state=please-open-modal then please-open-modal again');
+  assert.equal(q.text, 'See https://app.example/form?state=please-open-modal then please-open-modal again');   // PR #24 review
+  const e = scrubber().sanitize('See https://app.example/form?state=please%2Dopen%2Dmodal then please-open-modal again');
+  assert.ok(e.text.endsWith('then please-open-modal again'), e.text);   // decoded before the check (PR #24 review)
+});
+
+test('r78: an agent showing a sign-in URL is not flagged as revealing a password; route words after /auth/ stay (tune-up PR #24 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const url = 'https://abcdefghijklmnopqrst.supabase.co/auth/v1/oauth/authorize?response_type=code&client_id=fc2d0b81-27aa-4c3e-9b1f-0a1b2c3d4e5f&state=Qm9X2kLp7RtYw4ZcVb8NaE&code_challenge=Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S';
+  const codes = checkConversation([{ role: 'user', content: 'sign me in' }, { role: 'assistant', content: 'Open this URL: ' + url }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(!codes.includes('revealed_setting'), codes.join());
+  const r = scrubber().sanitize('Open ' + url);
+  assert.ok(r.text.includes('/auth/v1/oauth/authorize?'), r.text);
+  assert.equal(scrubber().sanitize('https://auth.example/?state=12345678901234567890 ok').text, 'https://auth.example/?state=[LINK_1] ok');
+  assert.equal(scrubber().sanitize('[Sign in](https://auth.example/?state=Abcd12345678901234).').text, '[Sign in](https://auth.example/?state=[LINK_1]).');
+  assert.equal(scrubber().sanitize('POST https://x.example/auth/AbC123dEf456 ok').text, 'POST https://x.example/auth/[SECRET_1] ok');
+});
+
+test('r79: short codes after /auth/ are still taken; a long punctuation run after a sign-in value stays linear (tune-up PR #24 review)', () => {
+  assert.equal(scrubber().sanitize('https://x.example/auth/123456 ok').text, 'https://x.example/auth/[SECRET_1] ok');
+  assert.equal(scrubber().sanitize('https://x.example/oauth/abcdef ok').text, 'https://x.example/oauth/[SECRET_1] ok');
+  const t = Date.now(); scrubber().sanitize('https://a.example/?state=1' + ')'.repeat(200000) + 'x');
+  assert.ok(Date.now() - t < 1500, 'took ' + (Date.now() - t) + ' ms');
+});
+
+test('r80: OAuth values: code_verifier is a secret, all-letter values and 16-char values before punctuation are hidden, bare repeats too (tune-up PR #24 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'POST https://a.example/token?code_verifier=Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S' }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(codes.includes('revealed_setting'), codes.join());
+  assert.equal(scrubber().sanitize('https://a.example/?state=AbCdEfGhIjKlMnOpQrStUvWxYz ok').text, 'https://a.example/?state=[LINK_1] ok');
+  assert.equal(scrubber().sanitize('see https://a.example/?state=Abcd123456789012.').text, 'see https://a.example/?state=[LINK_1].');
+  const r = scrubber().sanitize('https://x.example/?state=Qm9X2kLp7RtYw4ZcVb8NaE then Qm9X2kLp7RtYw4ZcVb8NaE');
+  assert.equal(r.held, false); assert.equal(r.text, 'https://x.example/?state=[LINK_1] then [LINK_1]');
+  const d = scrubber().sanitize('?state=AbCdEfGhIjKl%2D12345 then AbCdEfGhIjKl-12345');
+  assert.ok(!d.text.includes('AbCdEfGhIjKl-12345'), d.text);   // decoded repeat (viaknox PR #36 review)
+});
+test('r81: OAuth values: nested credentials and emails still flagged, later parameters readable, fragment mode scrubbed, link-part recurrence upgraded (viaknox PR #36 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = c => checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: c }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(codes('https://a.example/?state=password=AbAbAbAbAbAb12').includes('revealed_setting'));
+  const e = scrubber().sanitize('https://a.example/?state=alice2024@example.com');
+  assert.ok(e.text.includes('[EMAIL_1]') && !e.text.includes('alice2024'), e.text);
+  assert.equal(scrubber().sanitize('https://a.example/?state=AbAbAbAbAbAbAb12&scope=openid&prompt=consent').text,
+    'https://a.example/?state=[LINK_1]&scope=openid&prompt=consent');
+  const f = scrubber().sanitize('https://app.test/cb#state=AbAbAbAbAbAbAb12');
+  assert.equal(f.held, false); assert.equal(f.text, 'https://app.test/cb#state=[LINK_1]');
+  const sc = scrubber(); sc.sanitize('https://a.example/?state=AbAbAbAbAbAbAb12');
+  assert.ok(!sc.sanitize('log: AbAbAbAbAbAbAb12').text.includes('AbAbAbAbAbAbAb12'));   // a later message's bare repeat
+});
+test('r82: OAuth values: leading base64url punctuation, form + as space, dotted route versions (viaknox PR #36 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const a = scrubber().sanitize('https://a.example/?state=_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd');
+  assert.equal(a.held, false); assert.equal(a.text, 'https://a.example/?state=[LINK_1]');
+  assert.equal(scrubber().sanitize('https://a.example/?state=please+open+modal+2').text, 'https://a.example/?state=please+open+modal+2');
+  const ms = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x';
+  assert.ok(scrubber().sanitize(ms).text.includes('/oauth2/v2.0/authorize'));
+  const codes = checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'Sign in: ' + ms }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(!codes.includes('revealed_setting'), codes.join());
+  assert.ok(!scrubber().sanitize('https://x.example/oauth2/v2.0x9Qz7/cb').text.includes('v2.0x9Qz7'));
+});
+test('r83: OAuth values: key and card shapes keep their kind, re-scrub keeps later params, decoded alias shares the placeholder, repeats stay linear (tune-up PR #24 review)', async () => {
+  const card = scrubber().sanitize('https://a.example/?state=4111111111111111');
+  assert.ok(card.text.includes('[CARD_1]') && !card.text.includes('4111111111111111'), card.text);
+  const once = scrubber().sanitize('https://a.example/?state=AbAbAbAbAbAbAb12&scope=openid&prompt=consent').text;
+  assert.equal(scrubber().sanitize(once).text, once);
+  assert.equal(scrubber().sanitize('?state=AbCdEfGhIjKl%2D12345 then AbCdEfGhIjKl-12345').text, '?state=[LINK_1] then [LINK_1]');
+  const vals = Array.from({ length: 4000 }, (_, i) => `Ab${String(i).padStart(6, '0')}CdEfGhIjKl`);
+  const big = vals.map(v => `?state=${v}`).join(' ') + ' ' + vals.map(v => `?state=${v}`).join(' ');
+  const t0 = Date.now(); const r = scrubber().sanitize(big); /* default 2 s budget */ const ms = Date.now() - t0;
+  assert.equal(r.held, false); assert.ok(ms < 2000, `${ms} ms`);
+});

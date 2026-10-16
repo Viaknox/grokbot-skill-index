@@ -1116,11 +1116,15 @@ function scrubNameValuePairs(s, label, resolve) {
 
 // URL path segments: a segment that is a credential name (/token/, /password/, /api-key/) makes the next segment a
 // secret (https://x/api/token/<x>/status).
+const AUTH_ROUTES = /^(?:v\d{1,2}(?:\.\d{1,2})?|authorize|callback|login|logout|signin|signup|consent|userinfo|device|register|revoke|introspect|jwks|token|oauth2?|openid|verify|google|github|microsoft|azure|apple)$/i;
 function scrubPathSegments(s, label, resolve) {
   if (!s.includes('/')) return s;
   // The slash after the segment is only looked at, not consumed, so "/api/token/x" is retried at "token".
   const ivs = [], re = /\/([\p{L}\p{N}_\-]{1,40})(?=\/[^\/\s?#"'<>)]+)/gu;
-  for (let m; (m = re.exec(s));) if (isCredentialName(resolve(m[1]))) { const vs = m.index + m[0].length + 1; let ve = vs; while (ve < s.length && !'/?#"\'<>) \t\r\n'.includes(s[ve])) ve++; ivs.push([vs, ve, 'SECRET']); }
+  // After /auth/ or /oauth/, only known route words are left (/auth/v1/oauth/authorize, the Codex sign-in URL; /oauth2/v2.0/authorize, viaknox PR #36 review); any other
+  // value, short codes like /auth/123456 included, is still taken. /password/, /token/ and the rest are unchanged (PR #24).
+  for (let m; (m = re.exec(s));) if (isCredentialName(resolve(m[1]))) { const vs = m.index + m[0].length + 1; let ve = vs; while (ve < s.length && !'/?#"\'<>) \t\r\n'.includes(s[ve])) ve++;
+    if (/^o?auth2?$/i.test(m[1]) && AUTH_ROUTES.test(s.slice(vs, ve))) continue; ivs.push([vs, ve, 'SECRET']); }
   return applyIntervals(s, ivs, label);
 }
 
@@ -1383,14 +1387,35 @@ function scrubCommands(s, label) {
 
 // URL query parameters whose name is a credential (code, auth, sig, token, session, …, or anything isCredentialName
 // accepts) have their value replaced.
-const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp']);
+const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp', 'code_verifier']);
+// OAuth sign-in values (state, PKCE challenge, client id) are taken only when they look generated: 16+ characters, after
+// trimming trailing punctuation and decoding, with a digit or both letter cases. A pasted sign-in URL is then scrubbed
+// rather than holding the chat, while ?state=open or ?state=please-open-modal stay readable (PR #24 review).
+const OAUTH_NAMES = new Set(['state', 'nonce', 'code_challenge', 'client_id']);   // code_verifier redeems the code: a SECRET above
+const OAUTH_BEFORE = /[?&#](?:state|nonce|code_challenge|client_id)=$/i;
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
   // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review), and "+" is a space
   // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
-  return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
+  // A fragment-mode response (#state=…, #access_token=…) is read like a query (viaknox PR #36 review).
+  return s.replace(/([?&#]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
-    return (!QUERY_NAMES.has(n.toLowerCase()) && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
+    const ln = n.toLowerCase();
+    if (isPlaceholderValue(v)) return m;
+    if (QUERY_NAMES.has(ln) || isCredentialName(resolve(n))) return pre + label('SECRET', v);
+    if (!OAUTH_NAMES.has(ln)) return m;
+    // A one-time sign-in value is hidden as a link part, not a SECRET: an agent showing its sign-in URL is not revealing a
+    // password setting. Trailing punctuation stays outside ([Sign in](…?state=…). keeps ")."), trimmed with a loop, not
+    // /[…]+$/ (quadratic). It recurs like a secret, so a bare repeat in a log line is replaced too (PR #24 review).
+    let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e), dv = decodeName(core.replace(/\+/g, ' '));   // form encoding: + is a space (PR #24/#36 review)
+    if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
+    // Only a plain token (base64/base64url, hex, a UUID): a value holding "=", "@" or ":" (state=password=…, an email)
+    // is left for the credential and PII rules, which still flag it (viaknox PR #36 review).
+    if (!/^[A-Za-z0-9_-][A-Za-z0-9._~+\/-]*={0,2}$/.test(dv)) return m;
+    // A known key shape (ghp_…) or a card number is left for the key and PII rules, so it is counted and echo-checked as
+    // what it is (tune-up PR #24 review).
+    if (KEY_SHAPE_ONE.test(dv) || (/^\d{13,19}$/.test(dv) && luhn(dv))) return m;   // base64url may start with - or _
+    return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
 
@@ -1429,6 +1454,7 @@ const KEY_SHAPES = [
   '[A-Za-z0-9_~.]{3}\\dQ~[A-Za-z0-9_~.-]{31,34}', 'api\\.softlayer\\.com/soap/v3(?:\\.1)?/[a-z0-9]{64}',
   '(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}', 'whsec_[A-Za-z0-9]{10,}', 'npm_[A-Za-z0-9]{20,}', 'ya29\\.[A-Za-z0-9_-]{20,}', 'pypi-[A-Za-z0-9_-]{20,}',
 ];
+const KEY_SHAPE_ONE = new RegExp('^(?:' + KEY_SHAPES.join('|') + ')');   // a whole value that starts as a known key
 const KEY_SHAPE_RE = new RegExp('(?<![A-Za-z0-9])(?:' + KEY_SHAPES.join('|') + ')', 'g');   // not \\b: id_sk-… must match (PR #16 review)
 
 const EMAIL_WHOLE = /(?<![\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-])[\p{L}\p{M}\p{N}!#$%&'*+\/=?^_`{|}~.-]{1,64}@[\p{L}\p{M}\p{N}.-]{1,253}\.[\p{L}\p{M}]{2,63}(?![\p{L}\p{M}\p{N}])/gu;
@@ -1620,6 +1646,7 @@ export function scrubber({ terms = [] } = {}) {
   let deadline = Infinity;           // set by sanitize() for its run, so long loops can stop early
   const seen = new Map();            // kind\u0000value -> sentinel-wrapped placeholder
   const real = new Map();            // public [KIND_n] -> real value, for unscrub and echoes
+  const recurKeys = new Set();       // kind\u0000value labelled with recur (inventoried for bare repeats)
   const counts = {};                 // distinct values found, per kind (what counts() reports)
   const next = {};                   // last placeholder number handed out, per kind
   const reserved = new Map();        // kind -> numbers that already appeared as literal [KIND_n] text in some input
@@ -1628,16 +1655,26 @@ export function scrubber({ terms = [] } = {}) {
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
   // indistinguishable. counts() still reports distinct values only; numbering just skips the reserved ones.
-  const label = (kind, value) => {
+  const label = (kind, value, recur = false, alias = null) => {
     const k = kind + '\u0000' + value;
+    // A recurring value seen before without recur (an ordinary link part) is upgraded, so its bare repeat is replaced too
+    // (viaknox PR #36 review).
+    // A Set, not a scan of the inventory: thousands of repeated values stay linear (tune-up PR #24 review).
+    if (seen.has(k) && recur && !recurKeys.has(k)) {
+      recurKeys.add(k); inventory.push({ kind, value, recur }); if (alias) inventory.push({ kind, value: alias, recur });
+    }
     if (!seen.has(k)) {
       let n = (next[kind] || 0) + 1; while (reserved.has(kind) && reserved.get(kind).has(n)) n++;
       next[kind] = n; counts[kind] = (counts[kind] || 0) + 1;
       const pub = `[${kind}_${n}]`;
       seen.set(k, OPEN + kind + '_' + n + CLOSE);
+      if (recur) recurKeys.add(k);
+      // The decoded spelling maps to the same placeholder, so a decoded repeat reads as the same value (PR #24 review).
+      if (alias && !seen.has(kind + '\u0000' + alias)) seen.set(kind + '\u0000' + alias, seen.get(k));
       // A SECRET value may already hold a PRIVATE sentinel; store the value in public [KIND_n] form so unscrub nests.
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
-      inventory.push({ kind, value });
+      inventory.push(recur ? { kind, value, recur } : { kind, value });
+      if (alias) inventory.push({ kind, value: alias, recur });
       if (kind === 'SECRET') {
         // A quoted value followed by a comment ("hunter2" # backup) inventories the text inside the quotes (PR #16 review).
         let core = value.trim(); const qm = /^(["'])((?:\\.|(?!\1)[^\n])*)\1[ \t]*(?:[#;][^\n]*)?$/.exec(core);
@@ -1736,7 +1773,9 @@ export function scrubber({ terms = [] } = {}) {
     // stays outside.
     // Trailing punctuation is trimmed with a loop, not /[...]+$/: that regex restarts at every position of a long run that
     // is followed by another character, which is quadratic (a 300 KB run stalled for minutes; tune-up PR #22 follow-up).
-    s = s.replace(LINK_TAIL, (m, ph, tail) => { let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; return ph + label('LINK', t) + tail.slice(e); });
+    // A [LINK_n] in OAuth position (?state=[LINK_n]) is a sign-in value, not a share link: the URL after it stays
+    // readable, also when already-scrubbed text is scrubbed again by a fresh scrubber (viaknox PR #36, tune-up PR #24).
+    s = s.replace(LINK_TAIL, (m, ph, tail, off, str) => { if (OAUTH_BEFORE.test(str.slice(Math.max(0, off - 40), off))) return m; let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; return ph + label('LINK', t) + tail.slice(e); });
     // A term beside "@" that the email rule did not consume (`user@Acme`, `jo@acme`: a handle or a single-label host) is
     // still the term. The first sweep keeps "@" out so a one-letter term cannot eat a host label inside a real address
     // (jo@x.example); real addresses are [EMAIL_n] by now, so this sweep may touch "@" freely (PR #16 review).
@@ -1746,7 +1785,7 @@ export function scrubber({ terms = [] } = {}) {
     // A value wrapping a never-send placeholder (password=Acme-x is [PRIVATE_1]-x) still recurs as that same text, so it
     // stays eligible; the part outside the placeholder must still be at least four characters (PR #16 review).
     const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 3; };
-    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
+    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY' || e.recur) && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
     // settings), and
