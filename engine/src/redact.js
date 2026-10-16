@@ -1396,7 +1396,8 @@ function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
   // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review), and "+" is a space
   // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
-  return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
+  // A fragment-mode response (#state=…, #access_token=…) is read like a query (viaknox PR #36 review).
+  return s.replace(/([?&#]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
     const ln = n.toLowerCase();
     if (isPlaceholderValue(v)) return m;
@@ -1407,6 +1408,9 @@ function scrubQuery(s, label, resolve) {
     // /[…]+$/ (quadratic). It recurs like a secret, so a bare repeat in a log line is replaced too (PR #24 review).
     let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e), dv = decodeName(core);
     if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
+    // Only a plain token (base64/base64url, hex, a UUID): a value holding "=", "@" or ":" (state=password=…, an email)
+    // is left for the credential and PII rules, which still flag it (viaknox PR #36 review).
+    if (!/^[A-Za-z0-9][A-Za-z0-9._~+\/-]*={0,2}$/.test(dv)) return m;
     return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
@@ -1637,6 +1641,7 @@ export function scrubber({ terms = [] } = {}) {
   let deadline = Infinity;           // set by sanitize() for its run, so long loops can stop early
   const seen = new Map();            // kind\u0000value -> sentinel-wrapped placeholder
   const real = new Map();            // public [KIND_n] -> real value, for unscrub and echoes
+  const noTail = new Set();          // OAuth-value [LINK_n]: not a share link, so LINK_TAIL leaves &scope=… readable (PR #36 review)
   const counts = {};                 // distinct values found, per kind (what counts() reports)
   const next = {};                   // last placeholder number handed out, per kind
   const reserved = new Map();        // kind -> numbers that already appeared as literal [KIND_n] text in some input
@@ -1647,11 +1652,17 @@ export function scrubber({ terms = [] } = {}) {
   // indistinguishable. counts() still reports distinct values only; numbering just skips the reserved ones.
   const label = (kind, value, recur = false, alias = null) => {
     const k = kind + '\u0000' + value;
+    // A recurring value seen before without recur (an ordinary link part) is upgraded, so its bare repeat is replaced too
+    // (viaknox PR #36 review).
+    if (seen.has(k) && recur && !inventory.some(e => e.recur && e.kind === kind && e.value === value)) {
+      inventory.push({ kind, value, recur }); if (alias) inventory.push({ kind, value: alias, recur });
+    }
     if (!seen.has(k)) {
       let n = (next[kind] || 0) + 1; while (reserved.has(kind) && reserved.get(kind).has(n)) n++;
       next[kind] = n; counts[kind] = (counts[kind] || 0) + 1;
       const pub = `[${kind}_${n}]`;
       seen.set(k, OPEN + kind + '_' + n + CLOSE);
+      if (recur && kind === 'LINK') noTail.add(seen.get(k));   // an OAuth value: the URL after it stays readable
       // A SECRET value may already hold a PRIVATE sentinel; store the value in public [KIND_n] form so unscrub nests.
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
       inventory.push(recur ? { kind, value, recur } : { kind, value });
@@ -1754,7 +1765,7 @@ export function scrubber({ terms = [] } = {}) {
     // stays outside.
     // Trailing punctuation is trimmed with a loop, not /[...]+$/: that regex restarts at every position of a long run that
     // is followed by another character, which is quadratic (a 300 KB run stalled for minutes; tune-up PR #22 follow-up).
-    s = s.replace(LINK_TAIL, (m, ph, tail) => { let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; return ph + label('LINK', t) + tail.slice(e); });
+    s = s.replace(LINK_TAIL, (m, ph, tail) => { if (noTail.has(ph)) return m; let e = tail.length; while (e > 0 && TRAIL_PUNCT.has(tail[e - 1])) e--; const t = tail.slice(0, e); if (!t) return m; return ph + label('LINK', t) + tail.slice(e); });
     // A term beside "@" that the email rule did not consume (`user@Acme`, `jo@acme`: a handle or a single-label host) is
     // still the term. The first sweep keeps "@" out so a one-letter term cannot eat a host label inside a real address
     // (jo@x.example); real addresses are [EMAIL_n] by now, so this sweep may touch "@" freely (PR #16 review).

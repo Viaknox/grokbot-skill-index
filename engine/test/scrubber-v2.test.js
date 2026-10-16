@@ -1389,3 +1389,16 @@ test('r80: OAuth values: code_verifier is a secret, all-letter values and 16-cha
   const d = scrubber().sanitize('?state=AbCdEfGhIjKl%2D12345 then AbCdEfGhIjKl-12345');
   assert.ok(!d.text.includes('AbCdEfGhIjKl-12345'), d.text);   // decoded repeat (viaknox PR #36 review)
 });
+test('r81: OAuth values: nested credentials and emails still flagged, later parameters readable, fragment mode scrubbed, link-part recurrence upgraded (viaknox PR #36 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = c => checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: c }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(codes('https://a.example/?state=password=AbAbAbAbAbAb12').includes('revealed_setting'));
+  const e = scrubber().sanitize('https://a.example/?state=alice2024@example.com');
+  assert.ok(e.text.includes('[EMAIL_1]') && !e.text.includes('alice2024'), e.text);
+  assert.equal(scrubber().sanitize('https://a.example/?state=AbAbAbAbAbAbAb12&scope=openid&prompt=consent').text,
+    'https://a.example/?state=[LINK_1]&scope=openid&prompt=consent');
+  const f = scrubber().sanitize('https://app.test/cb#state=AbAbAbAbAbAbAb12');
+  assert.equal(f.held, false); assert.equal(f.text, 'https://app.test/cb#state=[LINK_1]');
+  const sc = scrubber(); sc.sanitize('https://a.example/?state=AbAbAbAbAbAbAb12');
+  assert.ok(!sc.sanitize('log: AbAbAbAbAbAbAb12').text.includes('AbAbAbAbAbAbAb12'));   // a later message's bare repeat
+});
