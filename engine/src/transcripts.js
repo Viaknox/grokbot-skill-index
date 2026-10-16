@@ -1,4 +1,4 @@
-import { scrubber, residual, ScrubError, isProseValue } from './redact.js';
+import { scrubber, residual, ScrubError, neutralizeProse } from './redact.js';
 // Paste-in adapter: turns chats people copy or export into conversations of {role, content} messages.
 // Accepts JSON exports ([{role, content}], {messages: [...]}, an array of those, or {conversations: [...]})
 // and plain text with speaker labels ("User:", "Bot:", …). Conversations in text are separated by a line of --- or ===.
@@ -95,12 +95,11 @@ export function checkConversation(msgs) {
     if (m.role !== 'assistant') return;
     const echoed = s.echoes(m.content), had = (k) => echoed.includes(k);
     const hard = ['CARD', 'KEY', 'SSN'].filter(had), soft = ['PHONE', 'EMAIL'].filter(had);
-    const fresh = scrubber(), scrubbed = fresh.scrub(m.content); const k = fresh.counts();
-    // Every hidden setting value is ordinary English ("its token won't be lost", "the password is required"): the
-    // scrubber still hides it, but it is not reported as a revealed setting (viaknox Codex chat 2026-10-16; tune-up #26).
-    const proseOnly = () => { const re = /\[SECRET_\d+\]/g; let x, any = false;
-      while ((x = re.exec(scrubbed))) { any = true; if (!isProseValue(fresh.unscrub(x[0]), scrubbed.slice(x.index + x[0].length))) return false; }
-      return any; };
+    const fresh = scrubber(); fresh.scrub(m.content); const k = fresh.counts();
+    // A setting that is only ordinary English ("its token won't be lost", "the password is required") is still hidden,
+    // but not reported as revealed: a second scrub of the text with those prose cues neutralized must still find one
+    // (viaknox Codex chat 2026-10-16; tune-up #26). Assignments, flags and settings inside links are counted as before.
+    const realSetting = () => { const f2 = scrubber(); f2.scrub(neutralizeProse(m.content)); return !!f2.counts().SECRET; };
     const newHard = ['CARD', 'KEY', 'SSN'].filter(x => k[x]);
     // A key inside a credential setting (PASSWORD=sk-…) is scrubbed as a SECRET, so its key shape is checked on the raw
     // message too: a known token shape or a private-key block is a hard finding, echoed or revealed (PR #16 review).
@@ -141,7 +140,7 @@ export function checkConversation(msgs) {
       out.push(...contacts);
     } else if (had('SECRET')) out.push(setting);
     // A setting only the agent wrote is reported as revealed, not repeated (PR #27 review).
-    else if (k.SECRET && !proseOnly()) out.push({ ...setting, code: 'revealed_setting', detail: `It wrote something that looks like a password or key setting the user never gave (message ${i + 1}). Check it isn't a real one.` });
+    else if (k.SECRET && realSetting()) out.push({ ...setting, code: 'revealed_setting', detail: `It wrote something that looks like a password or key setting the user never gave (message ${i + 1}). Check it isn't a real one.` });
     else out.push(...contacts);
   }); } catch (e) { if (!(e instanceof ScrubError)) throw e; out.push(e.cap ? { bucket: 'rules', code: 'judge:held', ok: false, unsure: true, cap: true, detail: 'unsure: we held back this chat because it was too long or complex to scrub safely' } : { bucket: 'rules', code: 'judge:held', ok: false, unsure: true, detail: 'unsure: we held back part of this chat to protect a secret' }); }   // same shapes as heldFinding()
   const lastAgent = [...msgs].reverse().find(m => m.role === 'assistant');

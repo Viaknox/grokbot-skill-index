@@ -1313,6 +1313,22 @@ const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]
 // The gap before the noun is bounded (1-4 blanks): an unbounded [ \t]+ lookbehind re-scanned every blank of a long
 // indent at each position and made 2000 growing-indent YAML lines take 1.8 s on Node 22 (PR #16 CI on Linux).
 const NOUN_VALUE_RE = new RegExp('(?<=\\p{L}[ \\t]{1,4})' + PROSE_CRED + NOT_L + '[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)[\\p{L}\\p{N}][^\\s"\']*)', 'giu');
+// For the report only (never for scrubbing or anything sent out): the same text with the credential word of each
+// prose-shaped capture swapped for "thing" ("its token won't be lost" -> "its thing won't be lost"), so a fresh scrub
+// counts only real-looking settings. Assignments, flags, links and every other rule are untouched, and it is one pass
+// per regex (tune-up PR #26 review).
+const PROSE_CRED_LEAD = new RegExp('^' + PROSE_CRED, 'iu');
+export function neutralizeProse(text) {
+  let t = String(text);
+  for (const re of [COPULA_RE, QUAL_COPULA_RE, NOUN_VALUE_RE]) {
+    re.lastIndex = 0;
+    t = t.replace(re, (m, v, o, str) => {
+      if (!isProseValue(v, str.slice(o + m.length))) return m;
+      const lead = PROSE_CRED_LEAD.exec(m); return lead ? 'thing' + m.slice(lead[0].length) : m;
+    });
+  }
+  return t;
+}
 // A multi-word foreign name before a separator: "Mot de passe: X", "clé API = X".
 const PHRASE2_RE = new RegExp(NOT_L_BEHIND + '(?:mot[ \\t]+de[ \\t]+passe|cl[eé][ \\t]+(?:api|secr[eè]te)|chave[ \\t]+(?:de[ \\t]+)?api)' + NOT_L + '[ \\t]*(?:->|[:=\\u2236\\uFF1D\\uFF1A\\u2192])[ \\t]*("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]+)', 'giu');
 // "I changed the password to …", "set my PIN to …" (PR #27 review).
