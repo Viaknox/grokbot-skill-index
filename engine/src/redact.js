@@ -1394,7 +1394,7 @@ function scrubQuery(s, label, resolve) {
   // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
   return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
-    const ln = n.toLowerCase(), oauth = OAUTH_NAMES.has(ln) && v.length >= 16 && /\d/.test(v) && /[A-Za-z]/.test(v);
+    const ln = n.toLowerCase(), dv = OAUTH_NAMES.has(ln) ? decodeName(v) : '', oauth = dv.length >= 16 && /\d/.test(dv) && /[A-Za-z]/.test(dv);
     return (!QUERY_NAMES.has(ln) && !oauth && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
   });
 }

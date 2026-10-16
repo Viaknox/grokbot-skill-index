@@ -1355,4 +1355,6 @@ test('r77: an OAuth sign-in URL (state, PKCE challenge, client_id) is scrubbed, 
   assert.equal(p.text, 'Open https://app.example/form?state=open&client_id=web and verify the modal stays open');   // PR #24 review
   const q = scrubber().sanitize('See https://app.example/form?state=please-open-modal then please-open-modal again');
   assert.equal(q.text, 'See https://app.example/form?state=please-open-modal then please-open-modal again');   // PR #24 review
+  const e = scrubber().sanitize('See https://app.example/form?state=please%2Dopen%2Dmodal then please-open-modal again');
+  assert.ok(e.text.endsWith('then please-open-modal again'), e.text);   // decoded before the check (PR #24 review)
 });
