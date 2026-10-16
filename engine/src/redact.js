@@ -1411,10 +1411,13 @@ function scrubQuery(s, label, resolve) {
     if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
     // Only a plain token (base64/base64url, hex, a UUID): a value holding "=", "@" or ":" (state=password=…, an email)
     // is left for the credential and PII rules, which still flag it (viaknox PR #36 review).
-    if (!/^[A-Za-z0-9_-][A-Za-z0-9._~+\/-]*={0,2}$/.test(dv)) return m;
-    // A known key shape (ghp_…) or a card number is left for the key and PII rules, so it is counted and echo-checked as
-    // what it is (tune-up PR #24 review).
-    if (KEY_SHAPE_ONE.test(dv) || (/^\d{13,19}$/.test(dv) && luhn(dv))) return m;   // base64url may start with - or _
+    // Any base64 or base64url character may lead, after decoding (%2F…, %2B…; tune-up PR #24 review).
+    if (!/^[A-Za-z0-9._~+\/-]+={0,2}$/.test(dv)) return m;
+    // A known key shape (ghp_…), a card number, or a value that starts with a phone or SSN (415-555-2671-AbCd) is left
+    // for the key and PII rules, so it is counted and echo-checked as what it is (tune-up PR #24 review). Only a leading
+    // match counts: a UUID's later all-digit groups must not read as a phone.
+    if (KEY_SHAPE_ONE.test(dv) || (/^\d{13,19}$/.test(dv) && luhn(dv))) return m;
+    const head = dv.slice(0, 64); if (PII_LEAD.some(re => { const x = re.exec(head); return x && x.index === 0; })) return m;
     return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
@@ -1483,6 +1486,8 @@ const PATTERNS = [
   // IPv6, full or compressed; the callback keeps short look-alikes such as times (10:30:00) and C++ scopes (PR #27).
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])|(?<![\w:])::(?:[0-9a-f]{1,4}:){1,6}[0-9a-f]{1,4}(?![\w:])/gi],   // ::ffff:c000:0280 (leading compression; PR #27 review)
 ];
+// Phone and SSN shapes, non-global, for the leading-match check on OAuth values in scrubQuery.
+const PII_LEAD = PATTERNS.filter(([k]) => k === 'PHONE' || k === 'SSN').map(([, re]) => new RegExp(re.source, re.flags.replace('g', '')));
 
 function luhn(digits) {
   let sum = 0, alt = false;

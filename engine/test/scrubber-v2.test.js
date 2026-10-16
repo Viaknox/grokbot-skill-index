@@ -1424,3 +1424,12 @@ test('r83: OAuth values: key and card shapes keep their kind, re-scrub keeps lat
   const t0 = Date.now(); const r = scrubber().sanitize(big); /* default 2 s budget */ const ms = Date.now() - t0;
   assert.equal(r.held, false); assert.ok(ms < 2000, `${ms} ms`);
 });
+test('r84: OAuth values: a leading phone is reported, base64 may start with / or +, UUIDs with digit groups stay links (tune-up PR #24 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'https://a.example/?state=415-555-2671-AbCd' }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(codes.includes('revealed_contact'), codes.join());
+  const b = scrubber().sanitize('https://a.example/?state=%2FAbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd');
+  assert.equal(b.held, false); assert.equal(b.text, 'https://a.example/?state=[LINK_1]');
+  const u = scrubber().sanitize('https://a.example/?client_id=12345678-1234-5678-9012-123456789012&scope=openid');
+  assert.equal(u.held, false); assert.equal(u.text, 'https://a.example/?client_id=[LINK_1]&scope=openid');
+});
