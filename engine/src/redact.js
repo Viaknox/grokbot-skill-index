@@ -270,7 +270,7 @@ export const isProseValue = (v, after) => {
   // won't, can't, it'll: the stem, its suffix, and the rest of the clause all plain lowercase words up to a sentence end
   // ("won't be lost."), so "can't be CorrectHorse9!" is not prose (tune-up PR #26 review). A curly apostrophe (won’t) is
   // captured inside the value, so it is split off here.
-  const cm = /^(\p{Ll}+)(['\u2019](?:t|ll|re|ve|d))$/u.exec(t);
+  const cm = /^(\p{Ll}+)(['\u2019](?:t|ll|re|ve|d)[.,;:!?]?)$/u.exec(t);   // won’t. keeps its sentence mark with the suffix
   const [stem, tail] = cm ? [cm[1], cm[2] + after] : [t, after];
   if (CONTRACTION_STEMS.has(stem) && /^['\u2019](?:t|ll|re|ve|d)(?:[ \t]+\p{Ll}[\p{Ll}'\u2019-]*)*[ \t]*(?:[.,;:!?](?=\s|$)|\n|$)/u.test(tail)) return true;
   // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
