@@ -1413,3 +1413,14 @@ test('r82: OAuth values: leading base64url punctuation, form + as space, dotted 
   assert.ok(!codes.includes('revealed_setting'), codes.join());
   assert.ok(!scrubber().sanitize('https://x.example/oauth2/v2.0x9Qz7/cb').text.includes('v2.0x9Qz7'));
 });
+test('r83: OAuth values: key and card shapes keep their kind, re-scrub keeps later params, decoded alias shares the placeholder, repeats stay linear (tune-up PR #24 review)', async () => {
+  const card = scrubber().sanitize('https://a.example/?state=4111111111111111');
+  assert.ok(card.text.includes('[CARD_1]') && !card.text.includes('4111111111111111'), card.text);
+  const once = scrubber().sanitize('https://a.example/?state=AbAbAbAbAbAbAb12&scope=openid&prompt=consent').text;
+  assert.equal(scrubber().sanitize(once).text, once);
+  assert.equal(scrubber().sanitize('?state=AbCdEfGhIjKl%2D12345 then AbCdEfGhIjKl-12345').text, '?state=[LINK_1] then [LINK_1]');
+  const vals = Array.from({ length: 4000 }, (_, i) => `Ab${String(i).padStart(6, '0')}CdEfGhIjKl`);
+  const big = vals.map(v => `?state=${v}`).join(' ') + ' ' + vals.map(v => `?state=${v}`).join(' ');
+  const t0 = Date.now(); const r = scrubber().sanitize(big); /* default 2 s budget */ const ms = Date.now() - t0;
+  assert.equal(r.held, false); assert.ok(ms < 2000, `${ms} ms`);
+});
