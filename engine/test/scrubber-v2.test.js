@@ -1370,3 +1370,10 @@ test('r78: an agent showing a sign-in URL is not flagged as revealing a password
   assert.equal(scrubber().sanitize('[Sign in](https://auth.example/?state=Abcd12345678901234).').text, '[Sign in](https://auth.example/?state=[LINK_1]).');
   assert.equal(scrubber().sanitize('POST https://x.example/auth/AbC123dEf456 ok').text, 'POST https://x.example/auth/[SECRET_1] ok');
 });
+
+test('r79: short codes after /auth/ are still taken; a long punctuation run after a sign-in value stays linear (tune-up PR #24 review)', () => {
+  assert.equal(scrubber().sanitize('https://x.example/auth/123456 ok').text, 'https://x.example/auth/[SECRET_1] ok');
+  assert.equal(scrubber().sanitize('https://x.example/oauth/abcdef ok').text, 'https://x.example/oauth/[SECRET_1] ok');
+  const t = Date.now(); scrubber().sanitize('https://a.example/?state=1' + ')'.repeat(200000) + 'x');
+  assert.ok(Date.now() - t < 1500, 'took ' + (Date.now() - t) + ' ms');
+});

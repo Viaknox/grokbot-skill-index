@@ -1116,14 +1116,15 @@ function scrubNameValuePairs(s, label, resolve) {
 
 // URL path segments: a segment that is a credential name (/token/, /password/, /api-key/) makes the next segment a
 // secret (https://x/api/token/<x>/status).
+const AUTH_ROUTES = /^(?:v\d{1,2}|authorize|callback|login|logout|signin|signup|consent|userinfo|device|register|revoke|introspect|jwks|token|oauth2?|openid|verify|google|github|microsoft|azure|apple)$/i;
 function scrubPathSegments(s, label, resolve) {
   if (!s.includes('/')) return s;
   // The slash after the segment is only looked at, not consumed, so "/api/token/x" is retried at "token".
   const ivs = [], re = /\/([\p{L}\p{N}_\-]{1,40})(?=\/[^\/\s?#"'<>)]+)/gu;
-  // /auth/ and /oauth/ are usually routes (/auth/v1/oauth/authorize), so the next segment counts only when it looks
-  // generated (8+ characters with a digit); /password/, /token/ and the rest are unchanged (PR #24: Codex sign-in URL).
+  // After /auth/ or /oauth/, only known route words are left (/auth/v1/oauth/authorize, the Codex sign-in URL); any other
+  // value, short codes like /auth/123456 included, is still taken. /password/, /token/ and the rest are unchanged (PR #24).
   for (let m; (m = re.exec(s));) if (isCredentialName(resolve(m[1]))) { const vs = m.index + m[0].length + 1; let ve = vs; while (ve < s.length && !'/?#"\'<>) \t\r\n'.includes(s[ve])) ve++;
-    if (/^o?auth$/i.test(m[1]) && !(ve - vs >= 8 && /\d/.test(s.slice(vs, ve)))) continue; ivs.push([vs, ve, 'SECRET']); }
+    if (/^o?auth2?$/i.test(m[1]) && AUTH_ROUTES.test(s.slice(vs, ve))) continue; ivs.push([vs, ve, 'SECRET']); }
   return applyIntervals(s, ivs, label);
 }
 
@@ -1403,7 +1404,8 @@ function scrubQuery(s, label, resolve) {
     // A one-time sign-in value is hidden as a link part, not a SECRET: an agent showing its sign-in URL is not revealing a
     // password setting; trailing punctuation stays outside ([Sign in](…?state=…). keeps ")."; PR #24 review).
     if (!oauth) return m;
-    const core = v.replace(/[).,;:!?'"\]>]+$/, ''); return core.length >= 16 ? pre + label('LINK', core) + v.slice(core.length) : m;
+    let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e);   // a loop, not /[…]+$/ (quadratic; PR #24 review)
+    return core.length >= 16 ? pre + label('LINK', core) + v.slice(core.length) : m;
   });
 }
 
