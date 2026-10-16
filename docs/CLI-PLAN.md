@@ -63,8 +63,9 @@ pure module `engine/src/gate.js`; in R2 the report and `tune` use the same modul
 
 The unit is a **case-run**: one test case × one repeat (`run`), or one conversation (`check`). The expected number of
 case-runs comes from the suite (cases × repeats) or, for `check`, from every candidate conversation in the input **before** parsing
-filters anything out (format-aware, using the **same splitting function as the parser** so the two can never disagree: each `---` or `===`
-separated text block, each element of a `conversations` list or an array of conversations; a top-level `{messages}` object
+filters anything out (format-aware, using the **same splitting function as the parser** so the two can never disagree: each non-blank `---` or `===`
+separated text block (blocks that are empty or whitespace-only, e.g. from a leading, trailing or doubled separator, are not
+candidates), each element of a `conversations` list or an array of conversations; a top-level `{messages}` object
 or a flat array of `{role, content}` messages is **one** candidate conversation), never from what happened to come back. An entry the parser rejects (one-sided, truncated, malformed)
 is a **missing** case-run and is listed by position in the report, so incomplete input can never improve the gate. An
 adapter or judge error during evaluation also makes that case-run missing instead of crashing the command.
@@ -153,6 +154,7 @@ CI log.
 | G12 | `check` input with zero conversations | exit 3 |
 | G12c | `run` with a suite that has no cases | exit 2 (invalid config, as `validateSuite` already rules), nothing evaluated |
 | G12d | Flat JSON array of 2 messages (`user`, `assistant`) | 1 expected case-run, judged normally (not exit 3) |
+| G12f | Two valid chats with a leading, a trailing and a doubled `---` | 2 expected case-runs, exit 0 when both pass (blank blocks are not missing) |
 | G12e | Two valid chats separated by `===`; a `{messages: [...]}` object | 2 and 1 expected case-runs respectively, matching what the parser produces |
 | G12b | Export with 1 valid conversation and 2 one-sided or malformed entries | exit 3; the 2 rejected entries are counted as missing and listed by position |
 | G13 | Suite case expected but produced no run | exit 3 (missing never improves the denominator) |
