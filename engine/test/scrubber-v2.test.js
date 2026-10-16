@@ -1446,3 +1446,7 @@ test('r87: prose exemption keeps case: capitalised status-word passphrases are s
   for (const [t, v] of [['my password is Not Correct', 'Not Correct'], ['my password is NOT SET', 'NOT SET'], ['my password is Required', 'Required']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
   assert.equal(scrubber().sanitize('the token is not set').text, 'the token is not set');
 });
+test('r88: a status word with symbols is still a value (required!, invalid?) (tune-up PR #26 security review)', () => {
+  for (const [t, v] of [['The service password is required! (the exclamation point is part of it)', 'required!'], ['the token is invalid?!', 'invalid?'], ['the password is required..', 'required..']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
+  assert.equal(scrubber().sanitize('The password is required.').text, 'The password is required.');
+});

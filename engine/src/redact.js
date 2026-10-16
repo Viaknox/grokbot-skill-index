@@ -265,7 +265,8 @@ const isProseValue = (v, after) => {
   // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
   // taken (tune-up PR #26 review). One word must be a status word; several only when led by a negation ("not set",
   // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
-  const w = t.replace(/[.,;:!?]+$/, '').split(/\s+/);
+  // Only one closing "." or "," is read as sentence punctuation: "required!" may be a real password (tune-up PR #26).
+  const w = t.replace(/[.,]$/, '').split(/\s+/);
   if (!w.every(x => /^[\p{Ll}-]+$/u.test(x))) return false;
   return w.length === 1 ? PROSE_STATUS.has(w[0]) : /^(?:not|no|never)$/.test(w[0]);
 };
