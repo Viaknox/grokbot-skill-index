@@ -42,7 +42,6 @@ panel before S0:
 | Plugin releases use `v0.3.x` tags | git tags |
 | Every PR is authored by Paul's account (sessions use his login) | PRs #22–#27 |
 | The MIT `LICENSE` is only at the repo root; `engine/package.json` has no `repository` field | repo |
-| README example paths (`examples/sample-chats.txt`, `sample-instructions.txt`) do not exist | `engine/README.md` |
 | Quality tooling: `SathiaAI/quality-gate` already comment-reviews every Viaknox PR; `SathiaAI/sast-check` is not on this repo yet | both repos |
 
 ## 3. Releases
@@ -73,7 +72,8 @@ failed check is failed: passing checks never dilute a failure.
 
 - Strict pass rate = ok case-runs ÷ expected case-runs.
 - Undetermined rate = undetermined case-runs ÷ case-runs where the judge was requested.
-- A "Follows your rules" failure in any case-run fails the gate (unless `--allow-rules-fail`).
+- A "Follows your rules" failure in any case-run fails the gate on its own (the rules veto). `--allow-rules-fail` turns
+  off only that veto: the case-run is still failed and still counts against `--min`.
 
 ### Defaults (strict; loosening is explicit and printed)
 
@@ -82,7 +82,7 @@ failed check is failed: passing checks never dilute a failure.
 | `--min <0-100>` | **100** when gating | Strict pass rate from raw counts, never rounded |
 | `--max-undetermined <0-100>` | **0** | % of judged items that may be undetermined |
 | `--allow-rules-fail` | off | A "Follows your rules" failure always fails otherwise |
-| `--consent` / `TUNEUP_CONSENT=1` | off | Sends scrubbed text to the judge. Without it: rules-only |
+| `--consent` / `TUNEUP_CONSENT=1` | off | Required for **every** remote model call (judge, `model` adapter, fix writer). Without it, `check` runs rules-only; `run` and `tune` stop with exit 2 as today. A key in the environment never counts as consent |
 | `--gate` | off | Turns gating on; without it exit code is 0 whatever the result (today's behaviour) |
 | `--json` | off | Writes `gate.json` |
 
@@ -107,14 +107,14 @@ CI log.
 
 | # | Story | Done when | Panel checklist (§10) |
 |---|---|---|---|
-| S0 | **Repo protection (Paul's clicks, guided)** | Branch protection on `main`: PRs required, `test` and `sast-check / scan` required, no force or direct pushes; Code Owner review required or advisory per D6. CODEOWNERS covers `.github/**`, `engine/test/**`, `engine/cli.js`, `engine/src/gate.js`, `engine/src/report.js`, `engine/src/judge.js`, `engine/package.json`, `engine/LICENSE`, `.sast-check.toml`, `.github/CODEOWNERS`, release config | PG1, PG2, PT1, PT2, PT13 |
+| S0 | **Repo protection (Paul's clicks, guided)** | Branch protection on `main`: PRs required, `test` and `sast-check / scan` required, no force or direct pushes; Code Owner review required or advisory per D6. CODEOWNERS covers `.github/**`, `engine/test/**`, `engine/cli.js`, `engine/src/**` (every module that produces gate evidence), `engine/package.json`, `engine/LICENSE`, `engine/RELEASE_CHANNEL`, `.sast-check.toml`, `.github/CODEOWNERS`, release config | PG1, PG2, PT1, PT2, PT13 |
 | S1 | Add sast-check | `.github/workflows/sast.yml` pinned by full SHA; zizmor clean on all workflows | PG2, PT5, PT11 |
 | S2 | Tests first (R1) | §6 tests committed; a CI run linked in the PR shows them failing on today's code | PG10 |
 | S3 | `gate.js` + CLI wiring | §6 green; no existing test changed except where this plan says | PG3–PG7, PG9, PT12 |
-| S4 | Packaging | `bin`, `files` allowlist, `private` removed; `engine/LICENSE` (copy of the root MIT LICENSE, kept identical by a test); `repository.url` = `git+https://github.com/Viaknox/tune-up.git` with `directory: engine`; `npm pack` shows only allowlisted files, LICENSE included; tarball runs via `npx` | PT6, PT23 |
+| S4 | Packaging | `name: "agenttuneup"` (today `agent-tune-up-engine`), `bin`, `files` allowlist, `private` removed; `engine/LICENSE` (copy of the root MIT LICENSE, kept identical by a test); `repository.url` = `git+https://github.com/Viaknox/tune-up.git` with `directory: engine`; `npm pack` shows only allowlisted files, LICENSE included; tarball runs via `npx` | PT6, PT23 |
 | S5 | Guards | No-skip check, test-count ratchet, golden known-bad fixture, mutation run on `gate.js` with zero survivors | PG10 |
-| S6 | Release workflow | Triggers when a merged release PR changes `engine/package.json` version on `main`; waits in the protected `release` environment for Paul's Approve click; publishes to npm, verifies registry integrity, provenance and channel, and **only then** creates the `cli-v*` tag and the GitHub release (so a public release never points at a failed publish). The channel comes from `engine/RELEASE_CHANNEL` in the release PR (`next` by default; `latest` only when Paul has approved the §3 criteria), never from the version shape; asserts tag = package version, commit on `main`, tests pass, pack allowlist; `id-token: write` only on publish job; actions pinned by SHA; explicit `--tag next` for pre-releases; approval summary shows version, channel, commit, file list with digests. Each release starts as a prepared release PR (version bump, CLI changelog, channel) | PT3, PT4, PT7–PT11, PT15, PT16, PT20, PT22, PT23 |
-| S7 | Docs | README uses `npx agenttuneup@<exact version>`; broken example paths fixed; outside-team CI guide (protect suites, never expose the key to fork PRs, `pull_request` not `pull_request_target`, Level 1 vs Level 2); 0.x compatibility policy; incident runbook; CHANGELOG | PG14, PT17, PT18, PT21 |
+| S6 | Release workflow | Triggers when a merged release PR changes `engine/package.json` version on `main`; waits in the protected `release` environment for Paul's Approve click; publishes to npm, verifies registry integrity, provenance and channel, and **only then** creates the `cli-v*` tag and the GitHub release (so a public release never points at a failed publish). The channel comes from `engine/RELEASE_CHANNEL` in the release PR (`next` by default; `latest` only when Paul has approved the §3 criteria), never from the version shape, and any value other than `next` or `latest` stops the workflow before publish. The tag is created with an explicit target equal to the approved workflow commit SHA, checked again just before creation. A `-rc`/`-beta` version, or channel `next`, creates the GitHub release marked **pre-release** and not Latest. The `cli-v*` tag ruleset lists the release workflow's app identity as its only bypass actor, so the workflow can create tags and people cannot; asserts tag = package version, commit on `main`, tests pass, pack allowlist; `id-token: write` only on publish job; actions pinned by SHA; explicit `--tag next` for pre-releases; approval summary shows version, channel, commit, file list with digests. Each release starts as a prepared release PR (version bump, CLI changelog, channel) | PT3, PT4, PT7–PT11, PT15, PT16, PT20, PT22, PT23 |
+| S7 | Docs | README uses `npx agenttuneup@<exact version>` (existing `engine/examples/` files stay as they are); outside-team CI guide (protect suites, never expose the key to fork PRs, `pull_request` not `pull_request_target`, Level 1 vs Level 2); 0.x compatibility policy; incident runbook; CHANGELOG | PG14, PT17, PT18, PT21 |
 | S8 | npm bootstrap (Paul, guided) | npm needs the package to exist before trusted publishing can be set up, so: CI builds and tests the `0.1.0-rc.0` tarball; Paul publishes **that exact tarball** once from his machine with 2FA (`npm publish <file>.tgz --tag next`); then trusted publishing is configured for `release.yml` and the `release` environment; then token publishing is disallowed and the `NPMJS` token revoked. `@viaknox` org reserved; recovery codes confirmed. Every later release goes through S6 | PT19 |
 | S9 | R2: shared classifier | report.json, report.md and `tune` use pass / fail / undetermined; `tune` re-tests matched cases and repeats, reports evidence changes separately from behaviour gains, never says "verified" with incomplete evidence; old and new counts shown side by side for one release | PG8, PG11, PG13, PG15 |
 | S10 | R2: hosted re-copy | Same-day viaknox PR re-copies `engine/src`, updates SOURCE.txt; a viaknox CI check fails if SOURCE.txt and vendored files disagree; hosted card output snapshot unchanged or explained | PG9, PG11 |
@@ -134,11 +134,12 @@ CI log.
 | G5 | `--consent`, every judge call held | exit 3 |
 | G5b | `--consent`, judge request errors | exit 3, never `PASS: local rules only` |
 | G6 | One rules failure, everything else ok | exit 1 |
-| G7 | G6 with `--allow-rules-fail` | exit 0, and the loosening is printed and in `gate.json` |
+| G7 | G6 with `--allow-rules-fail` and `--min 90` | exit 0 (the rules veto is off, the failed case-run still counts against `--min`); the loosening is printed and in `gate.json` |
+| G7b | G6 with `--allow-rules-fail` and default `--min 100` | exit 1 (the failed case-run is still below the threshold) |
 | G8 | 1 undetermined with default `--max-undetermined 0` | exit 1 |
 | G9 | No `--consent`, rules all ok | exit 0, `PASS: local rules only`, `gate.json.evidence = "rules-only"` |
 | G10 | No `--gate` | exit 0 whatever the result |
-| G11 | `--min` `-1`, `101`, `abc`, missing value | exit 2, nothing evaluated |
+| G11 | `--min` or `--max-undetermined` set to `-1`, `101`, `abc`, or no value | exit 2, nothing evaluated (both flags) |
 | G11b | Unknown or misspelled flag (`--gte`, `--consnet`) on any command | exit 2, nothing evaluated (the parser no longer ignores unknown flags) |
 | G12 | Zero conversations or empty suite | exit 3 |
 | G13 | Suite case expected but produced no run | exit 3 (missing never improves the denominator) |
@@ -149,12 +150,13 @@ CI log.
 | ID | Case | Expected |
 |---|---|---|
 | P1 | `npm pack --dry-run` file list | only the allowlist, and `LICENSE` is present; no `test/`, `.sqlite`, brand files |
-| P1b | `engine/LICENSE` vs root `LICENSE`; `repository.url` | identical text; URL exactly `git+https://github.com/Viaknox/tune-up.git` |
+| P1b | Packed manifest: `name`, `repository.url`, `LICENSE` | `name` is exactly `agenttuneup`; URL exactly `git+https://github.com/Viaknox/tune-up.git`; `engine/LICENSE` identical to root `LICENSE` |
 | P2 | Install tarball in a temp dir, `npx agenttuneup --version` | version printed, exit 0 |
 | P3 | `npx agenttuneup check <fixture> --gate`, no consent, fetch stubbed to throw | runs, no network call |
+| P3b | `run` and `tune` with a key in env but no consent, fetch stubbed to throw | exit 2, no network call |
 | P4 | Exit codes 0/1/2/3 propagate through `npx` | each matches the gate test |
 | P5 | Fake key in env, network stubbed | key never in stdout, stderr, report.md, gate.json |
-| P6 | Paths via `fileURLToPath`; P2–P4 | run in CI on native `ubuntu-latest`, `windows-latest` and `macos-latest` runners (a matrix job added in S5) |
+| P6 | Paths via `fileURLToPath`; P2–P4 | run in CI on native `ubuntu-latest`, `windows-latest` and `macos-latest` runners, each on Node 20.12 (the minimum in `engines`) and Node 22 (a matrix job added in S5) |
 
 ### Golden fixtures (offline, in CI)
 
@@ -180,7 +182,7 @@ CI log.
 | Red-first CI run linked in the PR (S2) | Tests that could never fail |
 | Golden fixtures F1, F3 must fail (S5) | A gate weakened to always pass |
 | No `skip` / `only` / `todo` in `engine/test` (S5) | Quietly disabled tests |
-| Test-count ratchet `engine/test/BASELINE` = 475 now (S5) | Deleted tests |
+| Test-count ratchet `engine/test/BASELINE`: set in S5 to the full count after S2's new tests, and raised by every PR that adds tests | Deleted tests, including the new safeguards |
 | Mutation run on `gate.js`, zero survivors (S5) | Tests that pass whatever the code does |
 | quality-gate review on every PR (automatic) | Weakened asserts, swallowed errors; findings get a written disposition |
 | sast-check required (S1) | Security issues and risky workflow changes |
