@@ -1384,8 +1384,9 @@ function scrubCommands(s, label) {
 // URL query parameters whose name is a credential (code, auth, sig, token, session, …, or anything isCredentialName
 // accepts) have their value replaced.
 const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp']);
-// OAuth sign-in values (state, PKCE challenge, client id) are taken only when long enough to be generated, so a pasted
-// sign-in URL is scrubbed rather than holding the chat, while ?state=open or ?client_id=web stay readable (PR #24 review).
+// OAuth sign-in values (state, PKCE challenge, client id) are taken only when they look generated (16+ characters with
+// letters and digits), so a pasted sign-in URL is scrubbed rather than holding the chat, while ?state=open or
+// ?state=please-open-modal stay readable (PR #24 review). One that is generated but has no digit is still held: safe.
 const OAUTH_NAMES = new Set(['state', 'nonce', 'code_challenge', 'code_verifier', 'client_id']);
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
@@ -1393,7 +1394,7 @@ function scrubQuery(s, label, resolve) {
   // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
   return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
-    const ln = n.toLowerCase(), oauth = OAUTH_NAMES.has(ln) && v.length >= 16;
+    const ln = n.toLowerCase(), oauth = OAUTH_NAMES.has(ln) && v.length >= 16 && /\d/.test(v) && /[A-Za-z]/.test(v);
     return (!QUERY_NAMES.has(ln) && !oauth && !isCredentialName(resolve(n))) || isPlaceholderValue(v) ? m : pre + label('SECRET', v);
   });
 }

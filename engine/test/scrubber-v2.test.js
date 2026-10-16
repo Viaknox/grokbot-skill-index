@@ -1353,4 +1353,6 @@ test('r77: an OAuth sign-in URL (state, PKCE challenge, client_id) is scrubbed, 
   for (const v of ['Qm9X2kLp7RtYw4ZcVb8NaE', 'Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S', 'fc2d0b81-27aa']) assert.ok(!r.text.includes(v), v);
   const p = scrubber().sanitize('Open https://app.example/form?state=open&client_id=web and verify the modal stays open');
   assert.equal(p.text, 'Open https://app.example/form?state=open&client_id=web and verify the modal stays open');   // PR #24 review
+  const q = scrubber().sanitize('See https://app.example/form?state=please-open-modal then please-open-modal again');
+  assert.equal(q.text, 'See https://app.example/form?state=please-open-modal then please-open-modal again');   // PR #24 review
 });
