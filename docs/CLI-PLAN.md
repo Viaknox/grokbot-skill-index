@@ -10,21 +10,18 @@ then attack and mutation, then frontier-gate `verify` against the checklists bel
 |---|---|---|---|
 | D1 | npm name | `agenttuneup` (unscoped). Also reserve the `@viaknox` npm org | Paul |
 | D2 | Releases | Release PR → Paul merges → Paul clicks **Approve** on the release job → npm publish (trusted publishing, provenance) → verify → workflow creates the `cli-vX.Y.Z` tag and GitHub release | Frontier panel, unanimous (0.98); order fixed after Codex review |
+| D6 | Who approves PRs | Claude opens PRs under its own GitHub App identity; Paul approves and merges as the code owner | Paul (option A) |
 | D3–D5 | Gate policy | **Strict everywhere, sequenced:** strict CI gate ships first (R1); then pass / fail / undetermined in the report and `tune` (R2), with the hosted connector re-copied the same day | Panel split (0.31); Paul chose B |
 | Q3 | Judge in CI | Opt-in only (`--consent`). Without it the result reads **PASS: local rules only** | Panel checklist |
 
 Panel records: `F:\ENV\Claude outputs\frontier-gate\2026-10-16-cli-gate-policy\` and `...-cli-release-tags\`.
 
-### Open decision for Paul: D6, review policy
+### D6, review policy: decided A (Paul, 2026-10-16)
 
-Every PR in this repo is opened under Paul's GitHub account (Claude sessions use his login), and GitHub does not let an
-author approve their own PR. So "Code Owner review required" would block every PR. Options, to run through the frontier
-panel before S0:
-
-| Option | What it means | Trade-off |
-|---|---|---|
-| A. Separate identity for Claude | Claude sessions open PRs as a GitHub App or bot account; Paul reviews and approves as a real second person | Real two-person review; needs the App set up once |
-| B. Checks only | Required checks (tests, sast-check, gate guards) block merges; CODEOWNERS is advisory; only Paul has merge rights | Simple; no human-approval gate, so the guards rest on CI alone |
+Every PR here used to be opened under Paul's account, and GitHub does not let an author approve their own PR. **Claude
+gets its own GitHub identity** (a GitHub App), so Claude-authored PRs can be approved by Paul as a real second person and
+"Code Owner review required" works. Set up in story S0a before S0. The repo already uses the same pattern
+(`SathiaAI/quality-gate`'s read-only App with one-hour installation tokens).
 
 ## 2. Facts this plan rests on (verified 2026-10-16)
 
@@ -65,13 +62,17 @@ pure module `engine/src/gate.js`; in R2 the report and `tune` use the same modul
 ### Unit of scoring
 
 The unit is a **case-run**: one test case × one repeat (`run`), or one conversation (`check`). The expected number of
-case-runs comes from the suite (cases × repeats) or from the chats parsed, never from what happened to come back.
+case-runs comes from the suite (cases × repeats) or, for `check`, from every non-empty entry in the input **before** parsing
+filters anything out, never from what happened to come back. An entry the parser rejects (one-sided, truncated, malformed)
+is a **missing** case-run and is listed by position in the report, so incomplete input can never improve the gate. An
+adapter or judge error during evaluation also makes that case-run missing instead of crashing the command.
 Each case-run takes one state, by precedence: **failed** (any finding failed) > **missing** (expected, not produced) >
 **undetermined** (any finding unsure or held) > **ok** (every finding ok). A case-run with several passing checks and one
 failed check is failed: passing checks never dilute a failure.
 
 - Strict pass rate = ok case-runs ÷ expected case-runs.
-- Undetermined rate = undetermined case-runs ÷ case-runs where the judge was requested.
+- Undetermined rate = case-runs with **any** unsure or held finding ÷ case-runs where the judge was requested. This is
+  counted on its own, so a case-run that also failed still counts as undetermined here (a failure never hides uncertainty).
 - A "Follows your rules" failure in any case-run fails the gate on its own (the rules veto). `--allow-rules-fail` turns
   off only that veto: the case-run is still failed and still counts against `--min`.
 
@@ -107,13 +108,14 @@ CI log.
 
 | # | Story | Done when | Panel checklist (§10) |
 |---|---|---|---|
-| S0 | **Repo protection (Paul's clicks, guided)** | Branch protection on `main`: PRs required, `test` and `sast-check / scan` required, no force or direct pushes; Code Owner review required or advisory per D6. CODEOWNERS covers `.github/**`, `engine/test/**`, `engine/cli.js`, `engine/src/**` (every module that produces gate evidence), `engine/package.json`, `engine/LICENSE`, `engine/RELEASE_CHANNEL`, `.sast-check.toml`, `.github/CODEOWNERS`, release config | PG1, PG2, PT1, PT2, PT13 |
+| S0a | **Claude's GitHub identity (Paul's clicks, guided)** | A GitHub App (e.g. `viaknox-claude`) created by Paul, installed only on the repos Claude works in, with Contents and Pull requests write and nothing else; its private key stored where Claude sessions can mint one-hour tokens without the key entering chat; a test PR opened by the App and approved by Paul; Paul's own credential no longer used to author Claude PRs. Separate from the release App in S6 | — |
+| S0 | **Repo protection (Paul's clicks, guided)** | Branch protection on `main`: PRs required, `test` and `sast-check / scan` required, no force or direct pushes; Code Owner review required (D6 = A). CODEOWNERS covers `.github/**`, `engine/test/**`, `engine/cli.js`, `engine/src/**` (every module that produces gate evidence), `engine/package.json`, `engine/LICENSE`, `engine/RELEASE_CHANNEL`, `.sast-check.toml`, `.github/CODEOWNERS`, release config | PG1, PG2, PT1, PT2, PT13 |
 | S1 | Add sast-check | `.github/workflows/sast.yml` pinned by full SHA; zizmor clean on all workflows | PG2, PT5, PT11 |
 | S2 | Tests first (R1) | §6 tests committed; a CI run linked in the PR shows them failing on today's code | PG10 |
-| S3 | `gate.js` + CLI wiring | §6 green; no existing test changed except where this plan says | PG3–PG7, PG9, PT12 |
+| S3 | `gate.js` + CLI wiring | Gate tests (G1–G15) and golden fixtures (F1–F3) green; the package tests (P) go green in S4–S5, and the whole of §6 is green at the end of S5; no existing test changed except where this plan says | PG3–PG7, PG9, PT12 |
 | S4 | Packaging | `name: "agenttuneup"` (today `agent-tune-up-engine`), `bin`, `files` allowlist, `private` removed; `engine/LICENSE` (copy of the root MIT LICENSE, kept identical by a test); `repository.url` = `git+https://github.com/Viaknox/tune-up.git` with `directory: engine`; `npm pack` shows only allowlisted files, LICENSE included; tarball runs via `npx` | PT6, PT23 |
 | S5 | Guards | No-skip check, test-count ratchet, golden known-bad fixture, mutation run on `gate.js` with zero survivors | PG10 |
-| S6 | Release workflow | Triggers when a merged release PR changes `engine/package.json` version on `main`; waits in the protected `release` environment for Paul's Approve click; publishes to npm, verifies registry integrity, provenance and channel, and **only then** creates the `cli-v*` tag and the GitHub release (so a public release never points at a failed publish). The channel comes from `engine/RELEASE_CHANNEL` in the release PR (`next` by default; `latest` only when Paul has approved the §3 criteria), never from the version shape, and any value other than `next` or `latest` stops the workflow before publish. The tag is created with an explicit target equal to the approved workflow commit SHA, checked again just before creation. A `-rc`/`-beta` version, or channel `next`, creates the GitHub release marked **pre-release** and not Latest. The `cli-v*` tag ruleset lists the release workflow's app identity as its only bypass actor, so the workflow can create tags and people cannot; asserts tag = package version, commit on `main`, tests pass, pack allowlist; `id-token: write` only on publish job; actions pinned by SHA; explicit `--tag next` for pre-releases; approval summary shows version, channel, commit, file list with digests. Each release starts as a prepared release PR (version bump, CLI changelog, channel) | PT3, PT4, PT7–PT11, PT15, PT16, PT20, PT22, PT23 |
+| S6 | Release workflow | Triggers when a merged release PR changes `engine/package.json` version on `main`; waits in the protected `release` environment for Paul's Approve click; publishes to npm, verifies registry integrity, provenance and channel, and **only then** creates the `cli-v*` tag and the GitHub release (so a public release never points at a failed publish). The channel comes from `engine/RELEASE_CHANNEL` in the release PR (`next` by default; `latest` only when Paul has approved the §3 criteria), never from the version shape, and any value other than `next` or `latest` stops the workflow before publish. Releases are serialised (one concurrency group, no cancelling). If the version is already on npm, the workflow compares the registry tarball's integrity hash with the one it built: a match skips publish and resumes verification and release creation (safe re-run after a partial failure); a mismatch stops with an error. The publish job has only `id-token: write` and `contents: read`; a separate tag-and-release job runs after verification with a token minted for a dedicated release GitHub App that has `contents: write` on this repo only, and that same App is the tag ruleset's bypass actor. The tag is created with an explicit target equal to the approved workflow commit SHA, checked again just before creation. A `-rc`/`-beta` version, or channel `next`, creates the GitHub release marked **pre-release** and not Latest.  asserts tag = package version, commit on `main`, tests pass, pack allowlist; `id-token: write` only on publish job; actions pinned by SHA; explicit `--tag next` for pre-releases; approval summary shows version, channel, commit, file list with digests. Each release starts as a prepared release PR (version bump, CLI changelog, channel) | PT3, PT4, PT7–PT11, PT15, PT16, PT20, PT22, PT23 |
 | S7 | Docs | README uses `npx agenttuneup@<exact version>` (existing `engine/examples/` files stay as they are); outside-team CI guide (protect suites, never expose the key to fork PRs, `pull_request` not `pull_request_target`, Level 1 vs Level 2); 0.x compatibility policy; incident runbook; CHANGELOG | PG14, PT17, PT18, PT21 |
 | S8 | npm bootstrap (Paul, guided) | npm needs the package to exist before trusted publishing can be set up, so: CI builds and tests the `0.1.0-rc.0` tarball; Paul publishes **that exact tarball** once from his machine with 2FA (`npm publish <file>.tgz --tag next`); then trusted publishing is configured for `release.yml` and the `release` environment; then token publishing is disallowed and the `NPMJS` token revoked. `@viaknox` org reserved; recovery codes confirmed. Every later release goes through S6 | PT19 |
 | S9 | R2: shared classifier | report.json, report.md and `tune` use pass / fail / undetermined; `tune` re-tests matched cases and repeats, reports evidence changes separately from behaviour gains, never says "verified" with incomplete evidence; old and new counts shown side by side for one release | PG8, PG11, PG13, PG15 |
@@ -137,13 +139,16 @@ CI log.
 | G7 | G6 with `--allow-rules-fail` and `--min 90` | exit 0 (the rules veto is off, the failed case-run still counts against `--min`); the loosening is printed and in `gate.json` |
 | G7b | G6 with `--allow-rules-fail` and default `--min 100` | exit 1 (the failed case-run is still below the threshold) |
 | G8 | 1 undetermined with default `--max-undetermined 0` | exit 1 |
+| G8b | 10 judged runs: 9 ok, 1 with both a failed and an unsure finding; `--min 90 --max-undetermined 0` | exit 1 (the run counts as undetermined even though it is also failed) |
 | G9 | No `--consent`, rules all ok | exit 0, `PASS: local rules only`, `gate.json.evidence = "rules-only"` |
 | G10 | No `--gate` | exit 0 whatever the result |
 | G11 | `--min` or `--max-undetermined` set to `-1`, `101`, `abc`, or no value | exit 2, nothing evaluated (both flags) |
 | G11b | Unknown or misspelled flag (`--gte`, `--consnet`) on any command | exit 2, nothing evaluated (the parser no longer ignores unknown flags) |
 | G12 | Zero conversations or empty suite | exit 3 |
+| G12b | Export with 1 valid conversation and 2 one-sided or malformed entries | exit 3; the 2 rejected entries are counted as missing and listed by position |
 | G13 | Suite case expected but produced no run | exit 3 (missing never improves the denominator) |
 | G14 | `gate.json` against a frozen schema | matches; includes version, policy, scope, raw counts |
+| G15 | `--min 80 --max-undetermined 10`, result passes | verdict line names both loosened values; `gate.json.policy` records min 80 and max_undetermined 10 |
 
 ### Package and CLI (`engine/test/cli-package.test.js`)
 
@@ -155,6 +160,7 @@ CI log.
 | P3 | `npx agenttuneup check <fixture> --gate`, no consent, fetch stubbed to throw | runs, no network call |
 | P3b | `run` and `tune` with a key in env but no consent, fetch stubbed to throw | exit 2, no network call |
 | P4 | Exit codes 0/1/2/3 propagate through `npx` | each matches the gate test |
+| P4b | `run --gate` where the agent adapter throws on case 2, and `check --gate --consent` where the judge request throws | exit 3 `UNDETERMINED`, the failed case-runs recorded as missing in `gate.json`, no unhandled error |
 | P5 | Fake key in env, network stubbed | key never in stdout, stderr, report.md, gate.json |
 | P6 | Paths via `fileURLToPath`; P2–P4 | run in CI on native `ubuntu-latest`, `windows-latest` and `macos-latest` runners, each on Node 20.12 (the minimum in `engines`) and Node 22 (a matrix job added in S5) |
 
