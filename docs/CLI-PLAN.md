@@ -75,7 +75,7 @@ findings already failed; the failed findings are still reported) > **failed** (a
 **undetermined** (any finding unsure or held) > **ok** (every finding ok). A case-run with several passing checks and one
 failed check is failed: passing checks never dilute a failure.
 
-- Produced results are matched one-to-one to expected (case, repeat) identities; duplicates and unexpected extras never
+- Case ids must be unique within a suite (a duplicate id is a config error, exit 2). Produced results are matched one-to-one to expected (case, repeat) identities; duplicates and unexpected extras never
   count toward the numerator and are listed in the report.
 - A case-run is only **ok** if it contains every finding its evidence scope requires (all rule checks; plus the judge
   questions when `--consent` is on). A run missing any required finding is **missing**, never ok.
@@ -163,6 +163,7 @@ CI log.
 | G12e | Two valid chats separated by `===`; a `{messages: [...]}` object | 2 and 1 expected case-runs respectively, matching what the parser produces |
 | G12b | Export with 1 valid conversation and 2 one-sided or malformed entries | exit 3; the 2 rejected entries are counted as missing and listed by position |
 | G13b | A produced case-run with no judge findings although `--consent` was on | that run is missing; exit 3 |
+| G12g | Suite with two cases sharing one id | exit 2 before anything runs |
 | G13c | 1 expected run failed plus a duplicate ok result for the same (case, repeat) | the duplicate is ignored and listed; exit 1 |
 | G13 | Suite case expected but produced no run | exit 3 (missing never improves the denominator) |
 | G14 | `gate.json` against a frozen schema | matches; includes version, policy, scope, raw counts |
@@ -179,6 +180,7 @@ CI log.
 | P3b | `run` and `tune` with a key in env but no consent, fetch stubbed to throw | exit 2, no network call |
 | P3c | `check --gate` and `run` with `TUNEUP_CONSENT=1` and no `--consent`, network stubbed | consent honoured (judge and model calls attempted); the same with a key but `TUNEUP_CONSENT` unset makes no call |
 | P4 | Exit codes 0/1/2/3 propagate through `npx` | each matches the gate test |
+| P5c | Packaged CLI: `check` on a file that looks like JSON but is truncated or invalid | exit 2 with a plain message naming the file, no stack trace, nothing sent |
 | P5b | Packaged CLI: `check --gte`, `run --consnet`, `tune --consnet` | exit 2 for each, nothing evaluated, no network call |
 | P4b | `run --gate --json` where the agent adapter throws on case 2, and `check --gate --consent --json` where the judge request throws | exit 3 `UNDETERMINED`, the failed case-runs recorded as **errored** in `gate.json`, no unhandled error |
 | P5 | Fake key in env, network stubbed | key never in stdout, stderr, report.md, gate.json |
@@ -260,7 +262,7 @@ Hosted sign-in from the CLI (free capped judge for CLI users), `fixes --apply`, 
 3. Restrict `cli-v*` tag creation to the owner and ensure tags are immutable, targeting approved commits reachable from the protected `main` branch.
 4. Configure a 'release' GitHub environment requiring Paul's manual approval, restricted to protected refs, with `id-token: write` and `contents: read` permissions only.
 5. Integrate `SathiaAI/sast-check` to block merges on critical vulnerabilities and use `zizmor` to lint release workflows.
-6. Use a strictly whitelisted `files` array in `engine/package.json` to include only compiled code, LICENSE, and README, while explicitly excluding brand assets, secrets, and fixtures.
+6. Use a strictly whitelisted `files` array in `engine/package.json` to include only the executable (`cli.js`), its runtime modules (`src/**`), LICENSE, README and `package.json` (there is no compile step), while explicitly excluding brand assets, secrets, and fixtures.
 7. Verify that the git tag exactly equals `cli-v` + the `engine/package.json` version and that the package is not marked as private before proceeding with the release.
 8. Build and test the packed artifact in an isolated job using Node 22.14+ and npm 11.5.1+, validating the full supported platform matrix and exit codes.
 9. Provide a plain-language approval summary showing the version, `dist-tag`, commit, compatibility changes, and a full `npm pack` file list with digests.
