@@ -267,7 +267,12 @@ const PROSE_TAIL = new Set(['set', 'longer', 'yet', 'valid', 'required', 'needed
 export const isProseValue = (v, after) => {
   const t = String(v).trim();
   if (/^["'`]/.test(t)) return false;
-  if (CONTRACTION_STEMS.has(t) && /^['\u2019](?:t|ll|re|ve|d)(?:[.,](?=\s|$)|[ \t]+\p{Ll}[\p{Ll}-]*(?=[\s.,;:!?]|$)|$)/u.test(after)) return true;   // won't, can't, it'll
+  // won't, can't, it'll: the stem, its suffix, and the rest of the clause all plain lowercase words up to a sentence end
+  // ("won't be lost."), so "can't be CorrectHorse9!" is not prose (tune-up PR #26 review). A curly apostrophe (won’t) is
+  // captured inside the value, so it is split off here.
+  const cm = /^(\p{Ll}+)(['\u2019](?:t|ll|re|ve|d))$/u.exec(t);
+  const [stem, tail] = cm ? [cm[1], cm[2] + after] : [t, after];
+  if (CONTRACTION_STEMS.has(stem) && /^['\u2019](?:t|ll|re|ve|d)(?:[ \t]+\p{Ll}[\p{Ll}'\u2019-]*)*[ \t]*(?:[.,;:!?](?=\s|$)|\n|$)/u.test(tail)) return true;
   // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
   // taken (tune-up PR #26 review). One word must be a status word; several only when led by a negation ("not set",
   // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
