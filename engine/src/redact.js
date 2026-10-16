@@ -1387,25 +1387,27 @@ function scrubCommands(s, label) {
 
 // URL query parameters whose name is a credential (code, auth, sig, token, session, …, or anything isCredentialName
 // accepts) have their value replaced.
-const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp']);
-// OAuth sign-in values (state, PKCE challenge, client id) are taken only when they look generated (16+ characters with
-// a digit, checked on the decoded value), so a pasted sign-in URL is scrubbed rather than holding the chat, while
-// ?state=open or ?state=please-open-modal stay readable (PR #24 review).
-const OAUTH_NAMES = new Set(['state', 'nonce', 'code_challenge', 'code_verifier', 'client_id']);
+const QUERY_NAMES = new Set(['code', 'auth', 'sig', 'signature', 'key', 'token', 'secret', 'password', 'pwd', 'pass', 'access_token', 'refresh_token', 'id_token', 'apikey', 'api_key', 'session', 'sid', 'jwt', 'otp', 'code_verifier']);
+// OAuth sign-in values (state, PKCE challenge, client id) are taken only when they look generated: 16+ characters, after
+// trimming trailing punctuation and decoding, with a digit or both letter cases. A pasted sign-in URL is then scrubbed
+// rather than holding the chat, while ?state=open or ?state=please-open-modal stay readable (PR #24 review).
+const OAUTH_NAMES = new Set(['state', 'nonce', 'code_challenge', 'client_id']);   // code_verifier redeems the code: a SECRET above
 function scrubQuery(s, label, resolve) {
   if (!s.includes('=')) return s;
   // Percent escapes anywhere in the name are decoded before the check (?%70assword=…; PR #27 review), and "+" is a space
   // as in form encoding (?api+key=…; PR #27 review). An array suffix (password[]=, password%5B0%5D=) is read past (PR #16).
   return s.replace(/([?&]((?:[A-Za-z0-9_.\-+]|%[0-9A-Fa-f]{2}){1,60})(?:\[[^\]\s&=#]{0,40}\]|%5[Bb](?:[^&=\s#%]|%(?![5][Dd])[0-9A-Fa-f]{2}){0,40}%5[Dd])?=)([^&\s#\]]+)/g, (m, pre, name, v) => {
     const n = decodeName(name.replace(/\+/g, ' '));
-    const ln = n.toLowerCase(), dv = OAUTH_NAMES.has(ln) ? decodeName(v) : '', oauth = dv.length >= 16 && /\d/.test(dv);
+    const ln = n.toLowerCase();
     if (isPlaceholderValue(v)) return m;
     if (QUERY_NAMES.has(ln) || isCredentialName(resolve(n))) return pre + label('SECRET', v);
+    if (!OAUTH_NAMES.has(ln)) return m;
     // A one-time sign-in value is hidden as a link part, not a SECRET: an agent showing its sign-in URL is not revealing a
-    // password setting; trailing punctuation stays outside ([Sign in](…?state=…). keeps ")."; PR #24 review).
-    if (!oauth) return m;
-    let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e);   // a loop, not /[…]+$/ (quadratic; PR #24 review)
-    return core.length >= 16 ? pre + label('LINK', core) + v.slice(core.length) : m;
+    // password setting. Trailing punctuation stays outside ([Sign in](…?state=…). keeps ")."), trimmed with a loop, not
+    // /[…]+$/ (quadratic). It recurs like a secret, so a bare repeat in a log line is replaced too (PR #24 review).
+    let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e), dv = decodeName(core);
+    if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
+    return pre + label('LINK', core, true) + v.slice(core.length);
   });
 }
 
@@ -1643,7 +1645,7 @@ export function scrubber({ terms = [] } = {}) {
   // Why numbers are reserved: if the input already holds a literal "[SECRET_1]", our own first SECRET must not also be
   // "[SECRET_1]", or unscrub would map one placeholder to a value that contains itself and the two would be
   // indistinguishable. counts() still reports distinct values only; numbering just skips the reserved ones.
-  const label = (kind, value) => {
+  const label = (kind, value, recur = false) => {
     const k = kind + '\u0000' + value;
     if (!seen.has(k)) {
       let n = (next[kind] || 0) + 1; while (reserved.has(kind) && reserved.get(kind).has(n)) n++;
@@ -1652,7 +1654,7 @@ export function scrubber({ terms = [] } = {}) {
       seen.set(k, OPEN + kind + '_' + n + CLOSE);
       // A SECRET value may already hold a PRIVATE sentinel; store the value in public [KIND_n] form so unscrub nests.
       real.set(pub, value.replace(SENT, (m, kk, nn) => `[${kk}_${nn}]`));
-      inventory.push({ kind, value });
+      inventory.push(recur ? { kind, value, recur } : { kind, value });
       if (kind === 'SECRET') {
         // A quoted value followed by a comment ("hunter2" # backup) inventories the text inside the quotes (PR #16 review).
         let core = value.trim(); const qm = /^(["'])((?:\\.|(?!\1)[^\n])*)\1[ \t]*(?:[#;][^\n]*)?$/.exec(core);
@@ -1761,7 +1763,7 @@ export function scrubber({ terms = [] } = {}) {
     // A value wrapping a never-send placeholder (password=Acme-x is [PRIVATE_1]-x) still recurs as that same text, so it
     // stays eligible; the part outside the placeholder must still be at least four characters (PR #16 review).
     const recurs = (v) => { const bare = v.replace(/\uE000PRIVATE_\d+\uE001/g, ''); return !/[\uE000\uE001\n]/.test(bare) && bare.trim().length >= 3; };
-    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY') && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
+    const known = [...new Set(inventory.filter(e => (e.kind === 'SECRET' || e.kind === 'KEY' || e.recur) && recurs(e.value)).map(e => `${e.kind}\u0000${e.value.trim()}`))]
       .map(k => k.split('\u0000')).sort((a, b) => b[1].length - a[1].length);
     // One forward pass looking values up by length (not a full-text scan per secret, which was quadratic with thousands of
     // settings), and

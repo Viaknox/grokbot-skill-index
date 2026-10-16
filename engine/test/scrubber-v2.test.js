@@ -1377,3 +1377,13 @@ test('r79: short codes after /auth/ are still taken; a long punctuation run afte
   const t = Date.now(); scrubber().sanitize('https://a.example/?state=1' + ')'.repeat(200000) + 'x');
   assert.ok(Date.now() - t < 1500, 'took ' + (Date.now() - t) + ' ms');
 });
+
+test('r80: OAuth values: code_verifier is a secret, all-letter values and 16-char values before punctuation are hidden, bare repeats too (tune-up PR #24 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'POST https://a.example/token?code_verifier=Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S' }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(codes.includes('revealed_setting'), codes.join());
+  assert.equal(scrubber().sanitize('https://a.example/?state=AbCdEfGhIjKlMnOpQrStUvWxYz ok').text, 'https://a.example/?state=[LINK_1] ok');
+  assert.equal(scrubber().sanitize('see https://a.example/?state=Abcd123456789012.').text, 'see https://a.example/?state=[LINK_1].');
+  const r = scrubber().sanitize('https://x.example/?state=Qm9X2kLp7RtYw4ZcVb8NaE then Qm9X2kLp7RtYw4ZcVb8NaE');
+  assert.equal(r.held, false); assert.equal(r.text, 'https://x.example/?state=[LINK_1] then [LINK_1]');
+});
