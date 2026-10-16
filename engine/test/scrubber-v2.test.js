@@ -1402,3 +1402,14 @@ test('r81: OAuth values: nested credentials and emails still flagged, later para
   const sc = scrubber(); sc.sanitize('https://a.example/?state=AbAbAbAbAbAbAb12');
   assert.ok(!sc.sanitize('log: AbAbAbAbAbAbAb12').text.includes('AbAbAbAbAbAbAb12'));   // a later message's bare repeat
 });
+test('r82: OAuth values: leading base64url punctuation, form + as space, dotted route versions (viaknox PR #36 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const a = scrubber().sanitize('https://a.example/?state=_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789abcd');
+  assert.equal(a.held, false); assert.equal(a.text, 'https://a.example/?state=[LINK_1]');
+  assert.equal(scrubber().sanitize('https://a.example/?state=please+open+modal+2').text, 'https://a.example/?state=please+open+modal+2');
+  const ms = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x';
+  assert.ok(scrubber().sanitize(ms).text.includes('/oauth2/v2.0/authorize'));
+  const codes = checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'Sign in: ' + ms }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(!codes.includes('revealed_setting'), codes.join());
+  assert.ok(!scrubber().sanitize('https://x.example/oauth2/v2.0x9Qz7/cb').text.includes('v2.0x9Qz7'));
+});

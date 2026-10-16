@@ -1116,12 +1116,12 @@ function scrubNameValuePairs(s, label, resolve) {
 
 // URL path segments: a segment that is a credential name (/token/, /password/, /api-key/) makes the next segment a
 // secret (https://x/api/token/<x>/status).
-const AUTH_ROUTES = /^(?:v\d{1,2}|authorize|callback|login|logout|signin|signup|consent|userinfo|device|register|revoke|introspect|jwks|token|oauth2?|openid|verify|google|github|microsoft|azure|apple)$/i;
+const AUTH_ROUTES = /^(?:v\d{1,2}(?:\.\d{1,2})?|authorize|callback|login|logout|signin|signup|consent|userinfo|device|register|revoke|introspect|jwks|token|oauth2?|openid|verify|google|github|microsoft|azure|apple)$/i;
 function scrubPathSegments(s, label, resolve) {
   if (!s.includes('/')) return s;
   // The slash after the segment is only looked at, not consumed, so "/api/token/x" is retried at "token".
   const ivs = [], re = /\/([\p{L}\p{N}_\-]{1,40})(?=\/[^\/\s?#"'<>)]+)/gu;
-  // After /auth/ or /oauth/, only known route words are left (/auth/v1/oauth/authorize, the Codex sign-in URL); any other
+  // After /auth/ or /oauth/, only known route words are left (/auth/v1/oauth/authorize, the Codex sign-in URL; /oauth2/v2.0/authorize, viaknox PR #36 review); any other
   // value, short codes like /auth/123456 included, is still taken. /password/, /token/ and the rest are unchanged (PR #24).
   for (let m; (m = re.exec(s));) if (isCredentialName(resolve(m[1]))) { const vs = m.index + m[0].length + 1; let ve = vs; while (ve < s.length && !'/?#"\'<>) \t\r\n'.includes(s[ve])) ve++;
     if (/^o?auth2?$/i.test(m[1]) && AUTH_ROUTES.test(s.slice(vs, ve))) continue; ivs.push([vs, ve, 'SECRET']); }
@@ -1406,11 +1406,11 @@ function scrubQuery(s, label, resolve) {
     // A one-time sign-in value is hidden as a link part, not a SECRET: an agent showing its sign-in URL is not revealing a
     // password setting. Trailing punctuation stays outside ([Sign in](…?state=…). keeps ")."), trimmed with a loop, not
     // /[…]+$/ (quadratic). It recurs like a secret, so a bare repeat in a log line is replaced too (PR #24 review).
-    let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e), dv = decodeName(core);
+    let e = v.length; while (e > 0 && TRAIL_PUNCT.has(v[e - 1])) e--; const core = v.slice(0, e), dv = decodeName(core.replace(/\+/g, ' '));   // form encoding: + is a space (PR #24/#36 review)
     if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
     // Only a plain token (base64/base64url, hex, a UUID): a value holding "=", "@" or ":" (state=password=…, an email)
     // is left for the credential and PII rules, which still flag it (viaknox PR #36 review).
-    if (!/^[A-Za-z0-9][A-Za-z0-9._~+\/-]*={0,2}$/.test(dv)) return m;
+    if (!/^[A-Za-z0-9_-][A-Za-z0-9._~+\/-]*={0,2}$/.test(dv)) return m;   // base64url may start with - or _
     return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
