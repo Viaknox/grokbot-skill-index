@@ -1411,13 +1411,21 @@ function scrubQuery(s, label, resolve) {
     if (!(dv.length >= 16 && (/\d/.test(dv) || (/[a-z]/.test(dv) && /[A-Z]/.test(dv))))) return m;
     // Only a plain token (base64/base64url, hex, a UUID): a value holding "=", "@" or ":" (state=password=…, an email)
     // is left for the credential and PII rules, which still flag it (viaknox PR #36 review).
-    // Any base64 or base64url character may lead, after decoding (%2F…, %2B…; tune-up PR #24 review).
-    if (!/^[A-Za-z0-9._~+\/-]+={0,2}$/.test(dv)) return m;
-    // A known key shape (ghp_…), a card number, or a value that starts with a phone or SSN (415-555-2671-AbCd) is left
-    // for the key and PII rules, so it is counted and echo-checked as what it is (tune-up PR #24 review). Only a leading
-    // match counts: a UUID's later all-digit groups must not read as a phone.
+    // Any base64 or base64url character may lead after decoding (%2F…, %2B…; tune-up PR #24 review), but not . or ~.
+    if (!/^[A-Za-z0-9_+\/-][A-Za-z0-9._~+\/-]*={0,2}$/.test(dv)) return m;
+    // A known key shape (ghp_…) or a card number is left for the key and PII rules, so it is counted and echo-checked as
+    // what it is (tune-up PR #24 review).
     if (KEY_SHAPE_ONE.test(dv) || (/^\d{13,19}$/.test(dv) && luhn(dv))) return m;
-    const head = dv.slice(0, 64); if (PII_LEAD.some(re => { const x = re.exec(head); return x && x.index === 0; })) return m;
+    // A value that starts with a valid phone or SSN (415-555-2671-AbCd) is hidden here under that kind, so it is reported
+    // as contact data. It is labelled here, not left for the PII pass, because that pass reads only the raw text and
+    // would miss an encoded spelling (415%2D555…; tune-up PR #25 review). Only a leading match counts: a UUID's later
+    // all-digit groups must not read as a phone. A "+" number must have 8-15 digits, as in the PII pass.
+    const head = dv.slice(0, 64);
+    for (const [kind, re] of PII_LEAD) {
+      const x = re.exec(head); if (!x || x.index !== 0) continue;
+      if (kind === 'PHONE' && x[0].startsWith('+')) { const d = x[0].replace(/\D/g, '').length; if (d < 8 || d > 15) continue; }
+      return pre + label(kind, core, false, dv !== core ? dv : null) + v.slice(core.length);
+    }
     return pre + label('LINK', core, true, dv !== core ? dv : null) + v.slice(core.length);   // decoded spelling recurs too
   });
 }
@@ -1487,7 +1495,7 @@ const PATTERNS = [
   ['IP', /(?<![\w:])(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}(?![\w:])|(?<![\w:])(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?(?![\w:])|(?<![\w:])::(?:[0-9a-f]{1,4}:){1,6}[0-9a-f]{1,4}(?![\w:])/gi],   // ::ffff:c000:0280 (leading compression; PR #27 review)
 ];
 // Phone and SSN shapes, non-global, for the leading-match check on OAuth values in scrubQuery.
-const PII_LEAD = PATTERNS.filter(([k]) => k === 'PHONE' || k === 'SSN').map(([, re]) => new RegExp(re.source, re.flags.replace('g', '')));
+const PII_LEAD = PATTERNS.filter(([k]) => k === 'PHONE' || k === 'SSN').map(([k, re]) => [k, new RegExp(re.source, re.flags.replace('g', ''))]);
 
 function luhn(digits) {
   let sum = 0, alt = false;

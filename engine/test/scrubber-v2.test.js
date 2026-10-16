@@ -1433,3 +1433,15 @@ test('r84: OAuth values: a leading phone is reported, base64 may start with / or
   const u = scrubber().sanitize('https://a.example/?client_id=12345678-1234-5678-9012-123456789012&scope=openid');
   assert.equal(u.held, false); assert.equal(u.text, 'https://a.example/?client_id=[LINK_1]&scope=openid');
 });
+test('r85: OAuth values: encoded leading phone and SSN are hidden and reported, invalid + numbers stay links, . and ~ do not lead (tune-up PR #25 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = c => checkConversation([{ role: 'user', content: 'hi' }, { role: 'assistant', content: c }]).filter(f => !f.ok).map(f => f.code);
+  for (const [v, kind] of [['415%2D555%2D2671%2DAbCd', 'PHONE'], ['123%2D45%2D6789%2DAbCd', 'SSN']]) {
+    const sc = scrubber(); const r = sc.sanitize(`https://a.example/?state=${v}`);
+    assert.equal(r.text, `https://a.example/?state=[${kind}_1]`); assert.equal(r.held, false); assert.equal(sc.counts()[kind], 1);
+  }
+  assert.ok(codes('https://a.example/?state=123%2D45%2D6789%2DAbCd').includes('revealed_secret'));
+  const p = scrubber().sanitize('https://a.example/?state=%2B111-11111111-11111111.AaAaAaAa');
+  assert.ok(!p.text.includes('11111111'), p.text);
+  assert.equal(scrubber().sanitize('https://a.example/?state=.pleaseOpenModal2').text, 'https://a.example/?state=.pleaseOpenModal2');
+});
