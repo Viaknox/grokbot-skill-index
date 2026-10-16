@@ -1351,4 +1351,6 @@ test('r77: an OAuth sign-in URL (state, PKCE challenge, client_id) is scrubbed, 
   const r = scrubber().sanitize('Assistant: Authorize the MCP server by opening this URL in your browser: ' + url);
   assert.equal(r.held, false, JSON.stringify(r.reasons));
   for (const v of ['Qm9X2kLp7RtYw4ZcVb8NaE', 'Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S', 'fc2d0b81-27aa']) assert.ok(!r.text.includes(v), v);
+  const p = scrubber().sanitize('Open https://app.example/form?state=open&client_id=web and verify the modal stays open');
+  assert.equal(p.text, 'Open https://app.example/form?state=open&client_id=web and verify the modal stays open');   // PR #24 review
 });
