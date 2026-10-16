@@ -1433,24 +1433,14 @@ test('r84: OAuth values: base64 may start with / or +, but not . or ~; UUIDs sta
   const p = scrubber().sanitize('https://a.example/?state=415%2D555%2D2671%2DAbCd then 415%2D555%2D2671%2DAbCd');
   assert.ok(!p.text.includes('2671'), p.text);   // a phone-led value is hidden whole, repeats too
 });
-test('r86: ordinary English after a credential word is not a value: contractions and status words (viaknox Codex chat 2026-10-16)', async () => {
+test('r86: prose after a credential word is still hidden, but not reported as a revealed setting (viaknox Codex chat 2026-10-16; tune-up #26 review)', async () => {
   const { checkConversation } = await import('../src/transcripts.js');
-  const msg12 = "I'll refresh the `agent-tune-up` login and leave the one-time-token page open so its token won't be lost.";
-  assert.equal(scrubber().sanitize(msg12).text, msg12);
-  assert.ok(!checkConversation([{ role: 'user', content: 'reload it' }, { role: 'assistant', content: msg12 }]).some(f => f.code === 'revealed_setting'));
-  for (const t of ['the password is required', 'the token is not set', 'the token is invalid.', "the password doesn't work", "your token didn't arrive"]) assert.equal(scrubber().sanitize(t).text, t);
-  // Real values are still taken: plain words, multiword passphrases, quoted status words, digits.
-  for (const [t, v] of [['my password is sunshine', 'sunshine'], ['my password is correct horse battery staple', 'correct horse'], ['the password is "required"', '"required"'], ['my password is no longer hunter2', 'hunter2'], ['my password is now sunshine', 'sunshine']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
-});
-test('r87: prose exemption keeps case: capitalised status-word passphrases are still taken (tune-up PR #26 review)', () => {
-  for (const [t, v] of [['my password is Not Correct', 'Not Correct'], ['my password is NOT SET', 'NOT SET'], ['my password is Required', 'Required']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
-  assert.equal(scrubber().sanitize('the token is not set').text, 'the token is not set');
-});
-test('r88: a status word with symbols is still a value (required!, invalid?) (tune-up PR #26 security review)', () => {
-  for (const [t, v] of [['The service password is required! (the exclamation point is part of it)', 'required!'], ['the token is invalid?!', 'invalid?'], ['the password is required..', 'required..']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
-  assert.equal(scrubber().sanitize('The password is required.').text, 'The password is required.');
-});
-test('r89: contraction stems are a closed list and negations only form known status phrases (tune-up PR #26 review)', () => {
-  for (const [t, v] of [["use password AbCdE'd!", 'AbCdE'], ["my token qwerty'll", 'qwerty'], ['my password is not correct horse battery staple', 'horse battery'], ['my password is no purple monkey dishwasher', 'purple monkey'], ["the password won't!", "won't!"]]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
-  for (const t of ['the token is not set', 'the token is no longer valid.', 'the password is never stored', "so its token won't be lost", "the password can't be shared", "I hope it won't."]) assert.equal(scrubber().sanitize(t).text, t);
+  const codes = (t) => checkConversation([{ role: 'user', content: 'reload it' }, { role: 'assistant', content: t }]).filter(f => !f.ok).map(f => f.code);
+  // The scrubber stays conservative: these words are still hidden before anything is sent out.
+  assert.ok(!scrubber().sanitize("so its token won't be lost").text.includes('won'));
+  assert.ok(!scrubber().sanitize('The password is required.').text.includes('required'));
+  // ...but ordinary English is not reported as the agent revealing a password or key setting.
+  for (const t of ["I'll refresh the `agent-tune-up` login and leave the one-time-token page open so its token won't be lost.", 'the password is required', 'the token is not set', 'the token is no longer valid.', "the password can't be shared", 'The password is required.']) assert.ok(!codes(t).includes('revealed_setting'), t);
+  // Real-looking values are still reported, including status words with symbols, capitals, passphrases and mixes.
+  for (const t of ['my password is sunshine', 'The service password is required!', 'my password is Not Correct', 'my password is not correct horse battery staple', "use password AbCdE'd!", 'the password is required and the token is s3cr3tXYZ', 'the password is "required"']) assert.ok(codes(t).includes('revealed_setting'), t);
 });

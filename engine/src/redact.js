@@ -253,18 +253,18 @@ function scrubPem(s, label) {
 // after a closer or delimiter (`[SECRET_1])CorrectHorse9!`, `[SECRET_1], CorrectHorse9!`) is data pasted beside an old
 // placeholder, and the whole value goes (PR #16 review).
 const SIBLING_AFTER = /^[\s"'`)\]}]*[,;][\s"']*(?:\uE000[A-Z]+_\d+\uE001|(?:"[^"\n]{1,160}"|'[^'\n]{1,160}'|[\w.\-]{1,160})[ \t]*[:=])/;
-// Ordinary English after "the token is …" / "its token …" is not a value: a contraction ("its token won't be lost",
-// "the password doesn't work") or an unquoted status word ("the password is required", "the token is not set",
-// "the token is invalid"). Agents say these all the time, and hiding the word made the report claim the agent revealed
-// a password setting (viaknox Codex chat, 2026-10-16). A quoted value ('the password is "required"') is still taken.
-const PROSE_STATUS = new Set(['not', 'no', 'never', 'required', 'needed', 'missing', 'invalid', 'valid', 'expired', 'revoked', 'wrong', 'incorrect', 'correct', 'empty', 'blank', 'null', 'none', 'unset', 'optional', 'mandatory', 'saved', 'stored', 'sent', 'shown', 'hidden', 'available', 'unavailable', 'active', 'inactive', 'enabled', 'disabled', 'ready', 'pending', 'generated', 'created', 'encrypted', 'hashed', 'protected', 'still', 'already', 'now', 'only', 'also', 'being', 'too', 'used', 'case-sensitive']);
+// Ordinary English after "the token is …" / "its token …": a contraction ("its token won't be lost") or an unquoted
+// status word ("the password is required", "the token is not set"). The scrubber still hides these (it stays
+// conservative: a status word can be a real password); the transcript check uses this only so it does not report that
+// the agent revealed a password setting when every hidden value is such prose (viaknox Codex chat 2026-10-16; #26).
+const PROSE_STATUS = new Set(['not', 'no', 'never', 'required', 'needed', 'missing', 'invalid', 'valid', 'expired', 'revoked', 'wrong', 'incorrect', 'correct', 'empty', 'blank', 'null', 'none', 'unset', 'optional', 'mandatory', 'saved', 'stored', 'sent', 'shown', 'hidden', 'available', 'unavailable', 'active', 'inactive', 'enabled', 'disabled', 'ready', 'pending', 'generated', 'created', 'encrypted', 'hashed', 'protected', 'still', 'already', 'now', 'only', 'also', 'being', 'too', 'used']);
 // Contractions are a closed list of lowercase stems (won't, can't, it'll), not any word before an apostrophe, so a value
 // such as AbCdE'd or qwerty'll is still taken (tune-up PR #26 review).
 const CONTRACTION_STEMS = new Set(['won', 'can', 'don', 'doesn', 'didn', 'isn', 'wasn', 'aren', 'weren', 'couldn', 'wouldn', 'shouldn', 'hasn', 'haven', 'hadn', 'mustn', 'needn', 'mightn', 'shan', 'ain', 'it', 'that', 'there', 'they', 'we', 'you', 'he', 'she', 'who', 'what']);
 // After not / no / never, only these words make a status phrase ("not set", "no longer valid", "never stored"), so a
 // negation-led passphrase (not correct horse battery staple) is still taken (tune-up PR #26 review).
 const PROSE_TAIL = new Set(['set', 'longer', 'yet', 'valid', 'required', 'needed', 'working', 'available', 'stored', 'saved', 'shared', 'shown', 'sent', 'given', 'provided', 'found', 'accepted', 'recognized', 'active', 'enabled', 'expired', 'generated', 'created', 'used']);
-const isProseValue = (v, after) => {
+export const isProseValue = (v, after) => {
   const t = String(v).trim();
   if (/^["'`]/.test(t)) return false;
   if (CONTRACTION_STEMS.has(t) && /^['\u2019](?:t|ll|re|ve|d)[.,]?(?![^\s])/u.test(after)) return true;   // won't, can't, it'll
@@ -1322,9 +1322,9 @@ function scrubCopula(s, label) {
   s = s.replace(CONFIG_SET_RE, (m, q, name, v) => !isCredentialName(name) || isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   s = s.replace(CHANGE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
   s = s.replace(PAST_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  const out = s.replace(COPULA_RE, (m, v, o, str) => isPlaceholderValue(v) || isProseValue(v, str.slice(o + m.length)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  const mid = out.replace(QUAL_COPULA_RE, (m, v, o, str) => isPlaceholderValue(v) || isProseValue(v, str.slice(o + m.length)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
-  return mid.replace(NOUN_VALUE_RE, (m, v, o, str) => isPlaceholderValue(v) || isProseValue(v, str.slice(o + m.length)) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  const out = s.replace(COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  const mid = out.replace(QUAL_COPULA_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
+  return mid.replace(NOUN_VALUE_RE, (m, v) => isPlaceholderValue(v) ? m : m.slice(0, m.length - v.length) + label('SECRET', v));
 }
 
 // A credential phrase written as separate words before a colon or equals: "api key: X", "openai api key = X",
