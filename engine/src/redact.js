@@ -262,10 +262,12 @@ const isProseValue = (v, after) => {
   const t = String(v).trim();
   if (/^["'`]/.test(t)) return false;
   if (/^\p{L}+$/u.test(t) && /^['\u2019](?:t|ll|re|ve|d)(?![\p{L}\p{N}])/iu.test(after)) return true;   // won't, can't, didn't, it'll
-  const w = t.replace(/[.,;:!?]+$/, '').toLowerCase().split(/\s+/);
-  // One word must be a status word; several words only when led by a negation and made of plain letters ("not set",
+  // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
+  // taken (tune-up PR #26 review). One word must be a status word; several only when led by a negation ("not set",
   // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
-  return w.length === 1 ? PROSE_STATUS.has(w[0]) : /^(?:not|no|never)$/.test(w[0]) && w.every(x => /^\p{Ll}+$/u.test(x));
+  const w = t.replace(/[.,;:!?]+$/, '').split(/\s+/);
+  if (!w.every(x => /^[\p{Ll}-]+$/u.test(x))) return false;
+  return w.length === 1 ? PROSE_STATUS.has(w[0]) : /^(?:not|no|never)$/.test(w[0]);
 };
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);

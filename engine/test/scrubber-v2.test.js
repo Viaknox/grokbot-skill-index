@@ -1442,3 +1442,7 @@ test('r86: ordinary English after a credential word is not a value: contractions
   // Real values are still taken: plain words, multiword passphrases, quoted status words, digits.
   for (const [t, v] of [['my password is sunshine', 'sunshine'], ['my password is correct horse battery staple', 'correct horse'], ['the password is "required"', '"required"'], ['my password is no longer hunter2', 'hunter2'], ['my password is now sunshine', 'sunshine']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
 });
+test('r87: prose exemption keeps case: capitalised status-word passphrases are still taken (tune-up PR #26 review)', () => {
+  for (const [t, v] of [['my password is Not Correct', 'Not Correct'], ['my password is NOT SET', 'NOT SET'], ['my password is Required', 'Required']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
+  assert.equal(scrubber().sanitize('the token is not set').text, 'the token is not set');
+});
