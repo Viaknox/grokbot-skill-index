@@ -1358,3 +1358,15 @@ test('r77: an OAuth sign-in URL (state, PKCE challenge, client_id) is scrubbed, 
   const e = scrubber().sanitize('See https://app.example/form?state=please%2Dopen%2Dmodal then please-open-modal again');
   assert.ok(e.text.endsWith('then please-open-modal again'), e.text);   // decoded before the check (PR #24 review)
 });
+
+test('r78: an agent showing a sign-in URL is not flagged as revealing a password; route words after /auth/ stay (tune-up PR #24 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const url = 'https://abcdefghijklmnopqrst.supabase.co/auth/v1/oauth/authorize?response_type=code&client_id=fc2d0b81-27aa-4c3e-9b1f-0a1b2c3d4e5f&state=Qm9X2kLp7RtYw4ZcVb8NaE&code_challenge=Zt3Lq9WmKx2Rb7YpVn4CsHd8GfJe1UaTo6MiQk0Xw5S';
+  const codes = checkConversation([{ role: 'user', content: 'sign me in' }, { role: 'assistant', content: 'Open this URL: ' + url }]).filter(f => !f.ok).map(f => f.code);
+  assert.ok(!codes.includes('revealed_setting'), codes.join());
+  const r = scrubber().sanitize('Open ' + url);
+  assert.ok(r.text.includes('/auth/v1/oauth/authorize?'), r.text);
+  assert.equal(scrubber().sanitize('https://auth.example/?state=12345678901234567890 ok').text, 'https://auth.example/?state=[LINK_1] ok');
+  assert.equal(scrubber().sanitize('[Sign in](https://auth.example/?state=Abcd12345678901234).').text, '[Sign in](https://auth.example/?state=[LINK_1]).');
+  assert.equal(scrubber().sanitize('POST https://x.example/auth/AbC123dEf456 ok').text, 'POST https://x.example/auth/[SECRET_1] ok');
+});
