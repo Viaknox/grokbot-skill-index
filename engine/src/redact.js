@@ -253,6 +253,34 @@ function scrubPem(s, label) {
 // after a closer or delimiter (`[SECRET_1])CorrectHorse9!`, `[SECRET_1], CorrectHorse9!`) is data pasted beside an old
 // placeholder, and the whole value goes (PR #16 review).
 const SIBLING_AFTER = /^[\s"'`)\]}]*[,;][\s"']*(?:\uE000[A-Z]+_\d+\uE001|(?:"[^"\n]{1,160}"|'[^'\n]{1,160}'|[\w.\-]{1,160})[ \t]*[:=])/;
+// Ordinary English after "the token is …" / "its token …": a contraction ("its token won't be lost") or an unquoted
+// status word ("the password is required", "the token is not set"). The scrubber still hides these (it stays
+// conservative: a status word can be a real password); the transcript check uses this only so it does not report that
+// the agent revealed a password setting when every hidden value is such prose (viaknox Codex chat 2026-10-16; #26).
+const PROSE_STATUS = new Set(['not', 'no', 'never', 'required', 'needed', 'missing', 'invalid', 'valid', 'expired', 'revoked', 'wrong', 'incorrect', 'correct', 'empty', 'blank', 'null', 'none', 'unset', 'optional', 'mandatory', 'saved', 'stored', 'sent', 'shown', 'hidden', 'available', 'unavailable', 'active', 'inactive', 'enabled', 'disabled', 'ready', 'pending', 'generated', 'created', 'encrypted', 'hashed', 'protected', 'still', 'already', 'now', 'only', 'also', 'being', 'too', 'used']);
+// Contractions are a closed list of lowercase stems (won't, can't, it'll), not any word before an apostrophe, so a value
+// such as AbCdE'd or qwerty'll is still taken (tune-up PR #26 review).
+const CONTRACTION_STEMS = new Set(['won', 'can', 'don', 'doesn', 'didn', 'isn', 'wasn', 'aren', 'weren', 'couldn', 'wouldn', 'shouldn', 'hasn', 'haven', 'hadn', 'mustn', 'needn', 'mightn', 'shan', 'ain', 'it', 'that', 'there', 'they', 'we', 'you', 'he', 'she', 'who', 'what']);
+// After not / no / never, only these words make a status phrase ("not set", "no longer valid", "never stored"), so a
+// negation-led passphrase (not correct horse battery staple) is still taken (tune-up PR #26 review).
+const PROSE_TAIL = new Set(['set', 'longer', 'yet', 'valid', 'required', 'needed', 'working', 'available', 'stored', 'saved', 'shared', 'shown', 'sent', 'given', 'provided', 'found', 'accepted', 'recognized', 'active', 'enabled', 'expired', 'generated', 'created', 'used']);
+export const isProseValue = (v, after) => {
+  const t = String(v).trim();
+  if (/^["'`]/.test(t)) return false;
+  // won't, can't, it'll: the stem, its suffix, and the rest of the clause all plain lowercase words up to a sentence end
+  // ("won't be lost."), so "can't be CorrectHorse9!" is not prose (tune-up PR #26 review). A curly apostrophe (won’t) is
+  // captured inside the value, so it is split off here.
+  const cm = /^(\p{Ll}+)(['\u2019](?:t|ll|re|ve|d)[.,;:!?]?)$/u.exec(t);   // won’t. keeps its sentence mark with the suffix
+  const [stem, tail] = cm ? [cm[1], cm[2] + after] : [t, after];
+  if (CONTRACTION_STEMS.has(stem) && /^['\u2019](?:t|ll|re|ve|d)(?:[ \t]+\p{Ll}[\p{Ll}'\u2019-]*)*[ \t]*(?:[.,;:!?](?=\s|$)|\n|$)/u.test(tail)) return true;
+  // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
+  // taken (tune-up PR #26 review). One word must be a status word; several only when led by a negation ("not set",
+  // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
+  // Only one closing "." or "," is read as sentence punctuation: "required!" may be a real password (tune-up PR #26).
+  const w = t.replace(/[.,]$/, '').split(/\s+/);
+  if (!w.every(x => /^[\p{Ll}-]+$/u.test(x))) return false;
+  return w.length === 1 ? PROSE_STATUS.has(w[0]) : w.length <= 3 && /^(?:not|no|never)$/.test(w[0]) && w.slice(1).every(x => PROSE_TAIL.has(x) || PROSE_STATUS.has(x));
+};
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);
   if (!m) return false;
@@ -1290,6 +1318,22 @@ const QUAL_COPULA_RE = new RegExp(NOT_L_BEHIND + PROSE_CRED + NOT_L + '(?:[ \\t]
 // The gap before the noun is bounded (1-4 blanks): an unbounded [ \t]+ lookbehind re-scanned every blank of a long
 // indent at each position and made 2000 growing-indent YAML lines take 1.8 s on Node 22 (PR #16 CI on Linux).
 const NOUN_VALUE_RE = new RegExp('(?<=\\p{L}[ \\t]{1,4})' + PROSE_CRED + NOT_L + '[ \\t]+("[^"\\n]+"|\'[^\'\\n]+\'|(?=\\S*[\\p{N}\\p{P}\\p{S}]\\S)[\\p{L}\\p{N}][^\\s"\']*)', 'giu');
+// For the report only (never for scrubbing or anything sent out): the same text with the credential word of each
+// prose-shaped capture swapped for "thing" ("its token won't be lost" -> "its thing won't be lost"), so a fresh scrub
+// counts only real-looking settings. Assignments, flags, links and every other rule are untouched, and it is one pass
+// per regex (tune-up PR #26 review).
+const PROSE_CRED_LEAD = new RegExp('^' + PROSE_CRED, 'iu');
+export function neutralizeProse(text) {
+  let t = String(text);
+  for (const re of [COPULA_RE, QUAL_COPULA_RE, NOUN_VALUE_RE]) {
+    re.lastIndex = 0;
+    t = t.replace(re, (m, v, o, str) => {
+      if (!isProseValue(v, str.slice(o + m.length))) return m;
+      const lead = PROSE_CRED_LEAD.exec(m); return lead ? 'thing' + m.slice(lead[0].length) : m;
+    });
+  }
+  return t;
+}
 // A multi-word foreign name before a separator: "Mot de passe: X", "clé API = X".
 const PHRASE2_RE = new RegExp(NOT_L_BEHIND + '(?:mot[ \\t]+de[ \\t]+passe|cl[eé][ \\t]+(?:api|secr[eè]te)|chave[ \\t]+(?:de[ \\t]+)?api)' + NOT_L + '[ \\t]*(?:->|[:=\\u2236\\uFF1D\\uFF1A\\u2192])[ \\t]*("[^"\\n]*"|\'[^\'\\n]*\'|[^\\n]+)', 'giu');
 // "I changed the password to …", "set my PIN to …" (PR #27 review).

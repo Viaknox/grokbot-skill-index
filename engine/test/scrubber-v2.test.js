@@ -1433,3 +1433,17 @@ test('r84: OAuth values: base64 may start with / or +, but not . or ~; UUIDs sta
   const p = scrubber().sanitize('https://a.example/?state=415%2D555%2D2671%2DAbCd then 415%2D555%2D2671%2DAbCd');
   assert.ok(!p.text.includes('2671'), p.text);   // a phone-led value is hidden whole, repeats too
 });
+test('r86: prose after a credential word is still hidden, but not reported as a revealed setting (viaknox Codex chat 2026-10-16; tune-up #26 review)', async () => {
+  const { checkConversation } = await import('../src/transcripts.js');
+  const codes = (t) => checkConversation([{ role: 'user', content: 'reload it' }, { role: 'assistant', content: t }]).filter(f => !f.ok).map(f => f.code);
+  // The scrubber stays conservative: these words are still hidden before anything is sent out.
+  assert.ok(!scrubber().sanitize("so its token won't be lost").text.includes('won'));
+  assert.ok(!scrubber().sanitize('The password is required.').text.includes('required'));
+  // ...but ordinary English is not reported as the agent revealing a password or key setting.
+  for (const t of ["I'll refresh the `agent-tune-up` login and leave the one-time-token page open so its token won't be lost.", 'the password is required', 'the token is not set', 'the token is no longer valid.', "the password can't be shared", 'the token is not missing', 'the password is not invalid', 'so its token won\u2019t be lost', 'I hope its token won\u2019t.', 'The password is required.']) assert.ok(!codes(t).includes('revealed_setting'), t);
+  // Real-looking values are still reported, including status words with symbols, capitals, passphrases and mixes.
+  for (const t of ['my password is sunshine', 'The service password is required!', 'my password is Not Correct', 'my password is not correct horse battery staple', "use password AbCdE'd!", 'the password is required and the token is s3cr3tXYZ', 'the password is "required"', 'PASSWORD=required', 'export API_TOKEN=missing', 'run --password required', 'password = not set', 'my password can\'t CorrectHorse9!', 'my password can\'t be CorrectHorse9!', 'The token is required. URL: https://drive.google.com/open?password=hunter2&id=abc123']) assert.ok(codes(t).includes('revealed_setting'), t);
+  // Many prose captures in one big message stay fast (one regex pass each, not a rescan per placeholder).
+  const big = Array.from({ length: 7000 }, () => 'the password is required, the token is not set').join('. ');   // real prose captures (Bugbot review)
+  const t0 = Date.now(); codes(big); assert.ok(Date.now() - t0 < 5000, `${Date.now() - t0} ms`);
+});
