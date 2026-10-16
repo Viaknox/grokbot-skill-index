@@ -1450,3 +1450,7 @@ test('r88: a status word with symbols is still a value (required!, invalid?) (tu
   for (const [t, v] of [['The service password is required! (the exclamation point is part of it)', 'required!'], ['the token is invalid?!', 'invalid?'], ['the password is required..', 'required..']]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
   assert.equal(scrubber().sanitize('The password is required.').text, 'The password is required.');
 });
+test('r89: contraction stems are a closed list and negations only form known status phrases (tune-up PR #26 review)', () => {
+  for (const [t, v] of [["use password AbCdE'd!", 'AbCdE'], ["my token qwerty'll", 'qwerty'], ['my password is not correct horse battery staple', 'horse battery'], ['my password is no purple monkey dishwasher', 'purple monkey'], ["the password won't!", "won't!"]]) assert.ok(!scrubber().sanitize(t).text.includes(v), t);
+  for (const t of ['the token is not set', 'the token is no longer valid.', 'the password is never stored', "so its token won't be lost", "the password can't be shared", "I hope it won't."]) assert.equal(scrubber().sanitize(t).text, t);
+});

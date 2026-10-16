@@ -258,17 +258,23 @@ const SIBLING_AFTER = /^[\s"'`)\]}]*[,;][\s"']*(?:\uE000[A-Z]+_\d+\uE001|(?:"[^"
 // "the token is invalid"). Agents say these all the time, and hiding the word made the report claim the agent revealed
 // a password setting (viaknox Codex chat, 2026-10-16). A quoted value ('the password is "required"') is still taken.
 const PROSE_STATUS = new Set(['not', 'no', 'never', 'required', 'needed', 'missing', 'invalid', 'valid', 'expired', 'revoked', 'wrong', 'incorrect', 'correct', 'empty', 'blank', 'null', 'none', 'unset', 'optional', 'mandatory', 'saved', 'stored', 'sent', 'shown', 'hidden', 'available', 'unavailable', 'active', 'inactive', 'enabled', 'disabled', 'ready', 'pending', 'generated', 'created', 'encrypted', 'hashed', 'protected', 'still', 'already', 'now', 'only', 'also', 'being', 'too', 'used', 'case-sensitive']);
+// Contractions are a closed list of lowercase stems (won't, can't, it'll), not any word before an apostrophe, so a value
+// such as AbCdE'd or qwerty'll is still taken (tune-up PR #26 review).
+const CONTRACTION_STEMS = new Set(['won', 'can', 'don', 'doesn', 'didn', 'isn', 'wasn', 'aren', 'weren', 'couldn', 'wouldn', 'shouldn', 'hasn', 'haven', 'hadn', 'mustn', 'needn', 'mightn', 'shan', 'ain', 'it', 'that', 'there', 'they', 'we', 'you', 'he', 'she', 'who', 'what']);
+// After not / no / never, only these words make a status phrase ("not set", "no longer valid", "never stored"), so a
+// negation-led passphrase (not correct horse battery staple) is still taken (tune-up PR #26 review).
+const PROSE_TAIL = new Set(['set', 'longer', 'yet', 'valid', 'required', 'needed', 'working', 'available', 'stored', 'saved', 'shared', 'shown', 'sent', 'given', 'provided', 'found', 'accepted', 'recognized', 'active', 'enabled', 'expired', 'generated', 'created', 'used']);
 const isProseValue = (v, after) => {
   const t = String(v).trim();
   if (/^["'`]/.test(t)) return false;
-  if (/^\p{L}+$/u.test(t) && /^['\u2019](?:t|ll|re|ve|d)(?![\p{L}\p{N}])/iu.test(after)) return true;   // won't, can't, didn't, it'll
+  if (CONTRACTION_STEMS.has(t) && /^['\u2019](?:t|ll|re|ve|d)[.,]?(?![^\s])/u.test(after)) return true;   // won't, can't, it'll
   // The words keep their case: only all-lowercase prose counts, so "Not Correct" or "NOT SET" as a passphrase is still
   // taken (tune-up PR #26 review). One word must be a status word; several only when led by a negation ("not set",
   // "no longer valid"), so a passphrase that starts with one (correct horse battery staple) is still taken.
   // Only one closing "." or "," is read as sentence punctuation: "required!" may be a real password (tune-up PR #26).
   const w = t.replace(/[.,]$/, '').split(/\s+/);
   if (!w.every(x => /^[\p{Ll}-]+$/u.test(x))) return false;
-  return w.length === 1 ? PROSE_STATUS.has(w[0]) : /^(?:not|no|never)$/.test(w[0]);
+  return w.length === 1 ? PROSE_STATUS.has(w[0]) : w.length <= 3 && /^(?:not|no|never)$/.test(w[0]) && w.slice(1).every(x => PROSE_TAIL.has(x));
 };
 const isPlaceholderValue = (v) => {
   const t = String(v).trim(), m = /^["']?(?:\uE000(?!PRIVATE_)[A-Z]+_\d+\uE001)+/.exec(t);
