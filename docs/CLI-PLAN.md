@@ -62,8 +62,9 @@ pure module `engine/src/gate.js`; in R2 the report and `tune` use the same modul
 ### Unit of scoring
 
 The unit is a **case-run**: one test case × one repeat (`run`), or one conversation (`check`). The expected number of
-case-runs comes from the suite (cases × repeats) or, for `check`, from every non-empty entry in the input **before** parsing
-filters anything out, never from what happened to come back. An entry the parser rejects (one-sided, truncated, malformed)
+case-runs comes from the suite (cases × repeats) or, for `check`, from every candidate conversation in the input **before** parsing
+filters anything out (format-aware: each `---`-separated text block, each element of a `conversations` list or an array of
+conversations; a flat array of `{role, content}` messages is **one** candidate conversation), never from what happened to come back. An entry the parser rejects (one-sided, truncated, malformed)
 is a **missing** case-run and is listed by position in the report, so incomplete input can never improve the gate. An
 adapter or judge error during evaluation also makes that case-run missing instead of crashing the command.
 Each case-run takes one state, by precedence: **errored** (a requested judge or agent call failed, even if other
@@ -111,7 +112,7 @@ CI log.
 | # | Story | Done when | Panel checklist (§10) |
 |---|---|---|---|
 | S0a | **Claude's GitHub identity (Paul's clicks, guided)** | A GitHub App (e.g. `viaknox-claude`) created by Paul, installed only on the repos Claude works in, with Contents and Pull requests write and nothing else; its private key stored where Claude sessions can mint one-hour tokens without the key entering chat; a test PR opened by the App and approved by Paul; Paul's own credential no longer used to author Claude PRs. Separate from the release App in S6 | — |
-| S0 | **Repo protection (Paul's clicks, guided)** | Branch protection on `main`: PRs required, the `engine` check (the job in `test.yml`, as GitHub reports it) and `sast-check / scan` required, no force or direct pushes; Code Owner review required (D6 = A); **stale approvals dismissed on every new push** and checked after setup, so a commit pushed after Paul approves needs a fresh approval. CODEOWNERS covers `.github/**`, `engine/test/**`, `engine/scripts/**` (the mutation harness), `engine/cli.js`, `engine/src/**` (every module that produces gate evidence), `engine/package.json`, `engine/LICENSE`, `engine/RELEASE_CHANNEL`, `.sast-check.toml`, `.github/CODEOWNERS`, release config | PG1, PG2, PT1, PT2, PT13 |
+| S0 | **Repo protection (Paul's clicks, guided)** | Branch protection on `main`: PRs required, the `engine` check (the job in `test.yml`, as GitHub reports it; when S5 adds the OS/Node matrix, a single aggregate job named `engine` that needs every matrix cell keeps this name stable, and branch protection is re-verified after S5) and `sast-check / scan` required, no force or direct pushes; Code Owner review required (D6 = A); **stale approvals dismissed on every new push** and checked after setup, so a commit pushed after Paul approves needs a fresh approval. CODEOWNERS covers `.github/**`, `engine/test/**`, `engine/scripts/**` (the mutation harness), `engine/cli.js`, `engine/src/**` (every module that produces gate evidence), `engine/package.json`, `engine/LICENSE`, `engine/RELEASE_CHANNEL`, `.sast-check.toml`, `.github/CODEOWNERS`, release config | PG1, PG2, PT1, PT2, PT13 |
 | S1 | Add sast-check | `.github/workflows/sast.yml` pinned by full SHA; zizmor clean on all workflows | PG2, PT5, PT11 |
 | S2 | Tests first (R1) | §6 R1 tests (G, P, F) committed (X1–X3 are written in S9–S10); a CI run linked in the PR shows them failing on today's code | PG10 |
 | S3 | `gate.js` + CLI wiring | Gate tests (G1–G15) and golden fixtures (F1–F3) green; the package tests (P) go green in S4–S5, and every R1 test in §6 (G, P, F) is green at the end of S5; the R2 tests (X1–X3) belong to S9–S10; no existing test changed except where this plan says | PG3–PG7, PG9, PT12 |
@@ -150,6 +151,7 @@ CI log.
 | G11b | Unknown or misspelled flag (`--gte`, `--consnet`) on any command | exit 2, nothing evaluated (the parser no longer ignores unknown flags) |
 | G12 | `check` input with zero conversations | exit 3 |
 | G12c | `run` with a suite that has no cases | exit 2 (invalid config, as `validateSuite` already rules), nothing evaluated |
+| G12d | Flat JSON array of 2 messages (`user`, `assistant`) | 1 expected case-run, judged normally (not exit 3) |
 | G12b | Export with 1 valid conversation and 2 one-sided or malformed entries | exit 3; the 2 rejected entries are counted as missing and listed by position |
 | G13 | Suite case expected but produced no run | exit 3 (missing never improves the denominator) |
 | G14 | `gate.json` against a frozen schema | matches; includes version, policy, scope, raw counts |
@@ -166,6 +168,7 @@ CI log.
 | P3b | `run` and `tune` with a key in env but no consent, fetch stubbed to throw | exit 2, no network call |
 | P3c | `check --gate` and `run` with `TUNEUP_CONSENT=1` and no `--consent`, network stubbed | consent honoured (judge and model calls attempted); the same with a key but `TUNEUP_CONSENT` unset makes no call |
 | P4 | Exit codes 0/1/2/3 propagate through `npx` | each matches the gate test |
+| P5b | Packaged CLI: `check --gte`, `run --consnet`, `tune --gate` | exit 2 for each, nothing evaluated, no network call |
 | P4b | `run --gate --json` where the agent adapter throws on case 2, and `check --gate --consent --json` where the judge request throws | exit 3 `UNDETERMINED`, the failed case-runs recorded as missing in `gate.json`, no unhandled error |
 | P5 | Fake key in env, network stubbed | key never in stdout, stderr, report.md, gate.json |
 | P6 | Paths via `fileURLToPath`; P2–P4 | run in CI on native `ubuntu-latest`, `windows-latest` and `macos-latest` runners, each on Node 20.12 (the minimum in `engines`) and Node 22 (a matrix job added in S5) |
@@ -245,12 +248,12 @@ Hosted sign-in from the CLI (free capped judge for CLI users), `fixes --apply`, 
 4. Configure a 'release' GitHub environment requiring Paul's manual approval, restricted to protected refs, with `id-token: write` and `contents: read` permissions only.
 5. Integrate `SathiaAI/sast-check` to block merges on critical vulnerabilities and use `zizmor` to lint release workflows.
 6. Use a strictly whitelisted `files` array in `engine/package.json` to include only compiled code, LICENSE, and README, while explicitly excluding brand assets, secrets, and fixtures.
-7. Verify that the `engine/package.json` version exactly matches the git tag and that the package is not marked as private before proceeding with the release.
+7. Verify that the git tag exactly equals `cli-v` + the `engine/package.json` version and that the package is not marked as private before proceeding with the release.
 8. Build and test the packed artifact in an isolated job using Node 22.14+ and npm 11.5.1+, validating the full supported platform matrix and exit codes.
 9. Provide a plain-language approval summary showing the version, `dist-tag`, commit, compatibility changes, and a full `npm pack` file list with digests.
 10. Route releases to `--tag next` for prerelease suffixes (-rc, -beta) and `latest` otherwise, ensuring an explicit `dist-tag` is always passed to npm.
 11. Pin all third-party GitHub Actions to full SHAs, set `persist-credentials: false`, and prevent the execution of untrusted PR code in the publishing job.
-12. Require opt-in for external judge data transmission, document data retention/redaction, and ensure judge unavailability or lack of calibration results in a gate failure.
+12. Require opt-in for external judge data transmission, document data retention/redaction, and ensure judge unavailability results in a gate failure (exit 3). Lack of calibration blocks the `latest` channel and badges, not the R1 gate on `next` (plan adjustment after Codex review).
 13. Protect main before releasing: require PRs, passing tests and the pinned-SHA sast-check; prevent force pushes and ordinary direct pushes, and tightly restrict bypass rights. Add CODEOWNERS for workflows, packaging, security configuration and release configuration, with a review policy workable for Paul as the sole merger.
 14. Keep quality-gate advisory and require disposition of actionable findings. Require written reasons for security suppressions. Do not treat an AI review or approval by a non-coder as a substitute for technical security review when needed.
 15. Provide a prepared release PR containing the version, CLI-specific changelog, compatibility changes and release channel. After Paul merges it, automation should create the protected tag; the existing plugin release process should remain separate.
