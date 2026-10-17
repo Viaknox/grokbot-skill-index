@@ -18,4 +18,5 @@ test('PR #32 review: the mutation check runs the unmutated baseline first and fa
   const src = readFileSync(join(ENGINE, 'scripts', 'mutate.mjs'), 'utf8');
   assert.match(src, /const base = run\(src, files, opt\.timeout\);\n\s+if \(base !== 'survived'\)/);
   assert.doesNotMatch(src, /node_modules\|scripts\|/, 'scripts/ must be copied into the mutation copy');
+  assert.match(src, /cpSync\(gh, join\(dir, '\.github'\)/, 'the copy keeps .github next to engine/ so workflow tests run');
 });
