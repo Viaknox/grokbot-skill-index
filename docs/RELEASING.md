@@ -35,10 +35,20 @@ Do these in order. Each one is a few clicks.
 3. **Environments → New environment `release-tag`.** No reviewers. Deployment branches: `main` only. Add variable
    `RELEASE_APP_ID` (the App ID) and secret `RELEASE_APP_PRIVATE_KEY` (the whole `.pem` file). Delete the downloaded
    `.pem` afterwards.
-4. **Rules → Rulesets → New tag ruleset `cli-v create`.** Target tags matching `cli-v*`. Rule: *Restrict creations*.
-   Bypass list: the `viaknox-release` App only.
-5. **New tag ruleset `cli-v immutable`.** Target `cli-v*`. Rules: *Restrict updates* and *Restrict deletions*. Bypass
-   list: empty (nobody, not even admins), so a published tag can never move.
+4. **Rules → Rulesets → New tag ruleset `cli-v create`.** **Enforcement status: Active** (a new ruleset starts as
+   *Disabled*, which enforces nothing). Target tags matching `cli-v*`. Rule: *Restrict creations*. Bypass list: the
+   `viaknox-release` App only.
+5. **New tag ruleset `cli-v immutable`.** **Enforcement status: Active.** Target `cli-v*`. Rules: *Restrict updates*
+   and *Restrict deletions*. Bypass list: empty (nobody, not even admins), so a published tag can never move.
+   Check both: Rules → Rulesets lists `cli-v create` and `cli-v immutable` as **Active**.
+6. **Branch protection on `main`** (docs/CLI-PLAN.md S0): require a pull request; require the status checks `engine`
+   and `sast-check / scan` (each appears after it has run once on a PR); block force pushes and deletions; turn on
+   *Do not allow bypassing the above settings*; *Require review from Code Owners* (`.github/CODEOWNERS` names you for
+   the gate, tests, workflows and release files); *Dismiss stale pull request approvals when new commits are pushed*
+   and *Require approval of the most recent reviewable push*. **Turn on the Code Owner rule only once Claude's PRs
+   are opened by the `viaknox-claude` App** (S0a): GitHub never lets you approve a PR you authored, so while PRs
+   are opened under your account that rule would block every one of them. Check: open a test PR that touches
+   `.github/` and confirm it shows "Review required" from you and both checks as required.
 
 ### B. npm bootstrap (S8): the first publish is yours
 

@@ -211,3 +211,20 @@ test('PR #33 review: both channel comparisons are the same code, and a re-run of
     assert.ok(block, `${name} upload missing`); assert.match(block, /\n {10}overwrite: true/, `${name} upload must allow a prepare re-run`);
   }
 });
+
+test('PR #33 review (S0/S1, PT2, PT5): CODEOWNERS covers the gate and release files, and sast-check runs pinned', () => {
+  const owners = read('../../.github/CODEOWNERS').split('\n').filter(l => l.trim() && !l.startsWith('#')).map(l => l.trim().split(/\s+/));
+  const covered = new Map(owners.map(([path, ...who]) => [path, who]));
+  for (const p of ['/.github/', '/.github/CODEOWNERS', '/engine/cli.js', '/engine/src/', '/engine/test/', '/engine/scripts/', '/engine/package.json',
+    '/engine/LICENSE', '/engine/RELEASE_CHANNEL', '/docs/CLI-PLAN.md', '/.sast-check.toml']) {
+    assert.deepEqual(covered.get(p), ['@pjpoulose'], `${p} must be owned by Paul`);
+  }
+  const sast = read('../../.github/workflows/sast.yml');
+  assert.match(sast, /\non:\n  pull_request: /); assert.doesNotMatch(sast, /^\s*pull_request_target:/m);
+  assert.match(sast, /\n  scan:\n    name: scan\n/, 'the required check is reported as "sast-check / scan"');
+  assert.match(sast, /uses: Viaknox\/sast-check@[0-9a-f]{40} /, 'pinned to a full commit SHA');
+  assert.match(sast, /persist-credentials: false/);
+  const doc = read('../../docs/RELEASING.md');
+  assert.equal((doc.match(/Enforcement status: Active/g) || []).length, 2, 'both tag rulesets must be set to Active');
+  assert.match(doc, /`engine`\s+and `sast-check \/ scan`/); assert.match(doc, /Require review from Code Owners/);
+});
