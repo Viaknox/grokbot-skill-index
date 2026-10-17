@@ -1,7 +1,7 @@
 // Runs a test suite against an agent: every case `repeats` times, rule checks first, then the judge.
 import { checkCase } from './rules.js';
 import { judgeCase, judgeHeld, transcript, heldFinding, JUDGE_MODEL } from './judge.js';
-import { HeldBack } from './openrouter.js';
+import { HeldBack, AgentReplyError } from './openrouter.js';
 import { buildReport, runPassed } from './report.js';
 import { scrubber } from './redact.js';
 
@@ -9,12 +9,12 @@ export const CONCURRENCY = 4;
 
 // Transport failures from the agent or the replay model: a timeout, a network error or refused redirect, an HTTP error
 // status. Only these become an unsure run; every other error is a refusal or a bug and is re-thrown.
-export const isOutage = (e) => !!e && (e.name === 'TimeoutError' || e.name === 'AbortError'
+export const isOutage = (e) => !!e && (e instanceof AgentReplyError || e.name === 'TimeoutError' || e.name === 'AbortError'
   || (e instanceof TypeError && /fetch failed|network/i.test(e.message)) || /^(?:agent endpoint \d{3}|OpenRouter \/)/.test(String(e.message)));
 // The detail names only the HTTP status or "timed out", never the error text, which could carry a URL or a reply body.
 export const agentError = (e) => {
   const status = /^(?:agent endpoint|OpenRouter \/\S+) (\d{3})\b/.exec(String(e && e.message));
-  const why = status ? `HTTP ${status[1]}` : e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'timed out' : 'could not connect';
+  const why = e instanceof AgentReplyError ? 'unusable reply' : status ? `HTTP ${status[1]}` : e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'timed out' : 'could not connect';
   return { bucket: 'done', code: 'agent_error', ok: false, unsure: true, detail: `unsure: the agent could not be reached or replied with an error (${why}), so this run was not checked` };
 };
 export async function pool(items, n, fn) {

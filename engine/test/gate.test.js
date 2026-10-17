@@ -221,7 +221,7 @@ test('T6: every test file runs, and no test is skipped, focused or left as todo'
     count += (s.match(/^test\(/gm) || []).length;
   }
   // Pinned floor: deleting tests to make CI green fails here. Raise it when you add tests; never lower it.
-  assert.ok(count >= 341, `only ${count} test() calls found; the floor is 341`);
+  assert.ok(count >= 344, `only ${count} test() calls found; the floor is 344`);
 });
 
 test('T8: the published package holds only cli.js, src/, README.md, LICENSE and package.json', () => {
@@ -327,3 +327,28 @@ test('PR #32 review: a blank TUNEUP_OPENROUTER_KEY is a config error (exit 2), n
   }
 });
 
+
+test('PR #32 review: a non-object "expect" is a config error, not a crash', async () => {
+  const { validateSuite } = await import('../src/rules.js');
+  for (const expect of ['oops', 1, null, [], true]) assert.match(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect }] }).join(), /"expect" must be an object/, JSON.stringify(expect));
+});
+
+test('PR #32 review: case ids like __proto__ or constructor are plain keys in the report', async () => {
+  const { buildReport, regressions } = await import('../src/report.js');
+  const runs = ['__proto__', 'constructor', 'toString'].map(id => ({ case: id, rep: 1, passed: true, findings: [{ bucket: 'done', code: 'judge:completed', ok: true }], turns: [], ms: 1, tokens: 1, toolCalls: 0 }));
+  const rep = buildReport({ suite: { agent: 'A', repeats: 1 }, instructions: 'x', adapter: { name: 't', observesTools: false }, runs, judgeModel: 'j', evidenceLevel: 2 });
+  assert.equal(rep.cases, 3);
+  assert.deepEqual(regressions(rep, rep), []);
+});
+
+test('PR #32 review: an unusable replay-model reply is an unsure agent_error (exit 3), not a crash', async () => {
+  const { modelAdapter } = await import('../src/adapters.js');
+  for (const body of [{}, { choices: [] }, { choices: [{}] }, { choices: [{ message: null }] }]) {
+    const or = { chat: async () => body };
+    const rep = await evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter: modelAdapter({ model: 'm' }, or, { scrub: scrubber() }), or: fakeOr(goodCase), scrub: scrubber() });
+    const f = rep.gateRuns[0].findings;
+    assert.deepEqual(f.map(x => x.code), ['agent_error'], JSON.stringify(body));
+    assert.match(f[0].detail, /\(unusable reply\)/);
+    assert.equal(verdict(rep.gateRuns), EXIT.UNDETERMINED);
+  }
+});

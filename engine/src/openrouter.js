@@ -46,6 +46,12 @@ export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fe
   };
 }
 
+// The agent (or the replay model standing in for it) answered, but not with anything usable: no choices, no message.
+// Treated like an outage (unsure agent_error), never as a crash or a check result (PR #32 review).
+export class AgentReplyError extends Error {
+  constructor() { super('the agent replied with something unusable'); this.name = 'AgentReplyError'; }
+}
+
 // Raised instead of a call when the residual scan found something secret-looking, or (cap = true) when the scrubber hit
 // its size, time or work cap, so the finding can name the right fix (tune-up PR #21 review). The message is what the user sees.
 export class HeldBack extends Error {

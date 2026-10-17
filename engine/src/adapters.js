@@ -1,5 +1,5 @@
 import { scrubber, ScrubError } from './redact.js';
-import { HeldBack } from './openrouter.js';
+import { HeldBack, AgentReplyError } from './openrouter.js';
 // Adapters turn "send this user message to the agent" into whatever the agent's platform needs.
 // Every adapter returns { reply, tools, tokens, ms } for one user turn. `tools` lists tool calls the agent made
 // (name, args, ok, result) when the platform exposes them; `null` means "not observable here".
@@ -138,7 +138,8 @@ export function modelAdapter(cfg, or, { scrub, privateTerms = [] } = {}) {
       for (let hop = 0; hop < 4; hop++) {
         const r = await or.chat({ model: cfg.model, messages: msgs, tools: defs.length ? defs : undefined, max_tokens: cfg.max_tokens || 2000, temperature: cfg.temperature ?? 0.7 });
         tokens += (r.usage && r.usage.total_tokens) || 0;
-        const m = r.choices[0].message;
+        const m = r && Array.isArray(r.choices) && r.choices[0] && r.choices[0].message;
+        if (!m || typeof m !== 'object') throw new AgentReplyError();
         if (!m.tool_calls || !m.tool_calls.length) {
           const reply = U(m.content || '').trim();
           messages.push({ role: 'assistant', content: reply });

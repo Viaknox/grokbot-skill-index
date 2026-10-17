@@ -35,7 +35,10 @@ export function validateSuite(suite) {
     else if (seen.has(c.id)) errs.push(`${at}: the id "${c.id}" is used by another case; every case needs its own id`);
     else seen.add(c.id);
     // Tool expectations must have the documented shape: a string would be read letter by letter (PR #32 review).
-    const e = (c && c.expect) || {};
+    // "expect" must be an object when given; anything else is a config error, not a crash (PR #32 review).
+    const raw = c && c.expect;
+    if (raw !== undefined && (raw === null || typeof raw !== 'object' || Array.isArray(raw))) errs.push(`${at}: "expect" must be an object`);
+    const e = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
     if ('must_call' in e && (typeof e.must_call !== 'string' || !e.must_call)) errs.push(`${at}: "must_call" must be one tool name`);
     if ('must_not_call' in e && (!Array.isArray(e.must_not_call) || !e.must_not_call.length || !e.must_not_call.every(t => typeof t === 'string' && t))) errs.push(`${at}: "must_not_call" must be a list of tool names`);
     if (!c || !Array.isArray(c.turns) || !c.turns.length || !c.turns.every(t => typeof t === 'string')) errs.push(`${at}: "turns" must be a list of user messages`);
