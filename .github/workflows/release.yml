@@ -1,0 +1,44 @@
+# Publishes the agenttuneup CLI to npm when a version tag (v1.2.3) is pushed. No npm token is stored anywhere:
+# npm trusted publishing lets this exact workflow in Viaknox/tune-up publish via GitHub's OIDC identity, and the
+# package gets a public provenance record of the commit and workflow that built it (agenttuneup CLI plan, R9).
+# One-time setup by the npm owner: publish the package once, then link this repo + release.yml as its trusted publisher.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # only this job may ask GitHub for the identity npm trusts
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Tag must match the package version, and the tagged commit must be on main
+        run: |
+          want="v$(node -p "require('./engine/package.json').version")"
+          [ "$GITHUB_REF_NAME" = "$want" ] || { echo "Tag $GITHUB_REF_NAME does not match engine/package.json ($want)"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "Tagged commit is not on main"; exit 1; }
+      # The same checks as every PR, on the exact commit being published.
+      - run: cd engine && npm test
+      - run: cd engine && npm run mutate:gate
+      - name: npm with trusted-publishing support
+        run: npm install -g npm@^11.5.1
+      - name: Publish (provenance, no token)
+        run: cd engine && npm publish --provenance --access public
