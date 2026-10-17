@@ -54,7 +54,10 @@ npm can only set up trusted publishing for a package that already exists.
 4. npmjs.com → agenttuneup → Settings → **Trusted publishing → GitHub Actions**: organization `Viaknox`, repository
    `tune-up`, workflow `release.yml`, environment `release`. **Allow direct publishing** for this configuration: since
    2026-09-03 a new configuration can only stage by default, and this workflow publishes directly after your GitHub
-   approval.
+   approval. **Timing:** since 2026-10-02 a configuration that has not been used for a publish within 48 hours expires.
+   So add it only when the first workflow release is ready: tell Claude, who opens the `0.1.0-rc.1` release PR at once;
+   merge it and approve the run the same day. If it expired, delete the configuration and add it again, then re-run the
+   failed publish job.
 5. Same page → **Publishing access → "Require two-factor authentication and disallow tokens"**. Then revoke every npm
    access token that can publish (npmjs.com → Access Tokens), including the one in your local `.env`. After this,
    only the workflow (after your approval) or you with 2FA can publish.
@@ -62,7 +65,7 @@ npm can only set up trusted publishing for a package that already exists.
    a maintainer of `agenttuneup` (`npm owner add <org-account> agenttuneup` or the package's Collaborators page) so
    publishing and recovery do not hang on one personal account. Check with `npm owner ls agenttuneup`.
 
-Tell Claude when B is done; the next release (`0.1.0-rc.1`) goes through the workflow.
+Steps 1–3, 5 and 6 can be done any time; step 4 goes right before the first workflow release (see its timing note).
 
 ## If a bad version ships
 
