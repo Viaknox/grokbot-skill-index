@@ -6,8 +6,10 @@ import { Sanitized } from './redact.js';
 
 export function loadKey(keyfile) {
   // A key that is only spaces or newlines is no key: never send an empty bearer token (PR #32 review).
+  // A key with a line break or NUL inside cannot be a header value; refuse it here, without echoing it (PR #32 review).
+  const oneLine = (k, where) => { if (/[\r\n\0]/.test(k)) throw new Error(`The OpenRouter key in ${where} has a line break inside it`); return k; };
   const env = (process.env.TUNEUP_OPENROUTER_KEY || '').trim();
-  if (env) return env;
+  if (env) return oneLine(env, 'TUNEUP_OPENROUTER_KEY');
   if (process.env.TUNEUP_OPENROUTER_KEY !== undefined && !keyfile) throw new Error('TUNEUP_OPENROUTER_KEY is set but empty');
   if (!keyfile) throw new Error('No OpenRouter key: set TUNEUP_OPENROUTER_KEY or pass --keyfile');
   // Node's own dotenv parser: handles quotes, `export`, trailing comments and CRLF, and never runs shell syntax.
@@ -16,7 +18,7 @@ export function loadKey(keyfile) {
   const PREF = ['TUNEUP_OPENROUTER_KEY', 'OPENROUTER_API_KEY', 'OPENROUTER_KEY', 'OPENROUTER'];
   const name = PREF.find(k => vars[k] && vars[k].trim()) || Object.keys(vars).find(k => /^[A-Z_]*OPENROUTER[A-Z_]*(KEY|TOKEN)$/i.test(k) && vars[k].trim());
   if (!name) throw new Error('No OPENROUTER line found in ' + keyfile);
-  return vars[name].trim();
+  return oneLine(vars[name].trim(), keyfile);
 }
 
 export function client(key, { base = 'https://openrouter.ai/api', fetchImpl = fetch, timeoutMs = 90_000, retries = 4 } = {}) {

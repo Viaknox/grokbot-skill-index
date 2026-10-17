@@ -15,7 +15,7 @@
 // <out>/gate.json.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { loadKey, client } from './src/openrouter.js';
 import { httpAdapter, modelAdapter, headerVars } from './src/adapters.js';
 import { evaluate, pool, CONCURRENCY } from './src/evaluate.js';
@@ -96,7 +96,8 @@ const out = opt('out', 'tune-up-report');
 // A probe file proves the folder takes normal files (a read-only folder or /proc passes mkdir but not this), so a bad
 // --out stops here with exit 2 before anything runs or is sent, never as a crash after the run (PR #32 review).
 { const bad = (e) => usage(`Cannot use --out ${JSON.stringify(out)} as the output folder: ${e.code || 'unusable'}.`);
-  try { mkdirSync(out, { recursive: true }); const probe = join(out, `.agenttuneup-write-${process.pid}`); writeFileSync(probe, ''); unlinkSync(probe); } catch (e) { bad(e); } }
+  // Exclusive create with a random name: never truncates or deletes a file that was already there (PR #32 review).
+  try { mkdirSync(out, { recursive: true }); const probe = join(out, `.agenttuneup-write-${randomUUID()}`); writeFileSync(probe, '', { flag: 'wx' }); unlinkSync(probe); } catch (e) { bad(e); } }
 // Every output file goes through here: a write that still fails later is a usage error naming the file, not a crash.
 const save = (name, text) => { try { writeFileSync(join(out, name), text); } catch (e) { usage(`Cannot write ${JSON.stringify(join(out, name))}: ${e.code || 'unwritable'}.`); } };
 // --private <file>: one never-send word or name per line (# starts a comment). Scrubbed before anything leaves.
@@ -220,21 +221,24 @@ if (cmd === 'run') {
   console.error(`Tune-up attempt ${n}: drafting a fix with ${WRITER_MODEL}…`);
   const fix = await proposeFix(or, { instructions: suite.instructions, failures: before.failures, sacred: suite.sacred || [], cases: suite.cases,
     // Every attempt that was not proposed goes back to the writer, including positive-lift ones that broke something.
-    tried: attempts.filter(a => a.lift <= 0 || regressions(before, a.after).length).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })), scrub });
+    tried: attempts.filter(a => a.lift <= 0 || a.verified !== true || regressions(before, a.after).length).map(a => ({ lift: a.lift, revised_instructions: a.fix.revised_instructions })), scrub });
   console.error('Re-running the same tests on the fixed instructions…');
   const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log, scrub });
-  const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: liftOf(before, after), after, cost: or.spent() };
+  // A re-run where the judge or the agent failed, or the text was held back, was never fully checked, so it can never be
+  // proposed as verified, whatever its lift (PR #32 review). Saved with the attempt; older files without it never qualify.
+  const unverified = after.gateRuns.some(r => (r.findings || []).some(f => ['judge:error', 'agent_error', 'judge:held'].includes(f.code)));
+  const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: liftOf(before, after), after, cost: or.spent(), verified: !unverified };
   save(`attempt-${n}.json`, JSON.stringify(attempt, null, 2));
   const all = [...attempts, attempt].map(a => ({ ...a, regressions: regressions(before, a.after) }));
   // A tune-up that breaks something that worked, or adds any rules failure, is never proposed, whatever its lift.
-  const eligible = all.filter(a => a.lift > 0 && !a.regressions.length);
+  const eligible = all.filter(a => a.verified === true && a.lift > 0 && !a.regressions.length);
   const best = eligible.length ? eligible.reduce((a, b) => (b.lift > a.lift ? b : a)) : null;
   let md = toMarkdown(before, { title: 'Report card (before)' });
-  md += `\n## Tune-up attempts\n\n| Attempt | Fix lift | Pass rate after | New failures |\n| --- | --- | --- | --- |\n${all.map(a => `| ${a.attempt} | ${a.lift > 0 ? '+' : ''}${Math.round(a.lift * 10) / 10} | ${a.after.pass_rate}% | ${a.regressions.join(', ') || 'none'} |`).join('\n')}\n`;
+  md += `\n## Tune-up attempts\n\n| Attempt | Fix lift | Pass rate after | New failures |\n| --- | --- | --- | --- |\n${all.map(a => `| ${a.attempt} | ${a.lift > 0 ? '+' : ''}${Math.round(a.lift * 10) / 10} | ${a.after.pass_rate}% | ${a.regressions.join(', ') || 'none'}${a.verified === true ? '' : ' (not fully checked: a judge or agent call failed or was held back)'} |`).join('\n')}\n`;
   if (best) {
     md += `\n## Best proposed tune-up: attempt ${best.attempt} (not applied)\n\n${best.fix.changes.map(c => '- ' + c).join('\n')}\n\n**Revised instructions:**\n\n> ${best.fix.revised_instructions.replace(/\n/g, '\n> ')}\n\n`;
     md += toMarkdown(best.after, { title: 'After the best tune-up', lift: best.lift }).replace(/^# /, '## ');
-  } else md += `\nNo attempt improved the agent without breaking something else${all.some(a => a.lift > 0) ? ' (attempts with new failures are never proposed)' : ''}, so there is nothing to propose. Run \`tune\` again, or review the failures by hand.\n`;
+  } else md += `\nNo fully checked attempt improved the agent without breaking something else${all.some(a => a.lift > 0) ? ' (attempts with new failures, or not fully checked, are never proposed)' : ''}, so there is nothing to propose. Run \`tune\` again, or review the failures by hand.\n`;
   md += `\nModel cost for this attempt: $${attempt.cost.toFixed(5)}\n`;
   save('tune-up.md', md); console.log(md);
 }
