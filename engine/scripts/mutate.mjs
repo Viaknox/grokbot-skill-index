@@ -21,7 +21,7 @@
 // Exit code is 0 (a report, not a gate) unless --fail-on-survivors is given; then any survivor exits 1.
 //   --target F  mutate file F instead of src/redact.js     --tests a,b  run only these test files
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -193,14 +193,18 @@ function testFiles() {
 // ended. The copy is always removed. A hung run is killed on Windows with taskkill because its children outlive it.
 function run(mutatedSource, files, timeout) {
   const dir = mkdtempSync(join(tmpdir(), 'scrub-mutant-'));
+  // The copy keeps the repository layout (engine/ next to .github/), because some tests read ../.github workflows and
+  // scripts/test.mjs; a copy missing them fails every run, the baseline included (PR #32 reviews).
+  const eng = join(dir, 'engine');
   try {
-    // scripts/ is copied too: tests read scripts/test.mjs, and a copy without it fails every run (PR #32 review).
-    cpSync(ENGINE, dir, { recursive: true, filter: (p) => !/^(?:node_modules|\.git)$/.test(relative(ENGINE, p).split(sep)[0]) });
-    writeFileSync(join(dir, TARGET), mutatedSource);
-    writeFileSync(join(dir, 'check.mjs'), mutatedSource);
-    const syntax = spawnSync(process.execPath, ['--check', join(dir, 'check.mjs')], { encoding: 'utf8' });
+    cpSync(ENGINE, eng, { recursive: true, filter: (p) => !/^(?:node_modules|\.git)$/.test(relative(ENGINE, p).split(sep)[0]) });
+    const gh = join(ENGINE, '..', '.github');
+    if (existsSync(gh)) cpSync(gh, join(dir, '.github'), { recursive: true });
+    writeFileSync(join(eng, TARGET), mutatedSource);
+    writeFileSync(join(eng, 'check.mjs'), mutatedSource);
+    const syntax = spawnSync(process.execPath, ['--check', join(eng, 'check.mjs')], { encoding: 'utf8' });
     if (syntax.status !== 0) return 'invalid';
-    const r = spawnSync(process.execPath, ['--test', ...files], { cwd: dir, encoding: 'utf8', timeout, env: process.env, maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(process.execPath, ['--test', ...files], { cwd: eng, encoding: 'utf8', timeout, env: process.env, maxBuffer: 64 * 1024 * 1024 });
     if (r.error && r.error.code === 'ETIMEDOUT') {
       if (process.platform === 'win32' && r.pid) spawnSync('taskkill', ['/PID', String(r.pid), '/T', '/F']);
       return 'timeout';
