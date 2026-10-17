@@ -186,6 +186,10 @@ test('PR #33 review: publishing fails closed on a channel lookup error and resum
   assert.equal(r.status, 1, 'a fresh publish must own the channel');
   r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_ON: i, FAKE_CHAN: '', MOVED_ON: 'yes' }));
   assert.equal(r.status, 1, 'an empty channel never verifies');
+  for (const older of ['0.1.0-rc.0', '0.0.9', 'not-a-version']) {
+    r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_ON: i, FAKE_CHAN: older, MOVED_ON: 'yes' }));
+    assert.equal(r.status, 1, `a channel that moved back to ${older} never verifies`);
+  }
   r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.2', FAKE_ON: i, FAKE_CHAN: '0.1.0-rc.2', MOVED_ON: 'no' }));
   assert.equal(r.status, 0, r.text);
 });
@@ -195,4 +199,15 @@ test('PR #33 review: npm ownership goes through an organization team, not npm ow
   assert.match(doc, /npm access grant read-write viaknox:release agenttuneup/);
   assert.match(doc, /npm access list collaborators agenttuneup/);
   assert.doesNotMatch(doc, /npm owner add <org/);
+});
+
+test('PR #33 review: both channel comparisons are the same code, and a re-run of prepare can replace its uploads', () => {
+  const copies = [...yml.matchAll(/node -e '\n([\s\S]*?)'\)"/g)].map(m => m[1].replace(/^ +/gm, ''));
+  assert.equal(copies.length, 2, 'publish and verify each compare versions');
+  assert.equal(copies[0], copies[1], 'the publish and verify comparisons must not drift apart');
+  const p = job('prepare');
+  for (const name of ['agenttuneup-tarball', 'agenttuneup-release-notes']) {
+    const block = p.split('- uses: actions/upload-artifact').find(b => b.includes(`name: ${name}\n`));
+    assert.ok(block, `${name} upload missing`); assert.match(block, /\n {10}overwrite: true/, `${name} upload must allow a prepare re-run`);
+  }
 });

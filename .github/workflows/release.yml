@@ -101,11 +101,13 @@ jobs:
           name: agenttuneup-tarball
           path: dist/${{ steps.pack.outputs.tarball }}
           if-no-files-found: error
+          overwrite: true   # a re-run of prepare replaces its own partial upload (PR #33 review)
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
         with:
           name: agenttuneup-release-notes
           path: notes/notes.md
           if-no-files-found: error
+          overwrite: true   # a re-run of prepare replaces its own partial upload (PR #33 review)
 
   # The exact tarball, installed and run on every supported OS and Node (docs/CLI-PLAN.md P6, PT8).
   smoke:
@@ -207,7 +209,18 @@ jobs:
             prov="$(npm view "agenttuneup@$VERSION" dist.attestations.provenance.predicateType 2>/dev/null || true)"
             tag="$(npm view agenttuneup "dist-tags.$CHANNEL" 2>/dev/null || true)"
             # The channel must point at this version, unless a newer release already moved it on (then leave it there).
-            if [ "$MOVED_ON" = yes ] && [ -n "$tag" ] && [ "$tag" != "$VERSION" ]; then chan=ok; elif [ "$tag" = "$VERSION" ]; then chan=ok; else chan=no; fi
+            # Rechecked on every try: the channel must still be newer, never older or unreadable (PR #33 review).
+            chan=no
+            if [ "$tag" = "$VERSION" ]; then chan=ok
+            elif [ "$MOVED_ON" = yes ] && [ -n "$tag" ]; then
+              newer="$(CUR="$tag" NEW="$VERSION" node -e '
+                const p = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/.exec(v); if (!m) throw new Error("bad version " + v); return m; };
+                const a = p(process.env.CUR), b = p(process.env.NEW);
+                let c = 0; for (const i of [1, 2, 3]) if (!c) c = Number(a[i]) - Number(b[i]);
+                if (!c) c = a[4] === undefined ? (b[4] === undefined ? 0 : 1) : b[4] === undefined ? -1 : a[4] < b[4] ? -1 : a[4] > b[4] ? 1 : Number(a[5]) - Number(b[5]);
+                console.log(c > 0 ? "yes" : "no");')" || newer=no
+              if [ "$newer" = yes ]; then chan=ok; fi
+            fi
             if [ "$onnpm" = "$INTEGRITY" ] && [ "$prov" = "https://slsa.dev/provenance/v1" ] && [ "$chan" = ok ]; then echo "Verified."; exit 0; fi
             sleep 10
           done
