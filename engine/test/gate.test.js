@@ -399,7 +399,7 @@ test('T6: every test file runs; none is skipped, focused or todo; the test count
   for (const f of files) {
     const s = readFileSync(join(ENGINE, 'test', f), 'utf8');
     assert.ok(!/\b(?:test|it|describe|suite)\.(?:skip|only|todo)\s*\(|[{,]\s*(?:skip|only|todo)\s*:/.test(s), `${f} skips, focuses or todos a test`);
-    count += (s.match(/^test\(/gm) || []).length;
+    count += (s.match(/^\s*test\(/gm) || []).length;   // indented ones too: tests inside loops and blocks count (PR #32 review)
   }
   // The ratchet (docs/CLI-PLAN.md §7): deleting a test changes the count, so the diff must touch BASELINE too, where a
   // reviewer sees it. Raise BASELINE when you add tests; never lower it.
@@ -529,5 +529,40 @@ test('PR #32 review: an unusable replay-model reply is an errored agent_error (e
     assert.deepEqual(f.map(x => x.code), ['agent_error'], JSON.stringify(body));
     assert.match(f[0].detail, /\(unusable reply\)/);
     assert.equal(gate(rep.gateRuns, { expected: [{ case: 'c', rep: 1 }], judged: true }).exit, EXIT.UNDETERMINED);
+  }
+});
+
+test('PR #32 review: an incomplete agent_config is a config error (exit 2) before any client or call exists', () => {
+  const d = tmp(), suite = join(d, 'suite.json');
+  const cases = [{ id: 'c1', intent: 'x', turns: ['hi'] }];
+  for (const [agent_config, why] of [[{ type: 'http' }, /agent_config\.url/], [{ type: 'http', url: 'ftp://x.example/' }, /agent_config\.url/], [{ type: 'http', url: 'not a url' }, /agent_config\.url/],
+    [{ type: 'model' }, /agent_config\.model/], [{ type: 'model', model: '  ' }, /agent_config\.model/], [{ model: 'm' }, /agent_config\.type/], [{ type: 'grok', url: 'https://x.example/' }, /agent_config\.type/], [[], /agent_config/]]) {
+    writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config, cases }));
+    const r = cli(['run', suite, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' });
+    assert.equal(r.status, EXIT.USAGE, JSON.stringify(agent_config) + r.stderr); assert.match(r.stderr, why); assert.doesNotMatch(r.stderr, /crashed|Evaluating/);
+  }
+});
+
+test('PR #32 review: an http 200 that is not JSON or has no reply at the path is an errored agent_error, not empty_reply', async () => {
+  const { httpAdapter } = await import('../src/adapters.js');
+  const replies = [() => new Response('<html>oops</html>'), () => new Response('{"other": "x"}'), () => new Response('{"reply": {"text": "x"}}'), () => new Response('{"reply": null}')];
+  for (const [i, reply] of replies.entries()) {
+    const adapter = httpAdapter({ url: 'https://bot.test/chat' }, { fetchImpl: async () => reply() });
+    const rep = await evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter, or: fakeOr(goodCase), scrub: scrubber() });
+    assert.deepEqual(rep.gateRuns[0].findings.map(f => f.code), ['agent_error'], `reply ${i}`);
+    assert.equal(stateOf(rep.gateRuns[0], { judged: true }), 'errored');
+  }
+  // A real (empty or numeric) answer at the path is still the agent's reply.
+  for (const [body, want] of [['{"reply": ""}', ''], ['{"reply": 42}', '42']]) {
+    const t = await httpAdapter({ url: 'https://bot.test/chat' }, { fetchImpl: async () => new Response(body) }).turn({ history: [], message: 'hi' });
+    assert.equal(t.reply, want);
+  }
+});
+
+test('PR #32 review: an --out that cannot be a folder is a usage error (exit 2), not a crash', () => {
+  const d = tmp(), chat = join(d, 'chat.txt'), file = join(d, 'a-file'); writeFileSync(chat, 'User: hi\nBot: hello there\n'); writeFileSync(file, 'x');
+  for (const o of [file, join(file, 'below')]) {
+    const r = cli(['check', chat, '--gate', '--out', o]);
+    assert.equal(r.status, EXIT.USAGE, o + r.stderr); assert.match(r.stderr, /Cannot use --out/); assert.doesNotMatch(r.stderr, /crashed/);
   }
 });

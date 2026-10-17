@@ -87,7 +87,9 @@ class InputError extends Error {}
 const parseInput = (path, what, parse) => { const raw = readInput(path, what); try { return parse(raw); } catch (e) { usage(`${what} ${JSON.stringify(path)} is not valid: ${e instanceof InputError ? e.message : e instanceof SyntaxError ? 'it is not valid JSON' : 'it does not have the expected shape'}.`); } };
 const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
 const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
-const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
+const out = opt('out', 'tune-up-report');
+// An output folder that cannot be made (a file is in the way, no permission) is a usage error, not a crash (PR #32 review).
+try { mkdirSync(out, { recursive: true }); } catch (e) { usage(`Cannot use --out ${JSON.stringify(out)} as the output folder: ${e.code || 'unusable'}.`); }
 // --private <file>: one never-send word or name per line (# starts a comment). Scrubbed before anything leaves.
 const terms = opt('private') ? readInput(opt('private'), 'private words file').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
 
@@ -129,7 +131,13 @@ if (cmd === 'check') {
 } else {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
-const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new InputError('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object') throw new InputError('it needs an "agent_config" object'); return j; });
+const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new InputError('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object' || Array.isArray(j.agent_config)) throw new InputError('it needs an "agent_config" object');
+  // The adapter is checked before any client exists, so a half-written config never reaches a paid call (PR #32 review).
+  const ac = j.agent_config, nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
+  if (ac.type === 'http') { let u = null; try { u = new URL(ac.url); } catch {} if (!nonEmpty(ac.url) || !u || !/^https?:$/.test(u.protocol)) throw new InputError('agent_config.url must be an http(s) address for an "http" agent'); }
+  else if (ac.type === 'model') { if (!nonEmpty(ac.model)) throw new InputError('agent_config.model must name a model for a "model" agent'); }
+  else throw new InputError('agent_config.type must be "http" or "model"');
+  return j; });
 { const errs = validateSuite(suite); if (errs.length) { console.error('Fix the suite before running (nothing was sent):\n- ' + errs.join('\n- ')); process.exit(2); } }
 const repeats = Number(opt('repeats', suite.repeats ?? 1));
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) { console.error('--repeats (or the suite\'s "repeats") must be a whole number from 1 to 20.'); process.exit(2); }
