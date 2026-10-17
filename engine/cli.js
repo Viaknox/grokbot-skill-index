@@ -13,7 +13,7 @@
 // Gate options (check and run; docs/CLI-PLAN.md §4): --gate turns the CI gate on (without it the exit code is 0 whatever
 // the result); --min, --max-undetermined and --allow-rules-fail loosen it and are printed in the verdict; --json writes
 // <out>/gate.json.
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { loadKey, client } from './src/openrouter.js';
@@ -73,7 +73,7 @@ const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.ur
 // is still printed, but the exit code stays 0.
 const finish = (runs, { expected, judged, unreadable = [], suiteId = null }) => {
   const g = gate(runs, { expected, judged, policy, unreadable });
-  if (opt('json', false) === true) writeFileSync(join(out, 'gate.json'), JSON.stringify(gateJson(g, { engineVersion: VERSION, gating, suiteId, judgeModel: judged ? JUDGE_MODEL : null }), null, 2) + '\n');
+  if (opt('json', false) === true) save('gate.json', JSON.stringify(gateJson(g, { engineVersion: VERSION, gating, suiteId, judgeModel: judged ? JUDGE_MODEL : null }), null, 2) + '\n');
   console.error(gating ? `${line(g)} (exit ${g.exit})` : `${line(g)} (gate off: exit 0; add --gate to fail CI on this)`);
   process.exitCode = gating ? g.exit : EXIT.PASS;
 };
@@ -89,7 +89,12 @@ const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT ===
 const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
 const out = opt('out', 'tune-up-report');
 // An output folder that cannot be made (a file is in the way, no permission) is a usage error, not a crash (PR #32 review).
-try { mkdirSync(out, { recursive: true }); } catch (e) { usage(`Cannot use --out ${JSON.stringify(out)} as the output folder: ${e.code || 'unusable'}.`); }
+// A probe file proves the folder takes normal files (a read-only folder or /proc passes mkdir but not this), so a bad
+// --out stops here with exit 2 before anything runs or is sent, never as a crash after the run (PR #32 review).
+{ const bad = (e) => usage(`Cannot use --out ${JSON.stringify(out)} as the output folder: ${e.code || 'unusable'}.`);
+  try { mkdirSync(out, { recursive: true }); const probe = join(out, `.agenttuneup-write-${process.pid}`); writeFileSync(probe, ''); unlinkSync(probe); } catch (e) { bad(e); } }
+// Every output file goes through here: a write that still fails later is a usage error naming the file, not a crash.
+const save = (name, text) => { try { writeFileSync(join(out, name), text); } catch (e) { usage(`Cannot write ${JSON.stringify(join(out, name))}: ${e.code || 'unwritable'}.`); } };
 // --private <file>: one never-send word or name per line (# starts a comment). Scrubbed before anything leaves.
 const terms = opt('private') ? readInput(opt('private'), 'private words file').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
 
@@ -117,12 +122,15 @@ if (cmd === 'check') {
     return { case: `chat-${convos.positions[i]}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: shown(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });
-  const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
+  // With no chat to check there are no scores to show (a report card over nothing would print NaN): the report says so
+  // and lists what could not be read (PR #32 review).
+  const rep = runs.length ? buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 })
+    : { schema: 'tune-up/report@0.1', agent: opt('agent', 'Your agent'), evaluated_at: new Date().toISOString(), evidence_level: 1, adapter: 'paste', cases: 0, pass_rate: null, runs: [] };
   rep.scrubbed = scrub.counts();
   if (rejected.length) rep.unreadable_entries = rejected;
-  writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
-  const md = toMarkdown(rep, { title: 'Report card' }) + (rejected.length ? `\nNot checked: entr${rejected.length === 1 ? 'y' : 'ies'} ${rejected.join(', ')} of the file could not be read as a chat, so this report card is incomplete.\n` : '') + `\nScrubbed before checking: ${Object.entries(rep.scrubbed).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'nothing found'}.` + (or ? ` Model cost: $${or.spent().toFixed(5)}` : '') + '\n';
-  writeFileSync(join(out, 'report.md'), md); console.log(md);
+  save('report.json', JSON.stringify(rep, null, 2));
+  const md = (runs.length ? toMarkdown(rep, { title: 'Report card' }) : `# Report card: ${rep.agent}\n\nNo chat in the file could be read, so nothing was checked and there is no score.\n`) + (rejected.length ? `\nNot checked: entr${rejected.length === 1 ? 'y' : 'ies'} ${rejected.join(', ')} of the file could not be read as a chat, so this report card is incomplete.\n` : '') + `\nScrubbed before checking: ${Object.entries(rep.scrubbed).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'nothing found'}.` + (or ? ` Model cost: $${or.spent().toFixed(5)}` : '') + '\n';
+  save('report.md', md); console.log(md);
   // The exit code comes from the findings in memory, never from report.json (T5).
   finish(runs, { expected: convos.positions.map(p => ({ case: `chat-${p}`, rep: 1 })), judged: !!or, unreadable: rejected });
 } else {
@@ -132,6 +140,8 @@ const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw
   // The adapter is checked before any client exists, so a half-written config never reaches a paid call (PR #32 review).
   const ac = j.agent_config, nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
   if (ac.type === 'http') { let u = null; try { u = new URL(ac.url); } catch {} if (!nonEmpty(ac.url) || !u || !/^https?:$/.test(u.protocol)) throw new InputError('agent_config.url must be an http(s) address for an "http" agent');
+    // A user:password in the URL would be refused by fetch with the whole URL in the error; put it in a TUNEUP_AGENT_* header instead.
+    if (u.username || u.password) throw new InputError('agent_config.url must not contain a user name or password; send credentials in a header from a TUNEUP_AGENT_* variable');
     if (ac.reply_path !== undefined && !nonEmpty(ac.reply_path)) throw new InputError('agent_config.reply_path must be a non-empty string such as "data.0.text"'); }
   else if (ac.type === 'model') { if (!nonEmpty(ac.model)) throw new InputError('agent_config.model must name a model for a "model" agent'); }
   else throw new InputError('agent_config.type must be "http" or "model"');
@@ -171,9 +181,9 @@ if (cmd === 'run') {
   console.error(`Evaluating ${suite.agent}: ${suite.cases.length} cases × ${suite.repeats} runs`);
   const rep = await evaluate({ suite, instructions: suite.instructions, adapter, or, log, scrub });
   rep.suite_id = suiteId;
-  writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
+  save('report.json', JSON.stringify(rep, null, 2));
   const md = toMarkdown(rep, { title: 'Report card' }) + `\nModel cost for this run: $${or.spent().toFixed(5)}\n`;
-  writeFileSync(join(out, 'report.md'), md); console.log(md);
+  save('report.md', md); console.log(md);
   finish(rep.gateRuns, { expected: suite.cases.flatMap(c => Array.from({ length: repeats }, (_, k) => ({ case: c.id, rep: k + 1 }))), judged: true, suiteId });
 } else {
   if (!existsSync(join(out, 'report.json'))) { console.error(`No report in ${out}. Run \`run\` with the same suite and --out first.`); process.exit(2); }
@@ -191,7 +201,7 @@ if (cmd === 'run') {
   console.error('Re-running the same tests on the fixed instructions…');
   const after = await evaluate({ suite, instructions: fix.revised_instructions, adapter, or, log, scrub });
   const attempt = { attempt: n, suite_id: suiteId, baseline_at: before.evaluated_at, fix, lift: liftOf(before, after), after, cost: or.spent() };
-  writeFileSync(join(out, `attempt-${n}.json`), JSON.stringify(attempt, null, 2));
+  save(`attempt-${n}.json`, JSON.stringify(attempt, null, 2));
   const all = [...attempts, attempt].map(a => ({ ...a, regressions: regressions(before, a.after) }));
   // A tune-up that breaks something that worked, or adds any rules failure, is never proposed, whatever its lift.
   const eligible = all.filter(a => a.lift > 0 && !a.regressions.length);
@@ -203,6 +213,6 @@ if (cmd === 'run') {
     md += toMarkdown(best.after, { title: 'After the best tune-up', lift: best.lift }).replace(/^# /, '## ');
   } else md += `\nNo attempt improved the agent without breaking something else${all.some(a => a.lift > 0) ? ' (attempts with new failures are never proposed)' : ''}, so there is nothing to propose. Run \`tune\` again, or review the failures by hand.\n`;
   md += `\nModel cost for this attempt: $${attempt.cost.toFixed(5)}\n`;
-  writeFileSync(join(out, 'tune-up.md'), md); console.log(md);
+  save('tune-up.md', md); console.log(md);
 }
 }
