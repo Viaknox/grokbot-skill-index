@@ -735,3 +735,27 @@ test('PR #32 review: the README CI example never gives the key to a job that run
   assert.equal((yml.match(/TUNEUP_OPENROUTER_KEY:/g) || []).length, 1, 'the key is set in exactly one place');
   assert.match(yml, /environment: \$\{\{ github\.event_name == 'push' && 'agent-check' \|\| '' \}\}/);
 });
+
+test('PR #32 review: a key with a line break, a pre-existing probe-like file, and an unverified tune-up attempt', async () => {
+  const d = tmp(), chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: We open at 9am.\n');
+  const k = cli(['check', chat, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-AAAA\nBBBBTAIL' });
+  assert.equal(k.status, EXIT.USAGE, k.stderr); assert.match(k.stderr, /line break/); assert.doesNotMatch(k.stderr, /BBBBTAIL|crashed/);
+  // The writability probe never touches a file that is already there.
+  const o = join(d, 'o2'); mkdirSync(o); const keep = join(o, `.agenttuneup-write-${process.pid}`); writeFileSync(keep, 'precious');
+  assert.equal(cli(['check', chat, '--gate', '--out', o]).status, EXIT.PASS);
+  assert.equal(readFileSync(keep, 'utf8'), 'precious');
+  // tune: the re-run's judge calls all fail, so the attempt is "not fully checked" and never proposed, whatever its lift.
+  const { pathToFileURL } = await import('node:url');
+  const stub = pathToFileURL(join(ENGINE, 'test', 'fixtures', 'stub-fetch.mjs')).href;
+  const suite = join(d, 'suite.json'), out = join(d, 't');
+  writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'Answer questions about opening hours.', agent_config: { type: 'http', url: 'http://agent.invalid/chat', body: { message: '{{message}}', system: '{{instructions}}' } }, cases: [{ id: 'c1', intent: 'hours', turns: ['When do you open?'] }] }));
+  const env = (cfg) => ({ ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test', NODE_OPTIONS: `--import=${stub}`, TU_TEST_FETCH: JSON.stringify(cfg) });
+  const fail = { completed: 0.05, truthful: 0.95, followed_rules: 0.95, needless_question: 0.05 };
+  const run = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--out', out], { env: env({ answers: fail }), encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const tune = spawnSync(process.execPath, [CLI, 'tune', suite, '--consent', '--out', out], { env: env({ decideThrow: true, writer: { revised_instructions: 'Answer questions about opening hours. Always state the exact opening time.', changes: ['c1: state the time'] } }), encoding: 'utf8' });
+  assert.equal(tune.status, 0, tune.stderr);
+  const md = readFileSync(join(out, 'tune-up.md'), 'utf8');
+  assert.match(md, /not fully checked/); assert.doesNotMatch(md, /Best proposed tune-up/);
+  assert.equal(JSON.parse(readFileSync(join(out, 'attempt-1.json'), 'utf8')).verified, false);
+});
