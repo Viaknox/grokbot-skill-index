@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npx agenttuneup@0.1.0 check chats.txt --instructions instructions.txt --consent --gate --json --out tune-up-report
+      - run: npx agenttuneup@0.1.0-rc.0 check chats.txt --instructions instructions.txt --consent --gate --json --out tune-up-report
         env:
           TUNEUP_OPENROUTER_KEY: ${{ secrets.TUNEUP_OPENROUTER_KEY }}
 ```
