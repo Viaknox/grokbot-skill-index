@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   scan:
-    name: scan
+    name: sast-check / scan   # the check name branch protection requires (a bare "scan" is ambiguous)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

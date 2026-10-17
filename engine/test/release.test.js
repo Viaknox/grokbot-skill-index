@@ -146,8 +146,24 @@ case "$*" in
   "view agenttuneup@"*" dist.integrity") [ -n "$FAKE_ON" ] || { echo "npm error E404" >&2; exit 1; }; echo "$FAKE_ON";;
   "view agenttuneup@"*" dist.attestations.provenance.predicateType") echo "https://slsa.dev/provenance/v1";;
   "publish "*) exit 0;;
+  "init -y") echo '{}' > package.json;;
+  "install agenttuneup@"*) exit 0;;
+  "audit signatures") [ "$FAKE_AUDIT" = FAIL ] && { echo "1 package has an invalid attestation" >&2; exit 1; }; echo "verified";;
   *) echo "unexpected npm $*" >&2; exit 9;;
 esac
+`;
+// Stand-in gh (main's release inputs) and curl (npm's attestation endpoint).
+const FAKE_GH = `#!/usr/bin/env bash
+[ "$FAKE_GH" = FAIL ] && { echo "gh: HTTP 502" >&2; exit 1; }
+case "$2" in
+  */contents/engine/package.json?ref=main) printf '{"version":"%s"}\\n' "$FAKE_MAINVER";;
+  */contents/engine/RELEASE_CHANNEL?ref=main) echo "$FAKE_MAINCHAN";;
+  *) echo "unexpected gh $*" >&2; exit 9;;
+esac
+`;
+const FAKE_CURL = `#!/usr/bin/env bash
+[ "$FAKE_ATT" = FAIL ] && { echo "curl: (22) 404" >&2; exit 22; }
+echo "$FAKE_ATT"
 `;
 async function runStep(name, env) {
   const { mkdtempSync, writeFileSync, mkdirSync, chmodSync } = await import('node:fs');
@@ -156,12 +172,15 @@ async function runStep(name, env) {
   mkdirSync(bin); mkdirSync(join(dir, 'dist'));
   writeFileSync(join(bin, 'npm'), FAKE_NPM); chmodSync(join(bin, 'npm'), 0o755);
   writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n'); chmodSync(join(bin, 'sleep'), 0o755);
+  writeFileSync(join(bin, 'gh'), FAKE_GH); chmodSync(join(bin, 'gh'), 0o755);
+  writeFileSync(join(bin, 'curl'), FAKE_CURL); chmodSync(join(bin, 'curl'), 0o755);
   writeFileSync(join(dir, 'dist', 'a.tgz'), 'tarball bytes');
   const integrity = 'sha512-' + (await import('node:crypto')).createHash('sha512').update('tarball bytes').digest('base64');
   const log = join(dir, 'npm.log'), out = join(dir, 'out'); writeFileSync(log, ''); writeFileSync(out, '');
   const r = spawnSync('bash', ['-c', stepRun(name)], { cwd: dir, encoding: 'utf8', env: {
     ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_LOG: log, GITHUB_OUTPUT: out, TARBALL: 'a.tgz', CHANNEL: 'next',
-    INTEGRITY: integrity, FAKE_TAGS: '{}', FAKE_ON: '', FAKE_CHAN: '', ...env(integrity) } });
+    INTEGRITY: integrity, FAKE_TAGS: '{}', FAKE_ON: '', FAKE_CHAN: '', REPO: 'Viaknox/tune-up', FAKE_MAINCHAN: 'next',
+    FAKE_MAINVER: env(integrity).VERSION, ...env(integrity) } });
   return { status: r.status, text: r.stdout + r.stderr, npm: readFileSync(log, 'utf8'), out: readFileSync(out, 'utf8') };
 }
 
@@ -221,10 +240,54 @@ test('PR #33 review (S0/S1, PT2, PT5): CODEOWNERS covers the gate and release fi
   }
   const sast = read('../../.github/workflows/sast.yml');
   assert.match(sast, /\non:\n  pull_request: /); assert.doesNotMatch(sast, /^\s*pull_request_target:/m);
-  assert.match(sast, /\n  scan:\n    name: scan\n/, 'the required check is reported as "sast-check / scan"');
+  assert.match(sast, /\n  scan:\n    name: sast-check \/ scan  /, 'the check is reported under the exact name branch protection requires');
   assert.match(sast, /uses: Viaknox\/sast-check@[0-9a-f]{40} /, 'pinned to a full commit SHA');
   assert.match(sast, /persist-credentials: false/);
   const doc = read('../../docs/RELEASING.md');
   assert.equal((doc.match(/Enforcement status: Active/g) || []).length, 2, 'both tag rulesets must be set to Active');
   assert.match(doc, /`engine`\s+and `sast-check \/ scan`/); assert.match(doc, /Require review from Code Owners/);
+});
+
+test('PR #33 review: a release that main no longer asks for is never published', async () => {
+  const PUB = 'Publish the tested tarball, or resume if this exact tarball is already on npm';
+  for (const [env, why] of [[{ FAKE_MAINVER: '0.1.0-rc.1' }, 'reverted'], [{ FAKE_MAINVER: '0.1.0-rc.3' }, 'superseded by a later release'],
+    [{ FAKE_MAINCHAN: 'latest' }, 'channel changed'], [{ FAKE_GH: 'FAIL' }, 'main unreadable']]) {
+    const r = await runStep(PUB, () => ({ VERSION: '0.1.0-rc.2', FAKE_TAGS: '{"next":"0.1.0-rc.1"}', ...env }));
+    assert.equal(r.status, 1, why); assert.doesNotMatch(r.npm, /^publish/m, `${why}: nothing published`);
+  }
+  // An already-public identical version still finishes, whatever main says now (it is public; it needs its tag).
+  const r = await runStep(PUB, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_TAGS: '{"next":"0.1.0-rc.2"}', FAKE_ON: i, FAKE_MAINVER: '0.1.0-rc.2' }));
+  assert.equal(r.status, 0, r.text);
+});
+
+test('PR #33 review: the provenance must be signed and name this repository, release.yml and this commit', async () => {
+  const STEP = 'Verify the provenance came from this repository, release.yml and this commit';
+  const SHA = 'a'.repeat(40);
+  const att = (o = {}) => JSON.stringify({ attestations: [{ predicateType: 'https://slsa.dev/provenance/v1', bundle: { dsseEnvelope: { payload: Buffer.from(JSON.stringify({
+    predicate: { buildDefinition: { externalParameters: { workflow: { repository: o.repo ?? 'https://github.com/Viaknox/tune-up', path: o.path ?? '.github/workflows/release.yml', ref: 'refs/heads/main' } },
+      resolvedDependencies: [{ uri: 'git+https://github.com/Viaknox/tune-up@refs/heads/main', digest: { gitCommit: o.sha ?? SHA } }] } } })).toString('base64') } } }] });
+  let r = await runStep(STEP, () => ({ VERSION: '0.1.0-rc.1', GITHUB_SHA: SHA, FAKE_ATT: att() }));
+  assert.equal(r.status, 0, r.text); assert.match(r.npm, /^audit signatures$/m, 'signatures are checked cryptographically');
+  for (const [o, k] of [[{ repo: 'https://github.com/someone/fork' }, 'repo'], [{ path: '.github/workflows/other.yml' }, 'path'], [{ sha: 'b'.repeat(40) }, 'sha']]) {
+    r = await runStep(STEP, () => ({ VERSION: '0.1.0-rc.1', GITHUB_SHA: SHA, FAKE_ATT: att(o) }));
+    assert.equal(r.status, 1, `a provenance with another ${k} is rejected`); assert.match(r.text, new RegExp(`provenance ${k} is`));
+  }
+  r = await runStep(STEP, () => ({ VERSION: '0.1.0-rc.1', GITHUB_SHA: SHA, FAKE_ATT: att(), FAKE_AUDIT: 'FAIL' }));
+  assert.equal(r.status, 1, 'a failed signature check stops');
+  r = await runStep(STEP, () => ({ VERSION: '0.1.0-rc.1', GITHUB_SHA: SHA, FAKE_ATT: 'FAIL' }));
+  assert.equal(r.status, 1, 'unreadable attestations stop');
+  r = await runStep(STEP, () => ({ VERSION: '0.1.0-rc.1', GITHUB_SHA: SHA, FAKE_ATT: '{"attestations":[]}' }));
+  assert.equal(r.status, 1, 'no provenance stops');
+});
+
+test('PR #33 review: the pack step runs to the end under pipefail on the real package', async () => {
+  const { mkdtempSync, cpSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'tu-pack-')), engine = join(root, 'engine');
+  cpSync(fileURLToPath(new URL('..', import.meta.url)), engine, { recursive: true });
+  const out = join(root, 'out'), sum = join(root, 'sum'); writeFileSync(out, ''); writeFileSync(sum, '');
+  const r = spawnSync('bash', ['-c', stepRun('Pack, check the file allowlist, write the approval summary')], { cwd: engine, encoding: 'utf8',
+    env: { ...process.env, VERSION: pkg.version, CHANNEL: 'next', RELEASE: 'false', GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: sum, GITHUB_SHA: 'a'.repeat(40) } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(readFileSync(out, 'utf8'), /^integrity=sha512-/m); assert.match(readFileSync(sum, 'utf8'), /\.\/LICENSE/);
 });

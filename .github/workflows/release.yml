@@ -77,9 +77,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ../dist && tgz="$(npm pack --silent --pack-destination ../dist)" && file="../dist/$tgz"
-          bad="$(tar -tzf "$file" | sed 's#^package/##' | grep -Ev '^(cli\.js|package\.json|README\.md|LICENSE|src/[A-Za-z0-9_-]+\.js)$' || true)"
+          # List once and test the captured text: `tar | grep -q` exits 141 under pipefail when grep stops early (PR #33 review).
+          list="$(tar -tzf "$file")"
+          bad="$(printf '%s\n' "$list" | sed 's#^package/##' | grep -Ev '^(cli\.js|package\.json|README\.md|LICENSE|src/[A-Za-z0-9_-]+\.js)$' || true)"
           [ -z "$bad" ] || { echo "::error::files outside the allowlist: $bad"; exit 1; }
-          tar -tzf "$file" | grep -q '^package/LICENSE$' || { echo "::error::LICENSE missing from the package"; exit 1; }
+          grep -qx 'package/LICENSE' <<< "$list" || { echo "::error::LICENSE missing from the package"; exit 1; }
           integrity="sha512-$(openssl dgst -sha512 -binary "$file" | base64 -w0)"
           compat="$(node scripts/release-notes.mjs "$VERSION" --compatibility)"
           # Release notes are made here, without any token, so the tag job never runs repository code (PR #33 review).
@@ -167,6 +169,8 @@ jobs:
           CHANNEL: ${{ needs.prepare.outputs.channel }}
           INTEGRITY: ${{ needs.prepare.outputs.integrity }}
           TARBALL: ${{ needs.prepare.outputs.tarball }}
+          GH_TOKEN: ${{ github.token }}   # contents: read only, to re-read main
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           file="./dist/$TARBALL"   # npm reads dist/x.tgz as a GitHub shorthand; a local tarball needs ./ (PR #33 review)
@@ -193,6 +197,11 @@ jobs:
           else
             # A re-run of an older release must never move the channel back past a newer one (PR #33 review).
             [ "$newer" = no ] || { echo "::error::$CHANNEL already points at $current, newer than $VERSION; refusing to move it back"; exit 1; }
+            # main must still ask for this exact release: a revert or a later release PR merged while this run waited
+            # for approval supersedes it (ancestry alone cannot tell). Fails closed if main cannot be read (PR #33 review).
+            mainver="$(gh api "repos/$REPO/contents/engine/package.json?ref=main" -H 'Accept: application/vnd.github.raw' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).version)))')" || { echo "::error::could not read engine/package.json on main; stopping"; exit 1; }
+            mainchan="$(gh api "repos/$REPO/contents/engine/RELEASE_CHANNEL?ref=main" -H 'Accept: application/vnd.github.raw' | tr -d '[:space:]')" || { echo "::error::could not read engine/RELEASE_CHANNEL on main; stopping"; exit 1; }
+            [ "$mainver" = "$VERSION" ] && [ "$mainchan" = "$CHANNEL" ] || { echo "::error::main now asks for $mainver on '$mainchan', not $VERSION on '$CHANNEL': this release was superseded; not publishing"; exit 1; }
             npm publish "$file" --tag "$CHANNEL" --access public --provenance
           fi
           echo "channel_moved_on=$newer" >> "$GITHUB_OUTPUT"
@@ -225,6 +234,28 @@ jobs:
             sleep 10
           done
           echo "::error::registry check failed: integrity '$onnpm', provenance '$prov', $CHANNEL -> '$tag'"; exit 1
+      - name: Verify the provenance came from this repository, release.yml and this commit
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Signatures first: npm checks the registry signature and the provenance attestation cryptographically.
+          work="$(mktemp -d)" && cd "$work" && npm init -y > /dev/null
+          npm install "agenttuneup@$VERSION" --ignore-scripts --no-audit --no-fund > /dev/null
+          npm audit signatures
+          # Then identity: a published copy of the same bytes from another workflow or commit must never be tagged here.
+          att="$(curl -fsS "https://registry.npmjs.org/-/npm/v1/attestations/agenttuneup@$VERSION")" || { echo "::error::could not read the attestations"; exit 1; }
+          ATT="$att" node -e '
+            const want = { repo: "https://github.com/" + process.env.REPO, path: ".github/workflows/release.yml", sha: process.env.GITHUB_SHA };
+            const a = (JSON.parse(process.env.ATT).attestations || []).find(x => x.predicateType === "https://slsa.dev/provenance/v1");
+            if (!a) { console.log("::error::no SLSA provenance attestation"); process.exit(1); }
+            const st = JSON.parse(Buffer.from(a.bundle.dsseEnvelope.payload, "base64").toString("utf8"));
+            const def = st.predicate.buildDefinition, wf = def.externalParameters.workflow;
+            const commit = (def.resolvedDependencies || []).map(d => d && d.digest && d.digest.gitCommit).find(Boolean);
+            const got = { repo: wf.repository, path: wf.path, sha: commit };
+            for (const k of Object.keys(want)) if (got[k] !== want[k]) { console.log(`::error::provenance ${k} is ${got[k]}, expected ${want[k]}`); process.exit(1); }
+            console.log("Provenance: " + want.repo + " " + want.path + " @ " + want.sha);'
 
   tag:
     name: Tag cli-v and create the GitHub release (after npm is verified)
