@@ -20,8 +20,10 @@ const textOf = (v) => {
 };
 const norm = (m) => {
   if (!m || typeof m !== 'object') return { role: null, content: '' };
-  const t = textOf(m.content ?? m.text ?? m.message);
-  return { role: roleOf(String(m.role || m.author || m.sender || '')), content: (t ?? '').trim(), ...(t === null ? { bad: true } : {}) };
+  const role = roleOf(String(m.role || m.author || m.sender || '')), t = textOf(m.content ?? m.text ?? m.message);
+  // Only an unreadable user or agent turn spoils the chat; system and tool turns are dropped whatever they hold, so a
+  // structured tool result never makes a readable chat unreadable (PR #32 review).
+  return { role, content: (t ?? '').trim(), ...(t === null && role ? { bad: true } : {}) };
 };
 
 const twoSided = (c) => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant');

@@ -616,6 +616,8 @@ test('PR #32 review: object-valued message content makes the chat unreadable; te
   const c = parseTranscripts(JSON.stringify([[{ role: 'user', content: { a: 1 } }, ok], [{ role: 'user', content: [{ type: 'image_url', image_url: 'x' }] }, ok], [{ role: 'user', content: [{ type: 'text', text: 'When do you open?' }] }, ok]]));
   assert.deepEqual(c.rejected, [1, 2]); assert.deepEqual(c.positions, [3]);
   assert.equal(c[0][0].content, 'When do you open?');
+  const tool = parseTranscripts(JSON.stringify([[{ role: 'user', content: 'When do you open?' }, { role: 'tool', content: { hours: '9-5' } }, { role: 'system', content: [{ type: 'x' }] }, ok]]));
+  assert.equal(tool.length, 1, 'structured tool and system turns are dropped, not a reason to reject the chat');
   const d = tmp(), f = join(d, 'obj.json'); writeFileSync(f, JSON.stringify([{ role: 'user', content: { a: 1 } }, ok]));
   assert.equal(cli(['check', f, '--gate', '--out', join(d, 'o')]).status, EXIT.UNDETERMINED, '[object Object] must never pass the gate');
 });
