@@ -40,26 +40,32 @@ The exit code comes from the run itself, never from an old or edited `report.jso
 
 ```yaml
 # .github/workflows/agent-check.yml
-on: [pull_request]          # never pull_request_target: that would hand your key to code from a fork
+on:
+  pull_request:                # every pull request: local rules only, no secrets in the job
+  push:
+    branches: [main]           # after a merge: the full check with the judge
 jobs:
   agent-check:
     runs-on: ubuntu-latest
+    # The key lives only in this environment. Limit it to the main branch (and add required reviewers if you like),
+    # so code in a pull request, from a fork or from this repository, can never read it.
+    environment: ${{ github.event_name == 'push' && 'agent-check' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      # Pull requests from this repository: full check with the judge.
-      - if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+      - if: github.event_name == 'pull_request'
+        run: npx agenttuneup@0.1.0-rc.0 check chats.txt --instructions instructions.txt --gate --json --out tune-up-report
+      - if: github.event_name == 'push'
         run: npx agenttuneup@0.1.0-rc.0 check chats.txt --instructions instructions.txt --consent --gate --json --out tune-up-report
         env:
           TUNEUP_OPENROUTER_KEY: ${{ secrets.TUNEUP_OPENROUTER_KEY }}
-      # Pull requests from forks (and Dependabot) get no secrets, so they run the local rules only (nothing is sent).
-      - if: github.event.pull_request.head.repo.full_name != github.repository || github.actor == 'dependabot[bot]'
-        run: npx agenttuneup@0.1.0-rc.0 check chats.txt --instructions instructions.txt --gate --json --out tune-up-report
 ```
 
-GitHub does not give Actions secrets to pull requests from forks or from Dependabot, so that step runs without `--consent`; such a PR can
-pass only as `PASS: local rules only`. Re-run the judged check after merging, or from a branch in this repository.
+A pull request can change the workflow it runs, so a job that runs pull-request code must never hold the key, whoever
+opened the pull request. Pull requests therefore get the local rules only (`PASS: local rules only` at best, nothing
+sent), and the judged check runs after the merge, with the key stored only in the `agent-check` environment restricted
+to `main`. Never use `pull_request_target` for this.
 
 ## Your data
 
