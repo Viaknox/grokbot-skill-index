@@ -130,3 +130,69 @@ test('PR #33 review: the release-notes script runs from engine/ with a relative 
   const missing = spawnSync(process.execPath, ['scripts/release-notes.mjs', '9.9.9'], { cwd: engine, encoding: 'utf8' });
   assert.equal(missing.status, 1, 'a version without a CHANGELOG section stops the release');
 });
+
+// Runs the real publish and verify scripts from release.yml with a stand-in `npm` (and an instant `sleep`), so the
+// re-run rules are checked as behavior, not as text (PR #33 review). Needs bash, like the ubuntu runner the workflow uses.
+const stepRun = (name) => {
+  const at = yml.indexOf(`- name: ${name}`); assert.ok(at > 0, `step ${name} missing`);
+  const body = /run: \|\n((?: {10}.*\n|\n)+)/.exec(yml.slice(at)); assert.ok(body, `step ${name} has no run block`);
+  return body[1].replace(/^ {10}/gm, '');
+};
+const FAKE_NPM = `#!/usr/bin/env bash
+echo "$*" >> "$FAKE_LOG"
+case "$*" in
+  "view agenttuneup dist-tags --json") [ "$FAKE_TAGS" = FAIL ] && { echo "npm error network" >&2; exit 1; }; echo "$FAKE_TAGS";;
+  "view agenttuneup dist-tags."*) echo "$FAKE_CHAN";;
+  "view agenttuneup@"*" dist.integrity") [ -n "$FAKE_ON" ] || { echo "npm error E404" >&2; exit 1; }; echo "$FAKE_ON";;
+  "view agenttuneup@"*" dist.attestations.provenance.predicateType") echo "https://slsa.dev/provenance/v1";;
+  "publish "*) exit 0;;
+  *) echo "unexpected npm $*" >&2; exit 9;;
+esac
+`;
+async function runStep(name, env) {
+  const { mkdtempSync, writeFileSync, mkdirSync, chmodSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'tu-release-')), bin = join(dir, 'bin');
+  mkdirSync(bin); mkdirSync(join(dir, 'dist'));
+  writeFileSync(join(bin, 'npm'), FAKE_NPM); chmodSync(join(bin, 'npm'), 0o755);
+  writeFileSync(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n'); chmodSync(join(bin, 'sleep'), 0o755);
+  writeFileSync(join(dir, 'dist', 'a.tgz'), 'tarball bytes');
+  const integrity = 'sha512-' + (await import('node:crypto')).createHash('sha512').update('tarball bytes').digest('base64');
+  const log = join(dir, 'npm.log'), out = join(dir, 'out'); writeFileSync(log, ''); writeFileSync(out, '');
+  const r = spawnSync('bash', ['-c', stepRun(name)], { cwd: dir, encoding: 'utf8', env: {
+    ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_LOG: log, GITHUB_OUTPUT: out, TARBALL: 'a.tgz', CHANNEL: 'next',
+    INTEGRITY: integrity, FAKE_TAGS: '{}', FAKE_ON: '', FAKE_CHAN: '', ...env(integrity) } });
+  return { status: r.status, text: r.stdout + r.stderr, npm: readFileSync(log, 'utf8'), out: readFileSync(out, 'utf8') };
+}
+
+test('PR #33 review: publishing fails closed on a channel lookup error and resumes an identical older version', async () => {
+  const PUB = 'Publish the tested tarball, or resume if this exact tarball is already on npm';
+  let r = await runStep(PUB, () => ({ VERSION: '0.1.0-rc.2', FAKE_TAGS: 'FAIL' }));
+  assert.equal(r.status, 1); assert.match(r.text, /could not read the npm channels/); assert.doesNotMatch(r.npm, /^publish/m, 'an unreadable channel is never treated as absent');
+  r = await runStep(PUB, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_TAGS: '{"next":"0.1.0-rc.2"}', FAKE_ON: i }));
+  assert.equal(r.status, 0, r.text); assert.doesNotMatch(r.npm, /^publish/m); assert.match(r.out, /channel_moved_on=yes/, 'an already-public older version finishes, leaving the newer channel');
+  r = await runStep(PUB, () => ({ VERSION: '0.1.0-rc.1', FAKE_TAGS: '{"next":"0.1.0-rc.2"}' }));
+  assert.equal(r.status, 1); assert.match(r.text, /refusing to move it back/); assert.doesNotMatch(r.npm, /^publish/m);
+  r = await runStep(PUB, () => ({ VERSION: '0.1.0-rc.1', FAKE_TAGS: '{"next":"0.1.0-rc.2"}', FAKE_ON: 'sha512-other' }));
+  assert.equal(r.status, 1); assert.match(r.text, /different tarball/);
+  for (const tags of ['{"next":"0.1.0-rc.1"}', '{}']) {
+    r = await runStep(PUB, () => ({ VERSION: '0.1.0-rc.2', FAKE_TAGS: tags }));
+    assert.equal(r.status, 0, r.text); assert.match(r.npm, /^publish \.\/dist\/a\.tgz --tag next --access public --provenance$/m); assert.match(r.out, /channel_moved_on=no/);
+  }
+  const VER = 'Verify integrity, provenance and channel on the registry';
+  r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_ON: i, FAKE_CHAN: '0.1.0-rc.2', MOVED_ON: 'yes' }));
+  assert.equal(r.status, 0, r.text);
+  r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_ON: i, FAKE_CHAN: '0.1.0-rc.2', MOVED_ON: 'no' }));
+  assert.equal(r.status, 1, 'a fresh publish must own the channel');
+  r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.1', FAKE_ON: i, FAKE_CHAN: '', MOVED_ON: 'yes' }));
+  assert.equal(r.status, 1, 'an empty channel never verifies');
+  r = await runStep(VER, (i) => ({ VERSION: '0.1.0-rc.2', FAKE_ON: i, FAKE_CHAN: '0.1.0-rc.2', MOVED_ON: 'no' }));
+  assert.equal(r.status, 0, r.text);
+});
+
+test('PR #33 review: npm ownership goes through an organization team, not npm owner add', () => {
+  const doc = read('../../docs/RELEASING.md');
+  assert.match(doc, /npm access grant read-write viaknox:release agenttuneup/);
+  assert.match(doc, /npm access list collaborators agenttuneup/);
+  assert.doesNotMatch(doc, /npm owner add <org/);
+});

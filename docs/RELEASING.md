@@ -61,9 +61,13 @@ npm can only set up trusted publishing for a package that already exists.
 5. Same page → **Publishing access → "Require two-factor authentication and disallow tokens"**. Then revoke every npm
    access token that can publish (npmjs.com → Access Tokens), including the one in your local `.env`. After this,
    only the workflow (after your approval) or you with 2FA can publish.
-6. Ownership: create or confirm the `viaknox` npm organization (and reserve the `@viaknox` scope), then add the org as
-   a maintainer of `agenttuneup` (`npm owner add <org-account> agenttuneup` or the package's Collaborators page) so
-   publishing and recovery do not hang on one personal account. Check with `npm owner ls agenttuneup`.
+6. Ownership, through an organization team (an org cannot be added with `npm owner add`, which takes a user):
+   create or confirm the `viaknox` npm organization (this also reserves the `@viaknox` scope) and a team in it, for
+   example `viaknox:release`, with you in it (add a second person with 2FA when there is one). Then grant the package:
+   `npm access grant read-write viaknox:release agenttuneup` (or the package's Settings → access page on npmjs.com).
+   Check with `npm access list collaborators agenttuneup` (the team shows `read-write`) and
+   `npm access list packages viaknox:release` (lists `agenttuneup`). If npm refuses the grant for the unscoped name,
+   stop and tell Claude: do not fall back to a personal second owner without deciding it on purpose.
 
 Steps 1–3, 5 and 6 can be done any time; step 4 goes right before the first workflow release (see its timing note).
 

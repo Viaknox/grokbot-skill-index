@@ -159,6 +159,7 @@ jobs:
           name: agenttuneup-tarball
           path: dist
       - name: Publish the tested tarball, or resume if this exact tarball is already on npm
+        id: publish
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           CHANNEL: ${{ needs.prepare.outputs.channel }}
@@ -169,8 +170,11 @@ jobs:
           file="./dist/$TARBALL"   # npm reads dist/x.tgz as a GitHub shorthand; a local tarball needs ./ (PR #33 review)
           got="sha512-$(openssl dgst -sha512 -binary "$file" | base64 -w0)"
           [ "$got" = "$INTEGRITY" ] || { echo "::error::downloaded tarball differs from the tested one"; exit 1; }
-          # A re-run of an older release must never move the channel back past a newer one (PR #33 review).
-          current="$(npm view agenttuneup "dist-tags.$CHANNEL" 2>/dev/null || true)"
+          # Read the channels and fail closed: a lookup error must never look like "no channel yet" (PR #33 review).
+          # The package always exists here, because the bootstrap 0.1.0-rc.0 is published by hand first.
+          tags="$(npm view agenttuneup dist-tags --json)" || { echo "::error::could not read the npm channels; stopping instead of guessing. Re-run when npm is reachable."; exit 1; }
+          current="$(TAGS="$tags" node -e 'const t = JSON.parse(process.env.TAGS); const v = t && t[process.env.CHANNEL]; process.stdout.write(typeof v === "string" ? v : "")')"
+          newer=no
           if [ -n "$current" ] && [ "$current" != "$VERSION" ]; then
             newer="$(CUR="$current" NEW="$VERSION" node -e '
               const p = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/.exec(v); if (!m) throw new Error("bad version " + v); return m; };
@@ -178,26 +182,33 @@ jobs:
               let c = 0; for (const i of [1, 2, 3]) if (!c) c = Number(a[i]) - Number(b[i]);
               if (!c) c = a[4] === undefined ? (b[4] === undefined ? 0 : 1) : b[4] === undefined ? -1 : a[4] < b[4] ? -1 : a[4] > b[4] ? 1 : Number(a[5]) - Number(b[5]);
               console.log(c > 0 ? "yes" : "no");')"
-            [ "$newer" = no ] || { echo "::error::$CHANNEL already points at $current, newer than $VERSION; refusing to move it back"; exit 1; }
           fi
           if onnpm="$(npm view "agenttuneup@$VERSION" dist.integrity 2>/dev/null)" && [ -n "$onnpm" ]; then
             [ "$onnpm" = "$INTEGRITY" ] || { echo "::error::agenttuneup@$VERSION is already on npm with a different tarball; never reuse a version"; exit 1; }
+            # Already public: finish verification and tagging even if a newer release has since moved the channel on,
+            # and leave that newer channel where it is (PR #33 review).
             echo "agenttuneup@$VERSION is already on npm with this exact tarball: resuming at verification."
           else
+            # A re-run of an older release must never move the channel back past a newer one (PR #33 review).
+            [ "$newer" = no ] || { echo "::error::$CHANNEL already points at $current, newer than $VERSION; refusing to move it back"; exit 1; }
             npm publish "$file" --tag "$CHANNEL" --access public --provenance
           fi
+          echo "channel_moved_on=$newer" >> "$GITHUB_OUTPUT"
       - name: Verify integrity, provenance and channel on the registry
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           CHANNEL: ${{ needs.prepare.outputs.channel }}
           INTEGRITY: ${{ needs.prepare.outputs.integrity }}
+          MOVED_ON: ${{ steps.publish.outputs.channel_moved_on }}
         run: |
           set -euo pipefail
           for i in $(seq 1 30); do
             onnpm="$(npm view "agenttuneup@$VERSION" dist.integrity 2>/dev/null || true)"
             prov="$(npm view "agenttuneup@$VERSION" dist.attestations.provenance.predicateType 2>/dev/null || true)"
             tag="$(npm view agenttuneup "dist-tags.$CHANNEL" 2>/dev/null || true)"
-            if [ "$onnpm" = "$INTEGRITY" ] && [ "$prov" = "https://slsa.dev/provenance/v1" ] && [ "$tag" = "$VERSION" ]; then echo "Verified."; exit 0; fi
+            # The channel must point at this version, unless a newer release already moved it on (then leave it there).
+            if [ "$MOVED_ON" = yes ] && [ -n "$tag" ] && [ "$tag" != "$VERSION" ]; then chan=ok; elif [ "$tag" = "$VERSION" ]; then chan=ok; else chan=no; fi
+            if [ "$onnpm" = "$INTEGRITY" ] && [ "$prov" = "https://slsa.dev/provenance/v1" ] && [ "$chan" = ok ]; then echo "Verified."; exit 0; fi
             sleep 10
           done
           echo "::error::registry check failed: integrity '$onnpm', provenance '$prov', $CHANNEL -> '$tag'"; exit 1
