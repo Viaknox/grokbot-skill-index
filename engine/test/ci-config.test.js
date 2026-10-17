@@ -29,3 +29,10 @@ test('PR #32 review: the mutation check runs the unmutated baseline first and fa
   assert.doesNotMatch(src, /node_modules\|scripts\|/, 'scripts/ must be copied into the mutation copy');
   assert.match(src, /cpSync\(gh, join\(dir, '\.github'\)/, 'the copy keeps .github next to engine/ so workflow tests run');
 });
+
+test('PR #32 review: test.yml is read-only and pins every action to a full commit SHA', () => {
+  const yml = readFileSync(fileURLToPath(new URL('../../.github/workflows/test.yml', import.meta.url)), 'utf8');
+  assert.match(yml, /\npermissions:\n  contents: read\n/);
+  const uses = [...yml.matchAll(/uses: (\S+)/g)].map(m => m[1]);
+  assert.ok(uses.length >= 4); for (const u of uses) assert.match(u, /@[0-9a-f]{40}$/, u);
+});
