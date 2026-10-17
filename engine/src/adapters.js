@@ -32,6 +32,9 @@ export function httpAdapter(cfg, { fetchImpl = fetch, privateTerms = [] } = {}) 
     : v;
   const pick = (obj, path) => path.split('.').reduce((o, k) => (o == null ? o : o[/^\d+$/.test(k) ? Number(k) : k]), obj);
   const headers = Object.fromEntries(Object.entries(cfg.headers || {}).map(([k, v]) => [k, String(v).replace(/\$\{(\w+)\}/g, (_, n) => process.env[n] || '')]));
+  // A value that is not one line after expansion (a pasted multi-line token) is refused here, naming only the header:
+  // fetch would reject it later with the value itself in the error (PR #32 review).
+  for (const [k, v] of Object.entries(headers)) if (/[\r\n\0]/.test(v)) throw new Error(`agent_config.headers.${k} is not a single line after filling in its \${TUNEUP_AGENT_*} variables; check that variable`);
   // mentionsTerm also catches a term inside a value another rule replaced first (employee@acme.example), PR #16 review.
   const hasPrivate = (text) => { const s = scrubber({ terms: privateTerms }); s.scrub(text); return (s.counts().PRIVATE || 0) > 0 || s.mentionsTerm(text); };
   return {

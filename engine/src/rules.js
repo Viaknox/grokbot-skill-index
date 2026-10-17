@@ -29,6 +29,8 @@ export function validateSuite(suite) {
   if (!Array.isArray(suite.cases) || !suite.cases.length) return ['The suite has no test cases. Add at least one case to "cases".'];
   const seen = new Set();
   suite.cases.forEach((c, i) => {
+    // A case that is not an object cannot be checked further (`in` would throw on a string): report it and move on.
+    if (!c || typeof c !== 'object' || Array.isArray(c)) { errs.push(`case ${i + 1}: must be an object with "id" and "turns"`); return; }
     const at = `case ${i + 1}${c && c.id ? ` (${c.id})` : ''}`;
     if (!c || typeof c.id !== 'string' || !c.id) errs.push(`${at}: needs an "id"`);
     // Case ids name the runs in the report and the gate; two cases with one id would merge into one (PR #32 review).
