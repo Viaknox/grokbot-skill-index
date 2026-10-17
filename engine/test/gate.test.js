@@ -671,3 +671,28 @@ test('PR #32 review: an --out folder that cannot take files is exit 2 before any
   const w = cli(['check', chat, '--gate', '--out', o]);
   assert.equal(w.status, EXIT.USAGE, w.stderr); assert.match(w.stderr, /Cannot write .*report\.json/); assert.doesNotMatch(w.stderr, /crashed/);
 });
+
+test('PR #32 review: every documented suite field is shape-checked before anything is sent', async () => {
+  const { validateSuite } = await import('../src/rules.js');
+  const bad = [{ must_say_any: 1 }, { must_say_any: {} }, { must_say_any: 'done' }, { must_say_any: [] }, { must_say_any: [3] }, { must_not_say: 'Bluebird' }, { must_not_say: [''] }, { refuse: 'yes' }, { ask_clarify: 1 }];
+  for (const expect of bad) assert.ok(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect }] }).length, JSON.stringify(expect));
+  assert.ok(validateSuite({ cases: [{ id: 'a', intent: 7, turns: ['x'] }] }).length, 'intent must be text');
+  assert.deepEqual(validateSuite({ cases: [{ id: 'a', intent: 'x', turns: ['x'], expect: { must_say_any: ['booked'], must_not_say: ['Bluebird'], refuse: false, ask_clarify: true } }] }), []);
+  const d = tmp(), suite = join(d, 'suite.json');
+  const http = { type: 'http', url: 'http://127.0.0.1:9/' }, model = { type: 'model', model: 'm' };
+  const cases = [{ id: 'c1', intent: 'x', turns: ['hi'] }];
+  const shapes = [
+    [{ agent_config: http, cases }, /"instructions"/], [{ instructions: 5, agent_config: http, cases }, /"instructions"/],
+    [{ instructions: 'x', sacred: 'keep this', agent_config: http, cases }, /"sacred"/],
+    ...['1000', -1, 0, 4294967296, 1.5].map(t => [{ instructions: 'x', agent_config: { ...http, timeout_ms: t }, cases }, /timeout_ms/]),
+    [{ instructions: 'x', agent_config: { ...http, headers: { a: 1 } }, cases }, /headers/],
+    [{ instructions: 'x', agent_config: { ...model, max_tokens: '100' }, cases }, /max_tokens/], [{ instructions: 'x', agent_config: { ...model, temperature: 5 }, cases }, /temperature/],
+    [{ instructions: 'x', agent_config: { ...model, tools: [] }, cases }, /tools/],
+    [{ instructions: 'x', agent_config: http, cases: [{ id: 'c1', turns: ['hi'], expect: { must_say_any: 'done' } }] }, /must_say_any/],
+  ];
+  for (const [body, why] of shapes) {
+    writeFileSync(suite, JSON.stringify({ agent: 'A', ...body }));
+    const r = cli(['run', suite, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' });
+    assert.equal(r.status, EXIT.USAGE, JSON.stringify(body) + r.stderr); assert.match(r.stderr, why); assert.doesNotMatch(r.stderr, /crashed|Evaluating/);
+  }
+});
