@@ -1,0 +1,5623 @@
+#!/usr/bin/env python3
+"""story-gate — per-story quality gate for AI coding sessions. Stdlib only, any OS, any AI client.
+
+Two moments per story:
+  READY  (before code): story complete?  drift vs PRD/TRD?  ACs + positive/negative/edge/regression tests planned?
+                        upstream handoffs in place?  prior learnings read?
+  DONE   (after code):  code matches story/TRD?  planned tests written and passing?  handoff written for
+                        downstream work?  errors/learnings recorded?
+
+LLM agents gather evidence into .story-gate/stories/<ID>/ ; THIS SCRIPT computes the verdict.
+Semantic checks are scored by TypeSafe Jev (OpenRouter /api/alpha/decisions) when a key is available;
+otherwise agent self-scores are used but can never reach PASS (allow_self_judge_pass=false).
+
+Commands (run from the repo root):
+  install [--ci copy|reusable [--ref SHA]]   set up this repository: config, instructions, skills, CI workflows (commit the result).
+                                     --ci reusable writes three short workflows that call story-gate's own, pinned to a release commit
+  install --user [--clients claude,codex,cursor,gemini,windsurf] [--dry-run] [--unsigned]
+                                     once per computer, as the human: install the trusted runtime + user-level hooks, enroll this repo
+  uninstall --user [--dry-run]       remove the user-level hooks and the runtime
+  enroll [--policy-ref REMOTE/BRANCH] [--allow-local-policy] | unenroll   turn checking (and the checkout filter for AI-tool hook files) on/off for this repository
+  filter on|off|status               this repository only: the checkout filter that keeps a branch's hook changes off disk (off is logged)
+  lockdown [--on [--keep-project-hook CMD] | --off | --bundle DIR]   optional, OFF by default: Claude Code's hard switch for
+                                     repository hooks. Explains first; --on needs your explicit YES; --bundle writes files for IT
+  upgrade [--ref REF | --from DIR | --url https://...] | rollback   (run with the installed runtime) verified upgrade / go back
+  release-sign --key KEY             maintainers: sign the files in .story-gate as a release
+  try [--no-browser]                 see story-gate catch a bug in two minutes: a throwaway example, no setup, no network
+  init [--test-command CMD] [--junit-path FILE]  guided setup in your browser: sign in, the AI's own login, judge key, one pull request.
+                                     CMD runs the project's tests on a clean Linux machine (CI); with it, a red check blocks merges
+  hook-selftest                      run each installed user-level hook the way the AI tool would, and time it
+  feature <F> --title T [--description D]   register a feature (stories point to it with `feature:` in story.md)
+  plan <ID> --title T [--feature F]  add a story to the backlog (not started; queued once READY passes)
+  start <ID> [--model M] [--client C]   claim the story: make folder + skeletons, set active story, record who codes
+  dashboard [--open] [--out DIR] [--offline]   build the progress dashboard from every branch (HTML + summary)
+  dashboard --serve [--every MIN] [--idle MIN] [--no-browser]   a live page on this computer only, rebuilt every few minutes
+  source <ID>                        run 'command' sources from config, print their output
+  record-tests <ID> -- <cmd...>      run the test command, store exit code + output tail (evidence)
+  scenario <ID> --name N --ac AC-1[,AC-2] --expect REGEX [--exit N] [--timeout S] [--local-only REASON] -- <cmd...>
+                                     run the feature end to end and record it as proof for those ACs (CI runs it again)
+  scenario <ID> --name N --remove    delete a recorded scenario;  scenarios <ID>: run every recorded scenario again
+  spec-pull <ID> <issue|ticket> [--from-file F] [--tracker linear|jira]   copy a GitHub issue (#42 or its URL), or a
+                                      Linear or Jira ticket (ENG-12 or its link), into the story's folder
+                                      as a checked snapshot and link it in story.md (the gate never reads the live issue)
+  settings [KEY] | settings set KEY VALUE [--pr] | settings unset KEY [--pr]
+                                      see every setting in plain English, or change one without editing config.json;
+                                      --pr opens the change as its own pull request for a code owner to approve
+  tracker-setup                      you, not your AI: connect Linear or Jira Cloud in your browser. Signs
+                                      in with a code on github.com, tests a read-only key on one ticket, saves it as
+                                      GitHub secrets (never in the repository) and opens the settings pull request
+  jira-setup <site> ["field name"]   print the trackers.jira settings: the site's cloud id, and the id of the
+                                      acceptance-criteria field found by its name (with your read-only Jira token)
+  spec-scenarios <spec>[#US1]        list the requirements in a linked spec or ticket (Spec Kit, OpenSpec, Matt Pocock's
+                                      checkboxes and user stories), as names for an AC's `covers` in tests.json
+  evidence <ID> <image> --scenario N [--caption T]   add a screenshot (PNG/JPEG, 300 KB max) to the validation page
+  report <ID> [--out FILE] [--open]  build the validation page (one HTML file) for the owner
+  score <ID> ready|done [--base REF] compute checks + verdict -> stories/<ID>/<phase>.json
+  decide <ID> --drift story|spec|none --by WHO --note TEXT [--phase ready|build|done]  record the drift decision
+  waive <ID> <check> --by WHO --reason TEXT                     record a waiver
+  learn <ID> --type error|learning|pattern|none --summary .. [--root-cause ..] [--rule ..] [--tags a,b]
+  checkpoint <ID>                    mid-story Jev check: % complete (estimate), on course?, drift, TODOs, tests keeping pace
+  learnings [words...]               search past learnings (read these before planning)
+  pitfalls <ID> [--scan] [--base REF]   known pitfalls (if turned on) that match the story's stack and domain; --scan
+                                     runs sast-check's rules for them on the change and adds the result to handoff.md
+  deps <ID>                          what the story depends on, what depends on it, open blockers and risks (docs/dependencies.md)
+  status [<ID>]                      one plain-English line
+  next [<ID>]                        what's done and the single next step for the story (no judge call, no cost)
+  hook --client C --event pre|post|stop|session   called by AI-client hooks (reads JSON on stdin)
+  ci [--tests DIR] | ci-tests DIR | audit       called by the CI workflows (see .github/workflows/story-gate*.yml)
+  label <ID> ready|done correct|wrong [--note ..]  tell story-gate whether a verdict was right (tunes thresholds)
+  judge-calibrate                    test a non-Jev judge on known cases before it may PASS anything
+  setup-repo [--owners a,b]          one time, as YOU: CODEOWNERS + branch rules + Actions cannot approve PRs
+  setup-agent [--org ORG]            one time: create your private "story-gate agent" GitHub App (AI identity)
+  agent-env --repo owner/name        print env + git identity so AI tools act as the agent App, not as you
+  agent-token --repo owner/name [--git-credential]   1-hour token for the agent App
+  publish                            send outbox events to configured sinks
+  hook-trust "<hook command>" [--revoke]   human only: let YOUR edited copy of a pinned hook's files run (exactly this content)
+  doctor [--repo owner/name] [--strict] [--prove]   plain-English health check; --prove plants a canary hook on a throwaway
+                                     commit and shows it never reaches disk
+"""
+import os, sys
+
+
+def _nothing_to_gate():
+    """Cheap check (no subprocess, no heavy imports): True outside git repositories, and in repositories that neither
+    contain .story-gate nor are enrolled on this computer. Hooks fire everywhere, so this keeps them fast."""
+    d = os.getcwd()
+    while not os.path.exists(os.path.join(d, ".git")):
+        up = os.path.dirname(d)
+        if up == d:
+            return True
+        d = up
+    if os.path.isdir(os.path.join(d, ".story-gate")):
+        return False
+    g = os.path.join(d, ".git")
+    if os.path.isfile(g):  # worktree or submodule: "gitdir: <common>/worktrees/<name>"
+        try:
+            ptr = open(g, encoding="utf-8").read().split("gitdir:", 1)[1].strip()
+            g = os.path.join(d, ptr) if not os.path.isabs(ptr) else ptr
+            g = os.path.dirname(os.path.dirname(g)) if os.path.basename(os.path.dirname(g)) == "worktrees" else g
+        except Exception:
+            return False
+    home = os.environ.get("STORY_GATE_HOME") or os.path.join(
+        (os.environ.get("APPDATA") or os.path.expanduser("~")) if os.name == "nt" else (os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")),
+        "story-gate")  # same place as sg_github.config_dir()
+    try:
+        enrolled_keys = open(os.path.join(home, "enrolled.json"), encoding="utf-8").read()
+    except OSError:
+        return True
+    key = os.path.normcase(os.path.realpath(g))
+    return json_escape(key) not in enrolled_keys
+
+
+def json_escape(s):
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _in_git(d):
+    while not os.path.exists(os.path.join(d, ".git")):
+        if os.path.dirname(d) == d:
+            return False
+        d = os.path.dirname(d)
+    return True
+
+
+def _follow_edit(raw):
+    """A hook can fire from a folder outside any repository (a workspace holding several). Then gate the repository that
+    holds the file being edited. Inside a repository nothing changes: that repository is gated, as before."""
+    import json as _j
+    try:
+        p = _j.loads(raw) if raw.strip() else {}
+        base = p.get("cwd") if isinstance(p.get("cwd"), str) and os.path.isdir(p["cwd"]) else os.getcwd()
+        if _in_git(os.path.abspath(base)):
+            os.chdir(base)
+            return
+        ti = p.get("tool_input") or p.get("toolInput") or p.get("tool_info") or {}
+        for k in ("file_path", "path", "filePath", "target_file", "notebook_path"):
+            if isinstance(ti, dict) and isinstance(ti.get(k), str) and ti[k].strip():
+                d = os.path.abspath(os.path.join(base, ti[k]))
+                while not os.path.isdir(d) and os.path.dirname(d) != d:
+                    d = os.path.dirname(d)  # a new file: start from the nearest folder that exists
+                if _in_git(d):
+                    os.chdir(d)
+                return
+    except Exception:
+        pass  # unreadable payload: stay where the client started us
+
+
+HOOK_STDIN = None
+if sys.argv[1:2] == ["hook"]:
+    HOOK_STDIN = sys.stdin.read() if not sys.stdin.isatty() else ""
+    if not os.environ.get("STORY_GATE_ROOT"):
+        _follow_edit(HOOK_STDIN)
+if sys.argv[1:2] == ["hook"] and not os.environ.get("STORY_GATE_ROOT") and _nothing_to_gate():
+    print("{}")  # fast path: hooks fire in every folder, but outside a git repository there is nothing to gate
+    sys.exit(0)
+
+import fnmatch, hashlib, json, re, shlex, subprocess, time, urllib.request, urllib.error  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+sys.dont_write_bytecode = True  # never leave __pycache__ inside the repo
+HERE = Path(__file__).resolve().parent
+sys.path[:] = [str(HERE)] + [p for p in sys.path if p not in ("", ".", str(HERE))]  # never import modules from the working tree
+import sg_judges as J  # noqa: E402
+import sg_trust as T  # noqa: E402
+import sg_stories as SS  # noqa: E402
+
+VERSION = "0.10.0"
+RUNTIME = T.is_runtime(HERE)  # True when running the trusted copy installed with `gate.py install --user`
+
+
+def _root():
+    if os.environ.get("STORY_GATE_ROOT"):
+        return Path(os.environ["STORY_GATE_ROOT"])
+    if RUNTIME or HERE.name == "_payload":  # the runtime, or the installed package: work on the repository we're in
+        top, _ = T.repo_identity(os.getcwd())
+        return Path(top) if top else Path.cwd()
+    return HERE.parent
+
+
+ROOT = _root()
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+GATE = ROOT / ".story-gate"
+STORIES = GATE / "stories"
+LEARNINGS = GATE / "learnings.jsonl"
+OUTBOX = GATE / "outbox.jsonl"
+ACTIVE = GATE / ".active"
+CALIB = GATE / "calibration.jsonl"
+RECORD_PATHS = (".story-gate/stories", ".story-gate/features.json", ".story-gate/learnings.jsonl", ".story-gate/calibration.jsonl", ".story-gate/outbox.jsonl",
+                ".story-gate/.outbox.sent", ".story-gate/.edits", ".story-gate/.stops", ".story-gate/.active", ".story-gate/__pycache__")  # records, not code
+
+
+class ConfigError(Exception):
+    pass
+
+DEFAULT_CONFIG = {
+    "version": 1,
+    "mode": "warn",
+    "enforce_points": [],
+    "accept_concerns": False,
+    "story_id_pattern": "[A-Z][A-Z0-9]+-[0-9]+",
+    "base_branch": "main",
+    "exempt_globs": [".story-gate/stories/*/*.md", ".story-gate/stories/*/tests.json", "docs/**/*.md", "*.md"],
+    "test_command": "",
+    "junit_path": "",
+    "test_globs": ["**/test_*.py", "**/*_test.py", "**/tests/**", "**/test/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/*Test.java", "**/*_test.go"],
+    "spec_files": [],
+    # true: every story must link the spec it builds (`spec:` in story.md) and cover each of its scenarios with an AC
+    "require_spec_link": False,
+    # issues copied in with `spec-pull`: CI compares each copy with the live issue. "warn": a change, or a check it couldn't
+    # run, is a warning on the pull request. "block": either one fails the check until the copy is pulled again.
+    "spec_source_check": "warn",
+    # other repositories (owner/repo) whose issues spec-pull may copy in, e.g. a central specs repository. CI reads them
+    # with the STORY_GATE_SPECS_TOKEN secret; without it they show as "not checked". Adding one is a weaker rule.
+    "spec_repos": [],
+    # trackers whose tickets spec-pull may copy in, e.g. {"linear": {"workspace": "acme"}}. CI reads them with a read-only
+    # key secret (STORY_GATE_LINEAR_KEY); without it they show as "not checked". "allow_in_public_repo": true lets ticket
+    # text be copied into a public repository. Adding a tracker, or allowing that, is a weaker rule.
+    "trackers": {},
+    "thresholds": {"pass": 0.7, "concerns": 0.4},
+    # "full": an independent AI judge scores the semantic checks (needs a key). "objective": the owner chose to run without
+    # one: only the checks story-gate can verify itself (structure, CI's own test and scenario runs, traceability) decide.
+    "judge_mode": "full",
+    "judge": {"provider": "openrouter", "emulated_allow_pass": False,
+              "allow_self_judge_pass": False, "max_chars": 90000},
+    "approvers": [],
+    "reviewers": [],  # empty until the owner names review bots or people; a code owner's approval always counts
+    "require_independent_review": True,
+    "sources": [],
+    "sinks": [{"type": "repo"}],
+    "models": {"intake": "small", "context": "medium", "tests": "medium", "handoff": "medium", "learnings": "small"},
+    "model_tiers": {"small": "cheapest fast model your client offers", "medium": "mid-tier coding model (never frontier)"},
+    "checkpoint": {"every_edits": 10},
+    "project_hooks_allowed": [],
+    "dashboard_issue": None,
+    # Plain writing (PROTOCOL.md > Writing): an STE-style proxy score, not ASD-STE100 compliance. Advisory unless enforce.
+    "writing": {"standard": "ste-style", "target": 0.8, "enforce": False, "diagram_min_files": 5},
+    # DONE needs validation.md (the owner's summary) and, for every acceptance criterion, a scenario run that passed
+    # on the current code; in CI, CI's own run of it (sg_validation.py).
+    "validation": {"required": True},
+    # CI runs the pull request's code (tests, scenarios, budgets) as a separate throwaway account, so that code can't
+    # change story-gate's results (sg_isolate.py). "strict": where that can't be set up, CI runs nothing and says so.
+    # "relaxed": it runs as before, and those results count as reported, not checked. Choosing relaxed is a weaker rule.
+    "ci_isolation": "strict",
+    # Guardrail areas (sg_areas.py, docs/guardrails.md): {"areas": {"security": {"mode": "warn", "paths": [...],
+    # "content": [...], "checks": [...]}}}. Each area is off, warn (shown, never blocks) or enforce. Lowering an area,
+    # narrowing its triggers or loosening a check is a weaker rule.
+    "guardrails": {},
+    # Known pitfalls (sg_pitfalls.py, docs/pitfalls.md): a learner's feed of mistakes other projects kept making, shown at
+    # READY when a story's stack and domain match. "off" (default), "warn" (shown, never blocks) or "enforce" (READY fails
+    # until each critical one shown is acknowledged). "source": a file path or an https:// URL of patterns-public.json.
+    "pitfalls": {"mode": "off", "source": ""},
+}
+
+# ------------------------------------------------------------------ checks
+# Each semantic check is one Jev question. "ok_high": True means a high probability is good.
+READY_Q = {
+    "dor_value": "The story states who benefits and why (user or business value).",
+    "dor_scope": "Scope is specific: a developer knows exactly what to build, and what is out of scope is stated.",
+    "dor_interfaces": "Inputs, outputs, data, APIs, UI or files the work touches are named concretely.",
+    "dor_dependencies": "Upstream and downstream dependencies are listed, or explicitly stated as none.",
+    "dor_nfr": "Relevant non-functional needs (security, privacy, performance, error handling, logging) are stated or explicitly not applicable.",
+    "dor_small": "The story is small enough to build and verify in one focused pull request; it is not an epic.",
+    "dor_no_blockers": "There are no unresolved open questions that would force the developer to guess.",
+    "ac_testable": "Every acceptance criterion is binary and verifiable (clearly pass or fail), not vague.",
+    "ac_covers_scope": "The acceptance criteria together cover the whole stated scope.",
+    "tests_plan_adequate": "The test plan has meaningful positive, negative, edge and regression cases for every acceptance criterion, or a valid reason a category does not apply.",
+    "drift_prd": "The story is consistent with the PRD excerpts: no contradiction and no scope the PRD does not support.",
+    "drift_trd": "The story is consistent with the TRD / architecture excerpts.",
+    "handoff_in": "Every upstream dependency has a handoff that gives this story what it needs (contracts, versions, how to use), or there are no upstream dependencies.",
+    "learnings_applied": "Relevant prior learnings were considered and the story or test plan reflects them, or none were relevant.",
+}
+DONE_Q = {
+    "impl_matches_acs": "The code diff implements every acceptance criterion of the story.",
+    "impl_no_unplanned_scope": "The code diff does not add behaviour beyond the story's scope.",
+    "drift_trd_after": "The implementation follows the TRD / architecture with no unrecorded deviation.",
+    "tests_implemented": "The diff adds or updates automated tests covering the planned positive, negative and edge cases, plus regression cases where the plan lists them (a category the plan marks not applicable, with a reason, needs no test).",
+    "no_deferrals": "The diff contains no TODO/FIXME/'temporary'/'later' markers or stubs that defer required work.",
+    "handoff_out": "handoff.md lets the next story or agent use this work without asking: what changed, contracts/interfaces, how to verify, known limits, who consumes it.",
+    "learnings_specific": "The recorded learnings for this story are specific and reusable (what happened, root cause, prevention rule); or 'no new learnings' is credible because nothing in the story, diff or test results went wrong or was surprising.",
+}
+DRIFT_CHOICE = {
+    "none": "No drift: the story/work and the PRD/TRD agree.",
+    "story_should_change": "The PRD/TRD is right; the story or the work should change to match it.",
+    "spec_should_change": "The story/work reflects a deliberate, better decision; the PRD/TRD should be updated.",
+    "architect_must_decide": "They disagree and it is not clear which is right; the architect/orchestrator must decide.",
+}
+DRIFT_CHOICE_DONE = {
+    "none": "No drift: the code, the story and the PRD/TRD agree.",
+    "work_should_change": "The story and PRD/TRD agree; the code deviates and should be fixed to match them.",
+    "spec_should_change": "The code reflects a deliberate, better decision than the story/PRD/TRD; the documents should be updated.",
+    "architect_must_decide": "The story and PRD/TRD conflict with each other or it is unclear which is right; the architect/orchestrator must decide.",
+}
+CHECK_GROUP = {  # how checks roll up for humans
+    "dor_value": "1-ready", "dor_scope": "1-ready", "dor_interfaces": "1-ready", "dor_dependencies": "1-ready",
+    "dor_nfr": "1-ready", "dor_small": "1-ready", "dor_no_blockers": "1-ready",
+    "drift_prd": "2-drift", "drift_trd": "2-drift", "drift_trd_after": "2-drift", "impl_no_unplanned_scope": "2-drift",
+    "ac_testable": "3-tests", "ac_covers_scope": "3-tests", "tests_plan_adequate": "3-tests",
+    "impl_matches_acs": "3-tests", "tests_implemented": "3-tests", "no_deferrals": "3-tests",
+    "handoff_in": "4-handoff", "handoff_out": "4-handoff",
+    "learnings_applied": "5-learnings", "learnings_specific": "5-learnings",
+}
+TEST_CATS = ("positive", "negative", "edge", "regression")
+CONTEXT_SECTIONS = ("## PRD", "## TRD", "## Upstream handoffs", "## Prior learnings")
+HANDOFF_SECTIONS = ("## What changed", "## Interfaces and contracts", "## How to verify", "## Known limits", "## Downstream consumers",
+                    "## Release and rollback", "## Drift decisions")
+
+
+# ------------------------------------------------------------------ small helpers
+def trusted(name):
+    """Settings files. In CI they come from STORY_GATE_TRUSTED_DIR (the base branch's copies), never from the PR."""
+    t = os.environ.get("STORY_GATE_TRUSTED_DIR")
+    return Path(t) / name if t else GATE / name
+
+
+def enrolled():
+    """The trusted runtime's enrollment record for this repository (None outside the runtime or when not enrolled)."""
+    if not RUNTIME or os.environ.get("STORY_GATE_TRUSTED_DIR"):
+        return None
+    e = T.enrollment(ROOT)
+    return e if e and e.get("enrolled") else None
+
+
+def policy_json(name):
+    """Return settings file text from CI's trusted copy, the enrolled policy ref, or the working tree.
+
+    Decode UTF-8 with an optional BOM; do not parse JSON. Return None for a missing
+    file or an unsuccessful or timed-out Git read. Raise ConfigError for an
+    untrusted enrollment policy source. OSError and local UnicodeDecodeError
+    propagate; Git reads replace invalid UTF-8 bytes.
+    """
+    e = enrolled()
+    if e:
+        bad = T.policy_source_problem(e)
+        if bad:
+            raise ConfigError("this repository is enrolled but its %s - the gate fails closed" % bad)
+        return T.policy_text(e["toplevel"], e["policy_ref"], name)
+    p = trusted(name)
+    return p.read_text(encoding="utf-8-sig") if p.is_file() else None  # -sig: Windows editors often add a BOM
+
+
+def cfg():
+    """Load and validate configuration, allowing enrolled local settings only to tighten policy.
+
+    Return settings merged over defaults, accepting an optional UTF-8 BOM.
+    Outside CI, a missing unenrolled local config uses defaults. Unreadable or
+    invalid JSON in an enrolled working-tree config is ignored.
+    Raise ConfigError for missing or untrusted required policy, invalid policy
+    JSON or a non-object value, an invalid mode, or unknown enforcement points.
+    Policy read errors propagate, as do errors from malformed setting shapes.
+    """
+    p = trusted("config.json")
+    c = json.loads(json.dumps(DEFAULT_CONFIG))
+    if os.environ.get("STORY_GATE_TRUSTED_DIR") and not p.is_file():
+        raise ConfigError("the base branch's .story-gate/config.json is missing, so CI can't know the policy - the gate fails closed")
+    e = enrolled()
+    text = policy_json("config.json")
+    if e and text is None:
+        raise ConfigError("this repository is enrolled but %s has no .story-gate/config.json - the gate fails closed" % e["policy_ref"])
+    if text is not None:
+        try:
+            user = json.loads(text)
+            if not isinstance(user, dict):  # not assert: python -O would skip it
+                raise TypeError("not a JSON object")
+        except Exception as ex:
+            raise ConfigError(".story-gate/config.json is unreadable (%s) - fix it; the gate fails closed until then" % ex.__class__.__name__)
+        if e:  # the working tree may only tighten the default branch's policy
+            try:
+                local = json.loads((GATE / "config.json").read_text(encoding="utf-8-sig")) if (GATE / "config.json").is_file() else {}
+            except Exception:
+                local = {}
+            base = json.loads(json.dumps(DEFAULT_CONFIG))
+            for k, v in user.items():
+                if isinstance(v, dict) and isinstance(base.get(k), dict):
+                    base[k].update(v)
+                else:
+                    base[k] = v
+            user = T.tighten(base, local)
+        for k, v in user.items():
+            if isinstance(v, dict) and isinstance(c.get(k), dict):
+                c[k].update(v)
+            else:
+                c[k] = v
+    return check_config(c)
+
+
+def check_config(c):
+    """Raise ConfigError for a merged config with an invalid value (the rules cfg() applies); return it unchanged."""
+    if c.get("mode") not in ("warn", "enforce"):
+        raise ConfigError('.story-gate/config.json: "mode" must be "warn" or "enforce" (got %r) - the gate fails closed until fixed' % c.get("mode"))
+    if not isinstance(c.get("require_spec_link"), bool):
+        raise ConfigError('.story-gate/config.json: "require_spec_link" must be true or false - the gate fails closed until fixed')
+    if not isinstance(c.get("spec_repos"), list) or not all(isinstance(r, str) and REPO_NAME.fullmatch(r) for r in c["spec_repos"]):
+        raise ConfigError('.story-gate/config.json: "spec_repos" must be a list of "owner/repo" names - the gate fails closed until fixed')
+    tr = c.get("trackers")
+    if not isinstance(tr, dict):
+        raise ConfigError('.story-gate/config.json: "trackers" must look like {"linear": {"workspace": "your-workspace"}} '
+                          '- the gate fails closed until fixed')
+    if tr:
+        import sg_trackers as TR
+        for k, v in tr.items():
+            why = TR.settings_problem(k, v)
+            if why:
+                raise ConfigError('.story-gate/config.json: "trackers" > "%s" %s - the gate fails closed until fixed' % (str(k)[:20], why))
+    if c.get("spec_source_check") not in ("warn", "block"):
+        raise ConfigError('.story-gate/config.json: "spec_source_check" must be "warn" or "block" (got %r) - the gate fails closed until fixed' % c.get("spec_source_check"))
+    if c.get("ci_isolation") not in ("strict", "relaxed"):
+        raise ConfigError('.story-gate/config.json: "ci_isolation" must be "strict" or "relaxed" (got %r) - the gate fails closed until fixed' % c.get("ci_isolation"))
+    if c.get("judge_mode") not in ("full", "objective"):
+        raise ConfigError('.story-gate/config.json: "judge_mode" must be "full" or "objective" (got %r) - the gate fails closed until fixed' % c.get("judge_mode"))
+    try:
+        import sg_areas as A
+        A.load(c.get("guardrails"))
+    except ValueError as e:
+        raise ConfigError('.story-gate/config.json: "guardrails" %s - the gate fails closed until fixed' % e)
+    import sg_pitfalls as PF
+    why = PF.settings_problem(c.get("pitfalls"))
+    if why:
+        raise ConfigError('.story-gate/config.json: "pitfalls" %s - the gate fails closed until fixed' % why)
+    bad = [x for x in c.get("enforce_points") or [] if x not in ("ci", "pre_edit", "checkpoint", "stop")]
+    if bad:
+        raise ConfigError('.story-gate/config.json: unknown enforce_points %s (use ci, pre_edit, checkpoint, stop)' % bad)
+    return c
+
+
+def rd(p, default=""):
+    """Read a text file. Inside the repository, symlinks and paths that resolve outside it are never followed,
+    so committed evidence can't point at /proc/self/environ or other secrets on a CI runner."""
+    p = Path(p)
+    try:
+        inside = os.path.abspath(p).startswith(os.path.abspath(ROOT) + os.sep)
+        if inside and (p.is_symlink() or not os.path.realpath(p).startswith(os.path.realpath(ROOT) + os.sep)):
+            return default
+        return p.read_text(encoding="utf-8", errors="ignore") if p.is_file() else default
+    except OSError:
+        return default
+
+
+def wj(p, obj):
+    Path(p).parent.mkdir(parents=True, exist_ok=True)
+    Path(p).write_text(json.dumps(obj, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def sdir(sid):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}", sid or ""):
+        sys.exit("bad story id: %r" % sid)
+    return STORIES / sid
+
+
+# Once pull request code has run as the throwaway account (CI), the checkout holds files that code wrote. story-gate's
+# own git commands then read no global or system configuration, never run hooks, fsmonitor, external diffs or
+# submodule commands, and so never run anything that code chose (as story-gate's own account).
+GIT_LOCKED = False
+GIT_LOCK_ARGS = ("-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.devnull, "-c", "diff.external=", "-c",
+                 "submodule.recurse=false", "-c", "diff.ignoreSubmodules=all", "-c", "status.submoduleSummary=false", "-c",
+                 "core.untrackedCache=false", "-c", "protocol.allow=never")
+
+
+def git_env():
+    """The environment for story-gate's own git commands (locked down once pull request code ran; see GIT_LOCKED)."""
+    if not GIT_LOCKED:
+        return None
+    # No inherited GIT_* variable either: GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE or GIT_CONFIG_* would point git at
+    # another repository or add configuration. Locked git only reads this checkout (protocol.allow=never).
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    return dict(env, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+
+
+def git(*args):
+    try:
+        args = (GIT_LOCK_ARGS + args) if GIT_LOCKED else args
+        r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                           env=git_env())
+        return r.stdout if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def must(*args):
+    """git(), but a failure or a time-out raises RuntimeError instead of looking like empty output. Only for commands
+    whose non-zero exit means failure (not `git diff --quiet` or `--exit-code`)."""
+    try:
+        args = (GIT_LOCK_ARGS + args) if GIT_LOCKED else args
+        env = dict(git_env() or os.environ, LC_ALL="C", LANGUAGE="C")  # git's messages in English, whatever the runner's locale
+        r = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                           env=env)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RuntimeError("git %s failed: %s" % (args[0] if args else "", e.__class__.__name__))
+    if r.returncode != 0:
+        raise RuntimeError("git %s failed (exit %d)" % (args[0] if args else "", r.returncode))
+    return r.stdout
+
+
+UNREAD = "story-gate couldn't read which files the change touches, so it can't tell whether pinned files changed"
+
+
+def front_matter(text):
+    """Tiny 'key: value' / 'key: [a, b]' front matter reader between --- lines (see sg_stories)."""
+    return SS.front_matter(text)
+
+
+def sections(text):
+    """{'## Heading': body} for a markdown file (see sg_stories)."""
+    return SS.sections(text)
+
+
+def junit_file(c):
+    """The JUnit report to read, or None: only a file whose real path is inside the repository (no symlink out)."""
+    rel = repo_rel(c["junit_path"]) if c.get("junit_path") else None
+    return ROOT / rel if rel else None  # the resolved path, so reports\junit.xml is reports/junit.xml everywhere
+
+
+def repo_rel(path):
+    """Resolve a path the way the filesystem will (symlinks, '..', case on Windows/macOS) -> repo-relative posix or None."""
+    p = str(path).replace("\\", "/")
+    full = Path(p) if (os.path.isabs(p) or re.match(r"^[A-Za-z]:/", p)) else ROOT / p
+    try:
+        rel = Path(os.path.realpath(full)).relative_to(Path(os.path.realpath(ROOT)))
+    except ValueError:
+        try:  # case-insensitive filesystems: compare case-folded
+            a, b = os.path.realpath(full), os.path.realpath(ROOT)
+            if os.path.normcase(a).startswith(os.path.normcase(b) + os.sep):
+                return a[len(b) + 1:].replace("\\", "/")
+        except Exception:
+            pass
+        return None
+    return rel.as_posix()
+
+
+def exempt(path, c):
+    p = repo_rel(path)
+    if p is None or p.startswith(".."):
+        return False  # outside the repo: not ours to exempt
+    return any(fnmatch.fnmatch(p, g) for g in c["exempt_globs"])
+
+
+HOOK_FILES = (".claude/settings.json", ".claude/settings.local.json", ".codex/hooks.json", ".codex/config.toml", ".cursor/hooks.json", ".gemini/settings.json",
+              ".devin/hooks.json", ".windsurf/hooks.json", ".grok/hooks/story-gate.json", ".github/hooks/story-gate.json", ".agents/hooks.json")
+
+
+STORY_DOCS = (".story-gate/stories/*/*.md", ".story-gate/stories/*/tests.json")
+
+
+def user_protected(path):
+    """The trusted runtime, enrollment, agent key and user-level hook files: never writable by an agent."""
+    try:
+        rp = os.path.normcase(os.path.realpath(os.path.expanduser(str(path))))
+        for b in T.user_protected_paths():
+            b = os.path.normcase(os.path.realpath(str(b)))
+            if rp == b or rp.startswith(b.rstrip(os.sep) + os.sep):
+                return True
+    except Exception:
+        return True  # can't tell: treat as protected
+    return False
+
+
+def protected(path, c):
+    """Gate implementation, config and verdict/record files: never editable by an agent's edit tools."""
+    if user_protected(path):
+        return True
+    p = repo_rel(path)
+    if p is None:
+        return False
+    low = p.lower()
+    if not (low.startswith(".story-gate/") or low.startswith(".git/") or low in HOOK_FILES or low in (".github/codeowners", "codeowners", "docs/codeowners")
+            or low.startswith(".github/workflows/story-gate") or low.startswith(".agents/skills/story-gate/")
+            or low.startswith(".claude/skills/story-gate/")):
+        return False
+    # Only the story documents agents must write stay editable; user exempt_globs (e.g. "*.md") never unprotect gate files.
+    return not any(fnmatch.fnmatch(p, g) for g in STORY_DOCS)
+
+
+def jsonl(p):
+    out = []
+    for line in rd(p).splitlines():
+        try:
+            r = json.loads(line) if line.strip() else None
+            if isinstance(r, dict):
+                out.append(r)
+        except ValueError:
+            pass
+    return out
+
+
+def load_json(p):
+    try:
+        r = json.loads(rd(p) or "{}")
+        return r if isinstance(r, dict) else {}
+    except ValueError:
+        return {}
+
+
+def spec_files(c):
+    files = list(c.get("spec_files") or [])
+    for s in c.get("sources") or []:
+        if s.get("type") == "repo":
+            files += [s[k] for k in ("prd", "trd") if s.get(k)]
+    inside = lambda f: (isinstance(f, str) and not os.path.isabs(f) and not re.match(r"^[A-Za-z]:", f)
+                        and ".." not in f.replace("\\", "/").split("/"))  # never read files outside the repository
+    return sorted(set(f for f in files if f and inside(f) and (ROOT / f).is_file()))
+
+
+def policy_fingerprint(c):
+    """Hash of the policy settings that affect scoring, so a stricter config re-scores stored verdicts."""
+    j = c.get("judge") or {}
+    import sg_pitfalls as PF
+    pf = {"pf": [PF.mode(c), c["pitfalls"].get("source")]} if PF.mode(c) != "off" else {}  # off: every stored verdict keeps its hash
+    return json.dumps({**pf, "v": VERSION, "th": c.get("thresholds"), "ac": c.get("accept_concerns"),  # policy: stricter rules re-score
+                       "j": [J.identity(c), j.get("emulated_allow_pass"), j.get("allow_self_judge_pass"), j.get("max_chars")],
+                       "jm": c.get("judge_mode", "full"), "rsl": c.get("require_spec_link", False),  # switching mode re-scores: an objective verdict never counts in full mode
+                       "w": c.get("writing"), "val": c.get("validation")}, sort_keys=True)  # turning on the writing check re-scores stored verdicts
+
+
+def ready_hash_from(story, context, tests, spec_pairs, c):
+    """READY evidence hash from texts (used by `score` and by the dashboard, which reads them as git blobs)."""
+    nl = lambda t: t.replace("\r\n", "\n")  # line endings aren't content: git blobs may keep CRLF that rd() reads as LF
+    blob = nl(story) + nl(context) + nl(tests) + "".join(f + nl(t) for f, t in spec_pairs) + policy_fingerprint(c)
+    return hashlib.sha256(blob.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def inputs_hash(sd, phase, c=None):
+    """Hash of the evidence a phase's verdict rests on, so it is re-scored when any of that evidence changes."""
+    if phase == "ready":
+        try:
+            c = c or cfg()
+            return ready_hash_from(rd(sd / "story.md"), rd(sd / "context.md"), rd(sd / "tests.json"),
+                                   [(f, rd(ROOT / f)) for f in spec_files(c)] + linked_spec_pairs(sd), c)
+        except ConfigError:
+            return hashlib.sha256((rd(sd / "story.md") + rd(sd / "context.md") + rd(sd / "tests.json") + "<config unreadable>")
+                                  .encode("utf-8", "ignore")).hexdigest()[:16]
+    names = ["story.md", "context.md", "tests.json"] + (["handoff.md"] if phase == "done" else [])
+    blob = "".join(rd(sd / n) for n in names)
+    if phase == "done":  # only the facts of the test run, so CI's own run of the same code yields the same evidence
+        tr = load_json(sd / "test_results.json")
+        blob += json.dumps({k: tr.get(k) for k in ("command", "exit_code", "fingerprint")}, sort_keys=True)
+        blob += rd(sd / "validation.md") + rd(sd / "scenarios.json")
+        import sg_validation as V
+        sr = V.results_of(load_json(sd / "scenario_results.json"))
+        blob += json.dumps({n: [r.get(k) for k in ("spec", "passed", "fingerprint")] for n, r in sr.items()
+                            if isinstance(r, dict)}, sort_keys=True)  # not who ran it: CI's run of the same code is the same evidence
+        try:  # budgets: the policy, the story's proposals and each measured value (not who measured it, as above)
+            import sg_measure as M
+            br = load_json(sd / "budget_results.json").get("results")
+            blob += M.policy_hash(budgets_policy()) + rd(sd / "budgets.json") + json.dumps(
+                {n: [r.get(k) for k in ("spec", "value", "fingerprint")] for n, r in (br if isinstance(br, dict) else {}).items()
+                 if isinstance(r, dict)}, sort_keys=True)
+        except ConfigError:
+            blob += "<budgets unreadable>"
+        gr = load_json(sd / "guardrail_results.json").get("results")  # the policy itself is added below
+        if isinstance(gr, dict) and gr:  # only when there are guardrail results: other repositories keep their hashes
+            blob += json.dumps({n: [r.get(k) for k in ("spec", "value", "as_of", "fingerprint")] for n, r in gr.items()
+                                if isinstance(r, dict)}, sort_keys=True)
+    try:
+        c = c or cfg()
+        blob += "".join(f + rd(ROOT / f) for f in spec_files(c))  # PRD/TRD pinned: a spec change makes READY out of date
+        blob += policy_fingerprint(c)
+        if phase == "done" and c.get("guardrails"):  # a guardrail policy change makes DONE out of date (only DONE reads it)
+            blob += json.dumps(c["guardrails"], sort_keys=True)
+    except ConfigError:
+        blob += "<config unreadable>"
+    if phase == "done":
+        blob += "".join(json.dumps(r) for r in jsonl(LEARNINGS) if r.get("story") == sd.name) + work_fingerprint()
+        blob += "".join(k + v for k, v in linked_spec_pairs(sd))  # the linked spec changed: DONE is out of date
+    return hashlib.sha256(blob.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def emit(event_type, sid, payload):
+    OUTBOX.parent.mkdir(parents=True, exist_ok=True)
+    with OUTBOX.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": now(), "event_type": "story_gate." + event_type, "story": sid,
+                            "repo": ROOT.name, "payload": payload}, ensure_ascii=False) + "\n")
+
+
+# ------------------------------------------------------------------ judge (pluggable, see sg_judges.py)
+def num(x):
+    try:
+        return float(x)
+    except Exception:
+        return 0.0
+
+
+def jev(state, questions, c=None):
+    """Back-compat wrapper used by checkpoints/doctor: {'answers', 'tier', ...} or {'error'}."""
+    r = J.ask(c or cfg(), state, questions)
+    return r if r.get("tier") != "none" else {"error": r.get("error")}
+
+
+def calibrated(c):
+    """An emulated judge may PASS only if the user opted in and its calibration run (same provider+model) passed."""
+    if not (c.get("judge") or {}).get("emulated_allow_pass"):
+        return False
+    try:
+        rec = json.loads(policy_json("judge-calibration.json") or "{}")
+    except ValueError:
+        rec = {}
+    return rec.get("ok") is True and rec.get("identity") == J.identity(c)
+
+
+def judge(phase, state, c, sd, skip=()):
+    """Score semantic checks with the configured judge; else agent self-scores from <phase>.self.json.
+    In objective mode no judge is asked and self-scores are ignored: the semantic checks are reported NOT JUDGED."""
+    qs_text = {k: v for k, v in (READY_Q if phase == "ready" else DONE_Q).items() if k not in skip}
+    if objective(c):
+        return {"judge": "objective", "not_judged": sorted(qs_text), "drift": "none", "provider": None, "model": None,
+                "judge_note": "objective mode: no AI judge (the owner chose this). Not checked: " + "; ".join(OBJECTIVE_LIMITS)}
+    questions = {k: {"type": "noul", "instructions": v} for k, v in qs_text.items()}
+    choices = DRIFT_CHOICE if phase == "ready" else DRIFT_CHOICE_DONE
+    questions["drift_direction"] = {"type": "choice", "instructions": "Which way does any drift between the story/work and the PRD/TRD point?",
+                                    "criteria": choices}
+    r = J.ask(c, state, questions)
+    if r.get("tier") in ("jev", "emulated"):
+        a = r["answers"]
+        tier, note = r["tier"], None
+        if tier == "emulated":  # a general model must never grade work written by its own model family
+            coder = load_json(sd / "coder.json").get("model") or ""
+            if not coder:
+                note = "coder model not recorded (run: start <ID> --model <coding model>), so this judge can't be shown to be independent"
+            elif J.family(coder) == J.family(r.get("model") or ""):
+                tier, note = "self", "judge %s is the same model family as the coder %s, so it counts as self-review" % (r.get("model"), coder)
+            elif calibrated(c):
+                tier = "emulated-calibrated"
+        return {"judge": tier, "judge_note": note, "provider": r.get("provider"), "model": r.get("model"),
+                "scores": {k: a[k]["noul"] for k in qs_text}, "drift": a["drift_direction"]["choice"],
+                "drift_conf": a["drift_direction"]["confidence"], "cost": r.get("cost")}
+    jerr = r.get("error")
+    selfp = sd / ("%s.self.json" % phase)
+    if selfp.exists():
+        s = load_json(selfp)
+        sc = s.get("scores") if isinstance(s.get("scores"), dict) else {}
+        def f(x):
+            try:
+                return min(1.0, max(0.0, float(x)))
+            except Exception:
+                return 0.0
+        d = s.get("drift") if s.get("drift") in choices else "architect_must_decide"
+        return {"judge": "self", "scores": {k: f(sc.get(k, 0)) for k in qs_text}, "drift": d, "drift_conf": 0.0, "jev_error": jerr}
+    return {"judge": "none", "scores": {}, "drift": "architect_must_decide", "drift_conf": 0.0, "jev_error": jerr}
+
+
+OBJECTIVE_LIMITS = ("whether the code really does what the story asks", "whether the tests really cover the planned cases",
+                    "unplanned extra scope", "drift from the PRD or TRD", "work left for later")
+
+
+def objective(c):
+    return c.get("judge_mode") == "objective"
+
+
+def can_pass(judge_name, c):
+    if judge_name in ("jev", "emulated-calibrated"):
+        return True
+    if judge_name == "objective":
+        return objective(c)  # chosen by the owner in config; a missing key in full mode never lands here
+    return judge_name == "self" and bool((c.get("judge") or {}).get("allow_self_judge_pass"))  # never widens emulated
+
+
+def acs(sd):
+    """[(id, text, test_refs)] from tests.json; text falls back to the AC line in story.md."""
+    t = load_json(sd / "tests.json")
+    story = rd(sd / "story.md")
+    out = []
+    for i, a in enumerate(t.get("acceptance_criteria") or []):
+        if not isinstance(a, dict):
+            continue
+        aid = str(a.get("id") or "AC-%d" % (i + 1))
+        text = a.get("text") or ""
+        if not text or text == "TODO":
+            m = re.search(r"^\W*" + re.escape(aid) + r"\W+(.+)$", story, re.M)
+            text = m.group(1).strip() if m else aid
+        refs = a.get("test_refs") if isinstance(a.get("test_refs"), list) else []
+        out.append((aid, text, [str(r) for r in refs if str(r).strip()]))
+    return out
+
+
+# ------------------------------------------------------------------ structural checks (deterministic)
+def struct_ready(sd):
+    out = {}
+    story = rd(sd / "story.md")
+    fm = front_matter(story)
+    out["story_present"] = (len(story.strip()) > 200 and "TODO: paste" not in story, "story.md missing, still a skeleton, or too thin")
+    src = str(fm.get("source", "")).strip()
+    out["story_source"] = (bool(src) and not src.upper().startswith("TODO"),
+                           "story.md front matter 'source' must say where the story came from (linear:ID, repo:path, ...)")
+    ctx = rd(sd / "context.md")
+    secs = sections(ctx)
+    missing = [s for s in CONTEXT_SECTIONS if not secs.get(s, "").strip() or "TODO" in secs.get(s, "")]
+    pl = secs.get("## Prior learnings", "").strip().lower()
+    if pl.startswith("none") and "searched" not in pl:
+        missing.append("## Prior learnings (say 'None — searched: <keywords>')")
+    out["context_present"] = (not missing, "context.md sections empty/TODO: " + ", ".join(missing))
+    try:
+        t = json.loads(rd(sd / "tests.json", "{}"))
+        acs = t.get("acceptance_criteria", [])
+        bad = [a.get("id", "?") for a in acs
+               if any(not a.get(cat) and not (a.get("not_applicable") or {}).get(cat) for cat in TEST_CATS)]
+        ok = bool(acs) and not bad
+        out["test_matrix"] = (ok, "no acceptance criteria" if not acs else "ACs missing a positive/negative/edge/regression case (or N/A reason): " + ", ".join(bad))
+    except Exception as e:
+        out["test_matrix"] = (False, "tests.json invalid: %s" % e)
+    deps = SS.depends_on_ids(fm)
+    up = secs.get("## Upstream handoffs", "")
+    pat = re.compile(r"(?:%s)" % cfg()["story_id_pattern"])
+    bad_ids = [d for d in deps if not (isinstance(d, str) and pat.fullmatch(d))]  # story ids only: no paths, no traversal
+    nohand = bad_ids + [d for d in deps if d not in bad_ids and not (STORIES / d / "handoff.md").exists()
+                        and not re.search(r"^###\s+" + re.escape(d) + r"\b(?!-)", up, re.M)]
+    out["upstream_handoffs"] = (not nohand, "no handoff found for upstream: " + ", ".join(nohand))
+    cov = spec_coverage(sd, fm, cfg())
+    if cov is not None:
+        out["spec_covered"] = cov
+    out.update(story_link_checks(sd, fm, story))
+    return out, fm
+
+
+# ------------------------------------------------------------------ story dependencies, risks, blockers (docs/dependencies.md)
+STORY_FILE = ".story-gate/stories/%s/%s"
+DEP_BASE = {}  # {"commit": sha} once a check looked at the default branch: cmd_score stores it in the verdict
+
+
+class DepWorld:
+    """Where other stories live: this branch, the default branch's tip, other remote branches. Built only for a story that
+    has dependencies (a repository with none never touches git here). 'Done' is read from the TIP of the default branch,
+    not the merge-base, so a story finished after this branch was cut still counts."""
+
+    def __init__(self, c):
+        want = os.environ.get("SG_BASE_REF") or os.environ.get("GITHUB_BASE_REF") or c["base_branch"]  # as cmd_ci finds it
+        self.name = re.sub(r"^origin/", "", want)
+        self.pat = re.compile(r"(?:%s)" % c["story_id_pattern"])
+        self.sha = self.ref = None
+        for r in ("origin/" + self.name, self.name):
+            self.sha = git("rev-parse", "--verify", "--quiet", r + "^{commit}").strip()
+            if self.sha:
+                self.ref = r
+                break
+        if self.sha:
+            DEP_BASE["commit"] = self.sha
+        self.err = "" if self.sha else "can't find the default branch '%s' to check dependencies; run `git fetch origin`" % self.name
+        self._remote, self._seen = None, {}
+
+    def tree(self, sid):
+        return rd(STORIES / sid / "story.md")
+
+    def base(self, sid, name="story.md"):
+        return git("show", "%s:%s" % (self.sha, STORY_FILE % (sid, name))) if self.sha else ""
+
+    def remote_branches(self):
+        if self._remote is None:
+            skip = {"refs/remotes/origin/HEAD", "refs/remotes/origin/" + self.name}
+            self._remote = sorted(r[len("refs/remotes/"):] for r in git("for-each-ref", "--format=%(refname)", "refs/remotes/origin").split()
+                                  if r not in skip)
+        return self._remote
+
+    def state(self, sid):
+        """{found, where, unverified, done, waived, note, text} for a story ID that already matches story_id_pattern."""
+        if sid in self._seen:
+            return self._seen[sid]
+        tree, base = self.tree(sid), self.base(sid)
+        st = {"found": bool(tree or base), "where": "this branch" if tree else self.ref, "unverified": False, "done": False,
+              "waived": False, "note": "", "text": tree or base}
+        if not st["found"]:
+            for r in self.remote_branches():
+                text = git("show", "%s:%s" % (r, STORY_FILE % (sid, "story.md")))
+                if text:
+                    st.update(found=True, where=r, unverified=True, text=text)
+                    break
+        try:
+            d = json.loads(self.base(sid, "done.json") or "{}")
+        except ValueError:
+            d = {}
+        overall = d.get("overall") if isinstance(d, dict) else None
+        if overall in ("PASS", "WAIVED"):
+            if tree and self.changed_here(sid, tree, base):
+                st["note"] = "this branch changes %s, so its finished verdict on %s is for the old version" % (sid, self.ref)
+            elif not tree and (gone := self.deleted_here(sid)) is not False:  # None (can't tell) fails closed, like changed_here
+                st["note"] = ("this branch deletes %s, so its finished verdict on %s won't survive the merge" % (sid, self.ref)
+                              if gone else "can't find where this branch was cut from %s, so story-gate can't tell "
+                              "whether it deletes %s; fetch more history (git fetch --unshallow origin)" % (self.ref, sid))
+            else:
+                st.update(done=True, waived=overall == "WAIVED", where=self.ref)
+        self._seen[sid] = st
+        return st
+
+    def changed_here(self, sid, tree, base):
+        """True when THIS branch edited the story: its copy differs from both the default branch's tip and the commit the
+        branch was cut from. A branch that is merely behind the default branch has not changed it."""
+        n = lambda s: s.replace("\r\n", "\n")
+        if n(tree) == n(base):
+            return False
+        mb = git("merge-base", "HEAD", self.sha).strip()
+        return not mb or n(tree) != n(git("show", "%s:%s" % (mb, STORY_FILE % (sid, "story.md"))))
+
+    def deleted_here(self, sid):
+        """True when THIS branch removed the story (it existed where the branch was cut and is gone from this checkout),
+        False when it didn't, None when that can't be told (no common commit with the default branch, e.g. a shallow clone)."""
+        mb = git("merge-base", "HEAD", self.sha).strip()
+        if not mb:
+            return None
+        return bool(git("show", "%s:%s" % (mb, STORY_FILE % (sid, "story.md"))))
+
+    def stories(self):
+        """{id: story.md text} for every story on this branch and on the default branch's tip (this branch wins)."""
+        ids = {p.name for p in (STORIES.iterdir() if STORIES.is_dir() else []) if p.is_dir()}
+        if self.sha:
+            ids |= {ln.rsplit("/", 1)[-1] for ln in git("ls-tree", "--name-only", self.sha, ".story-gate/stories/").splitlines()}
+        texts = {i: self.tree(i) or self.base(i) for i in sorted(ids) if self.pat.fullmatch(i)}
+        return {i: t for i, t in texts.items() if t}
+
+    def edges_from(self, sid, own_text):
+        """{id: set of ids it waits on} for a story and everything below it, read from wherever each story was found
+        (this branch, the default branch, or another remote branch), so a loop through an unmerged story is still caught."""
+        edges, todo = {}, [(sid, own_text)]
+        while todo:
+            x, text = todo.pop()
+            if x not in edges:
+                edges[x] = {d for d in SS.depends_on_ids(SS.front_matter(text)) if self.pat.fullmatch(d) and d != x}
+                todo += [(d, self.state(d)["text"]) for d in edges[x] if d not in edges]
+        return edges
+
+
+def where_text(st):
+    """'origin/feature/x, unverified' / 'this branch' for a message."""
+    return st["where"] + (", unverified" if st["unverified"] else "")
+
+
+def dependency_check(sid, fm, story, c):
+    """The READY `dependencies` check (status, why), or None when the story has no dependencies and no section."""
+    pat = re.compile(r"(?:%s)" % c["story_id_pattern"])
+    ids = SS.depends_on_ids(fm)
+    recs, errs, d1 = SS.parse_dependencies(story, c["story_id_pattern"])
+    if not ids and not d1:
+        return None
+    fail, warn = [], []
+    bad = [d for d in ids if not pat.fullmatch(d)]
+    fail += ["depends_on has '%s', which is not a story ID (like SAT-9)" % d[:40] for d in bad]
+    if sid in ids:
+        fail.append("%s depends on itself: remove it from depends_on" % sid)
+    good = sorted({d for d in ids if d not in bad and d != sid}, key=SS.natural_key)
+    fail += errs
+    if d1 and not errs:
+        fail += ["%s is in depends_on but has no '### %s' block in ## Dependencies (add when: and why:)" % (d, d) for d in good if d not in recs]
+        fail += ["'### %s' is in ## Dependencies but not in depends_on" % d for d in sorted(recs, key=SS.natural_key) if d not in ids]
+    if good and not d1:
+        warn.append("add a ## Dependencies section with when/why for: %s (until then each counts as before-start)" % ", ".join(good))
+    if good and not errs:
+        w = DepWorld(c)
+        if w.err:
+            fail.append(w.err)
+        else:
+            for d in good:
+                st, when = w.state(d), (recs.get(d) or {}).get("when", "before-start")
+                if not st["found"]:
+                    fail.append("%s isn't on this branch, on %s, or on any other branch: check the ID or create the story first" % (d, w.name))
+                elif st["done"]:
+                    if st["waived"]:
+                        warn.append("%s is done (waived)" % d)
+                elif when == "before-start":
+                    fail.append("%s must be finished and merged first (when: before-start)%s. If the work can run in parallel, change it to "
+                                "before-merge and agree the contract in context.md" % (d, " - " + st["note"] if st["note"] else ""))
+                else:
+                    warn.append("%s isn't finished yet (found on %s)%s. This story can't merge until it is" % (
+                        d, where_text(st), " - " + st["note"] if st["note"] else ""))
+            for cy in SS.graph_cycles(w.edges_from(sid, story), through=sid):
+                fail.append("circular dependency: " + " -> ".join(cy + [cy[0]]))
+    return (False, "; ".join(fail + warn)) if fail else ("WARN", "; ".join(warn)) if warn else (True, "")
+
+
+def story_link_checks(sd, fm, story):
+    """READY checks about links between stories: dependencies, blockers_resolved, risks_handled, consumers_match."""
+    c, sid, out = cfg(), sd.name, {}
+    dep = dependency_check(sid, fm, story, c)
+    if dep:
+        out["dependencies"] = dep
+    if SS.has_section(story, "Blockers"):
+        bl, errs = SS.parse_blockers(story)
+        bad = errs + ["%s '%s' is still open (owner: %s). Resolve it, or if work can safely start, move it to ## Risks with a mitigation"
+                      % (b["id"], b["title"][:60], b["owner"] or "nobody") for b in bl if b["status"] == "open"]
+        out["blockers_resolved"] = (False, "; ".join(bad)) if bad else (True, "")
+    if SS.has_section(story, "Risks"):
+        rk, errs = SS.parse_risks(story)
+        weak = ["%s '%s' has high impact and no mitigation: add 'mitigation:'" % (r["id"], r["title"][:60]) for r in rk if r["impact"] == "high" and not r["mitigation"]]
+        out["risks_handled"] = (False, "; ".join(errs)) if errs else ("CONCERNS", "; ".join(weak)) if weak else (True, "")
+    declared = set(SS.depends_on_ids({"depends_on": fm.get("consumers")}))
+    if declared and load_json(sd / "done.json").get("overall") not in ("PASS", "WAIVED"):
+        w = DepWorld(c)
+        if not w.err:
+            texts = w.stories()
+            texts[sid] = story
+            derived = set(SS.blocks_of({i: set(SS.depends_on_ids(SS.front_matter(t))) for i, t in texts.items()}, sid))
+            gone, new = sorted(declared - derived, key=SS.natural_key), sorted(derived - declared, key=SS.natural_key)
+            if gone or new:
+                out["consumers_match"] = ("WARN", "consumers is legacy; story-gate now works this out from depends_on.%s%s" % (
+                    " Declared but nothing depends on this story: " + ", ".join(gone) + "." if gone else "",
+                    " Depends on this story but not declared: " + ", ".join(new) + "." if new else ""))
+            else:
+                out["consumers_match"] = (True, "")
+    return out
+
+
+def dependencies_done(sd, sid, c):
+    """The DONE `dependencies_done` check (status, why), or None when there is nothing to check: every dependency (before-start
+    and before-merge) is finished on the default branch's tip, and no blocker is open. This is what keeps a before-merge
+    dependency from merging first (CI scores DONE against the default branch)."""
+    story, fail = rd(sd / "story.md"), []
+    pat = re.compile(r"(?:%s)" % c["story_id_pattern"])
+    ids = SS.depends_on_ids(SS.front_matter(story))
+    bl, errs = SS.parse_blockers(story)
+    fail += ["depends_on has '%s', which is not a story ID" % d[:40] for d in ids if not pat.fullmatch(d)] + errs
+    fail += ["%s '%s' is still open (owner: %s)" % (b["id"], b["title"][:60], b["owner"] or "nobody") for b in bl if b["status"] == "open"]
+    good = sorted({d for d in ids if pat.fullmatch(d) and d != sid}, key=SS.natural_key)
+    if good:
+        w = DepWorld(c)
+        if w.err:
+            fail.append(w.err)
+        for d in good if not w.err else []:
+            st = w.state(d)
+            if not st["found"]:
+                fail.append("%s isn't on this branch, on %s, or on any other branch" % (d, w.name))
+            elif not st["done"]:
+                fail.append("%s isn't finished on %s yet (found on %s)%s" % (d, w.name, where_text(st), " - " + st["note"] if st["note"] else ""))
+    return (False, "; ".join(fail)) if fail else (True, "") if good or bl else None
+
+
+SPECKIT_STORY = re.compile(r"^ {0,3}#{2,4}[ \t]+User Story[ \t]+(\d+)\b", re.I)
+OPENSPEC_SCENARIO = re.compile(r"^####[ \t]+Scenario:[ \t]*(\S.*?)[ \t]*$")
+# lines that look like a scenario: if the parser didn't read one, the check fails rather than skip it
+SCENARIO_LIKE = re.compile(r"^\s*(?:\d+[.)]|[-*+])\s+(?:\*\*)?Given\b|^\s*\*\*Given\*\*|^\s*\*\*Scenario\b", re.I)
+SCENARIO_HEADING_LIKE = re.compile(r"^ {0,3}#{1,6}[ \t]*\**[ \t]*Scenario\b", re.I)
+SPEC_PLACEHOLDERS = ("[initial state]", "[action]", "[expected outcome]", "<actor>", "<feature>", "<benefit>")
+# Matt Pocock's skills: checkboxes in a ticket file or under 'Acceptance criteria'; 'As a ..., I want ...' under 'User Stories'
+LIST_ITEM = re.compile(r"^(?:[-*+]|\d{1,9}[.)])[ \t]+(\S.*)$")
+CHECKBOX = re.compile(r"^[-*+][ \t]+\[[ xX]\][ \t]+(\S.*)$")
+LIST_MARKS = r"(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*"  # '- ', '1. ', '- 1. ' ... each mark eats its own space: no backtracking
+CHECKBOX_LIKE = re.compile(r"^[ \t]*" + LIST_MARKS + r"(?:[-*+]|\d{1,9}[.)])?[ \t]*\[[^\]]?\]")  # what a reader takes for a box
+USER_STORY = re.compile(r"^(\d{1,9})[.)][ \t]+(As an?\b.*)$", re.I)
+STORY_LIKE = re.compile(r"^" + LIST_MARKS + r"\**[ \t]*As an?\b", re.I)
+I_WANT = re.compile(r"\bI[ \t]+want\b", re.I)
+WHAT_TO_BUILD = re.compile(r"^[ \t]*\*\*What to build\b", re.I | re.M)
+TICKET_TITLE = re.compile(r"^ {0,3}#[ \t]+\d{1,4}[ \t]*[:.)\-–—]")
+SETEXT = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+BOLD_LABEL = re.compile(r"^ {0,3}\*\*([^*\n]+?)\*\*[ \t]*:?[ \t]*$")
+CRITERION_PLACEHOLDER = re.compile(r"^(?:acceptance\s+)?criterion\s+\d+$", re.I)
+
+
+def _req_id(prefix, n, text):
+    """A stable name for a checkbox or user story: its position plus a hash of its words, so a reworded, added or reordered
+    requirement gets a new name and can't silently keep an old `covers` entry."""
+    norm = re.sub(r"\s+", " ", re.sub(r"[*`]", "", text)).strip()
+    return "%s%d-%s" % (prefix, n, hashlib.sha256(norm.encode("utf-8", "surrogatepass")).hexdigest()[:10])
+
+
+def _visible(lines):
+    """The lines GitHub shows as text: fenced code and <!-- comment --> blocks become None (one pass, no backtracking).
+    A fence inside a list item ends where the item ends; a '<!--' inside a `code span`, or a comment that never closes,
+    stays visible. This is simpler than GitHub's renderer, so spec_scenarios also blocks on anything requirement-like in
+    a hidden line: a mistake here can only make the check stricter, never hide a requirement."""
+    closers = [i for i, ln in enumerate(lines) if "-->" in ln]
+    out, fence, find, cmt, ci, span = [], None, 0, False, 0, False
+    for i, line in enumerate(lines):
+        if cmt:
+            out.append(None)
+            cmt = "-->" not in line
+            continue
+        exp = line.expandtabs(4)
+        ind, st = len(exp) - len(exp.lstrip()), line.strip()
+        if fence is not None:
+            if st and ind < find:
+                fence = None  # the list item holding the fence ended
+            else:
+                if st[:len(fence)] == fence and not st.strip(fence[0]):
+                    fence = None
+                out.append(None)
+                continue
+        f = re.match(r"(`{3,}|~{3,})(.*)$", st)
+        if f and not (f.group(1)[0] == "`" and "`" in f.group(2)) and not LIST_ITEM.match(st):
+            fence, find = f.group(1), ind
+            out.append(None)
+            continue
+        # a comment block (CommonMark HTML block type 2): '<!--' at the start of a line indented 0-3 spaces, not inside a
+        # `code span` left open on the line above; it ends on the first line with '-->' ('<!-->' ends on its own line)
+        if st.startswith("<!--") and ind <= 3 and not span and "-->" not in st[2:]:
+            while ci < len(closers) and closers[ci] <= i:
+                ci += 1
+            if ci < len(closers):  # a comment block that closes later: hidden until then
+                cmt = True
+                out.append(None)
+                continue
+        span = (span + line.count("`")) % 2 == 1 if st else False  # a `code span` still open at the end of this line
+        if "<!--" in line:  # comments within one line; one inside a `code span` is text
+            parts, pos, ticks, k = [], 0, 0, -1
+            while True:
+                j = line.find("<!--", pos)
+                if k < j + 2:
+                    k = line.find("-->", j + 2) if j >= 0 else -1  # '<!-->' is a whole comment
+                if j < 0 or k < 0:
+                    break
+                ticks += line.count("`", pos, j)
+                if ticks % 2:
+                    parts.append(line[pos:j + 4]); pos = j + 4
+                    continue
+                parts.append(line[pos:j]); pos = k + 3; k = -1
+            parts.append(line[pos:])
+            line = "".join(parts)
+        out.append(line)
+    return out
+
+
+def _atx(line):
+    """(level, text) for a '## Heading ##' line as GitHub shows it, else None. Plain string work: no backtracking."""
+    ind = len(line) - len(line.lstrip(" "))
+    s = line[ind:]
+    n = len(s) - len(s.lstrip("#"))
+    if ind > 3 or not 1 <= n <= 6 or (len(s) > n and s[n] not in " \t"):
+        return None
+    body = s[n:].strip(" \t")
+    bare = body.rstrip("#")
+    if bare != body and (not bare or bare[-1] in " \t"):
+        body = bare.rstrip(" \t")
+    return n, body
+
+
+def _section(text):
+    k = re.sub(r"\s+", " ", re.sub(r"[*_`:.]", " ", text)).strip().lower()
+    return "ac" if k == "acceptance criteria" else ("story" if k == "user stories" else None)
+
+
+def _gwt(s):
+    """'Given ... When ... Then', in that order (searched one after the other: no backtracking)."""
+    g = re.search(r"\bGiven\b", s, re.I)
+    w = g and re.compile(r"\bWhen\b", re.I).search(s, g.end())
+    return bool(w and re.compile(r"\bThen\b", re.I).search(s, w.end()))
+
+
+def _req_like(s, broad=True):
+    """Does this line look like a requirement a reader would expect the gate to check? `broad` (hidden lines, ticket
+    files) also counts any list line with Given, or with When and Then; otherwise a list line needs Given, When, Then
+    in order, so a functional requirement that merely says 'given' isn't mistaken for a scenario."""
+    r = re.sub(r"^(?:>[ \t]?)+", "", s.replace("<!--", " ").replace("-->", " ").strip()).strip()
+    if not r:
+        return False
+    a, li = _atx(r), LIST_ITEM.match(r)
+    gwt = (re.search(r"\bGiven\b", r, re.I) or re.search(r"\bWhen\b", r, re.I) and re.search(r"\bThen\b", r, re.I)) if broad else _gwt(r)
+    return bool(CHECKBOX_LIKE.match(r) or STORY_LIKE.match(r) and (li or I_WANT.search(r)) or li and gwt
+                or SCENARIO_LIKE.search(r) or a and (_section(a[1]) or SPECKIT_STORY.match(r) or SCENARIO_HEADING_LIKE.match(r)))
+
+
+def spec_scenarios(text, unread=None):
+    """[(local id, text)] of the requirements in one spec or ticket file.
+    - Spec Kit: one-line 'Given ... When ... Then' list items under a 'User Story N' heading -> US<N>-<k>.
+    - OpenSpec: '#### Scenario: <name>' -> <name>.
+    - Matt Pocock's skills: '- [ ]' checkboxes in a ticket file ('# 03: Title' or '**What to build:**') or under an
+      'Acceptance criteria' heading -> ac<k>-<hash>; 'As a ..., I want ...' under 'User Stories' -> story<k>-<hash>.
+      A ticked box is still a requirement. Lines indented under one, or running on from it, belong to it.
+    Code blocks and <!-- comments --> are skipped (GitHub doesn't show them as text). Anything that looks like a
+    requirement but wasn't read goes into `unread`, so the check fails instead of skipping it. That includes every
+    checkbox or 'As a ...' line no section claimed (Spec Kit's spec template has none; its checklists are separate files)."""
+    raw = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = _visible(raw)
+    first = next((ln for ln in lines if ln and ln.strip()), "")
+    ticket = bool(TICKET_TITLE.match(first) or any(ln and WHAT_TO_BUILD.match(ln) for ln in lines))
+    out, story, n, in_os = [], None, 0, False
+    sect, lvl, explicit, item, count, prev_blank = ("ac" if ticket else None), 0, False, None, {"ac": 0, "story": 0}, True
+
+    def bad(line):
+        if unread is not None:
+            unread.append(line.strip()[:200])
+
+    def close():
+        nonlocal item
+        if item is not None:
+            out[item][0] = _req_id(out[item][0], out[item][1], "\n".join(out[item][2]))
+            item = None
+
+    for i, line in enumerate(lines):
+        if line is None:
+            if _req_like(raw[i]):
+                bad(raw[i] + "   (inside a code block or comment: delete it, or take it out of the block)")
+            continue
+        nxt = lines[i + 1] if i + 1 < len(lines) else None
+        h, atx = _atx(line), True
+        if h is None and line.strip() and not LIST_ITEM.match(line.strip()) and nxt is not None and SETEXT.match(nxt) \
+                and not (prev_blank is False and item is not None):
+            h, atx = (1 if "=" in nxt else 2, line.strip()), False  # 'Title' over '----'
+        if h is None:
+            bl = BOLD_LABEL.match(line)
+            if bl and _section(bl.group(1)):
+                h, atx = (7, bl.group(1)), False  # '**Acceptance criteria:**' on its own line
+        if h is not None:
+            prev_blank = True
+            name = _section(h[1])
+            if name:
+                close(); sect, lvl, explicit, in_os = name, h[0], True, False
+                continue
+            if sect and explicit and h[0] > lvl:  # a sub-heading inside the section: the section goes on
+                close()
+                if _req_like(line):
+                    bad(line)
+                continue
+            close()
+            sect, explicit = ("ac" if ticket else None), False
+            if ticket:
+                if _req_like(line):
+                    bad(line)  # a Spec Kit or OpenSpec heading in a ticket file: not read there, so it blocks
+                continue
+            m = OPENSPEC_SCENARIO.match(line)
+            if m:
+                out.append([m.group(1), 0, [line.strip()]])
+                in_os = True  # its GIVEN/WHEN/THEN bullets belong to this scenario
+                continue
+            in_os = False
+            m = SPECKIT_STORY.match(line)
+            if m:
+                story, n = m.group(1), 0
+                continue
+            if h[0] <= 3:
+                story = None
+            if atx and SCENARIO_HEADING_LIKE.match(line):
+                bad(line)  # '##### Scenario:', '#### **Scenario**'
+            continue
+        if not line.strip():
+            prev_blank = True
+            continue
+        if SETEXT.match(line) and i and lines[i - 1] is not None and lines[i - 1].strip() and _atx(lines[i - 1]) is None \
+                and not LIST_ITEM.match(lines[i - 1].strip()):
+            continue  # the underline of a setext heading
+        was_blank, prev_blank = prev_blank, False
+        if in_os:
+            out[-1][2].append(line.strip())  # the body counts too: placeholders, edits
+            continue
+        exp = line.expandtabs(4)
+        ind = len(exp) - len(exp.lstrip())
+        s = line.strip()
+        if sect:
+            if item is not None and (ind >= 2 or not was_blank and not LIST_ITEM.match(s) and not s.startswith((">", "<"))
+                                     and not re.match(r"^([-*_])(?:[ \t]*\1){2,}[ \t]*$", s)):
+                out[item][2].append(s)  # nested, or running on from the line above: part of that requirement
+                continue
+            if ind >= 2 or s.startswith(">"):
+                bad(line); continue
+            close()
+            m = CHECKBOX.match(s) if sect == "ac" else USER_STORY.match(s)
+            if m and (sect == "ac" or I_WANT.search(m.group(2))):
+                count[sect] += 1
+                out.append([sect, count[sect], [m.group(m.lastindex).strip()]])
+                item = len(out) - 1
+            elif explicit or _req_like(s):
+                bad(line)  # a line story-gate can't read as a requirement: block, don't drop it
+            continue
+        li = LIST_ITEM.match(s)
+        if story and li and _gwt(s):
+            n += 1
+            out.append(["US%s-%d" % (story, n), 0, [s]])
+        elif story and (li and (re.search(r"\bGiven\b", s, re.I) or re.search(r"\bWhen\b", s, re.I) and re.search(r"\bThen\b", s, re.I))
+                        or not li and (re.search(r"\bGiven\b", s, re.I) or re.match(r"^\W*(?:When|Then)\b", s, re.I))):
+            bad(line)  # part of a scenario it can't read: a split line, no list mark, or a table row
+        elif _req_like(s, broad=False):
+            bad(line)  # a checkbox, user story or scenario outside the sections story-gate reads
+    close()
+    return [(o[0], "\n".join(o[2])) for o in out]
+
+
+# issue-<N>.md: an issue of this repository. issue-<owner>--<repo>-<N>.md: an issue of another repository on the
+# spec_repos allowlist (GitHub owners can't contain '--'; the number is the last '-<digits>', so repo names with
+# hyphens or digits stay unambiguous).
+SNAPSHOT_NAME = re.compile(r"^\.story-gate/stories/([^/]+)/issue-(?:([A-Za-z0-9](?:-?[A-Za-z0-9]){0,38})--([A-Za-z0-9_.-]{1,100})-)?"
+                           r"([0-9]{1,9})\.md$")
+REPO_NAME = re.compile(r"[A-Za-z0-9](?:-?[A-Za-z0-9]){0,38}/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}")  # never '.' or '..' 
+
+
+def snapshot_name(rel):
+    """(story id, issue number, 'owner/repo' or None for this repository) for a spec-pull copy's path, else None."""
+    m = SNAPSHOT_NAME.fullmatch(rel or "")
+    if not m or (m.group(3) or "x") in (".", ".."):
+        return None
+    return m.group(1), int(m.group(4)), ("%s/%s" % (m.group(2), m.group(3)) if m.group(2) else None)
+SNAPSHOT_KEYS = ("source_kind", "source_url", "repo", "issue", "source_updated_at", "fetched_at", "fetched_by")
+SNAPSHOT_BY = ("github-api", "pasted")
+# a tracker ticket's copy: .story-gate/stories/<ID>/linear-<KEY>.md (the key in capitals, as the tracker shows it)
+TRACKER_NAME = re.compile(r"^\.story-gate/stories/([^/]+)/(linear|jira)-([A-Z][A-Z0-9]{0,9}-[0-9]{1,9})\.md$")
+TRACKER_KEYS = ("source_kind", "source_url", "site", "ticket", "ticket_id", "source_updated_at", "fetched_at", "fetched_by",
+                "format")
+SNAPSHOT_KINDS = {"github-issue": SNAPSHOT_KEYS, "linear-issue": TRACKER_KEYS, "jira-issue": TRACKER_KEYS}
+
+
+def tracker_name(rel):
+    """(story id, tracker, ticket key) for a tracker copy's path, else None."""
+    m = TRACKER_NAME.fullmatch(rel or "")
+    return (m.group(1), m.group(2), m.group(3)) if m else None
+
+
+def snapshot_hash(fields, content, keys=SNAPSHOT_KEYS):
+    """sha256 over the source fields (in a fixed order) and the text, so neither can change without the other."""
+    head = "\n".join("%s: %s" % (k, fields.get(k, "")) for k in keys)
+    return hashlib.sha256((head + "\n---\n" + content).encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def parse_snapshot(text):
+    """(fields, content) for a file `story-gate spec-pull` wrote: '---' on the very first line, the source fields, '---',
+    then the text. Raises ValueError (in plain words) for anything else. The one reader both spec-pull and the gate use."""
+    text = text.replace("\r\n", "\n")
+    m = re.match(r"---\n((?:[a-z_0-9]+: [^\n]*\n){1,20})---\n", text)
+    if not m:
+        raise ValueError("it doesn't start with the source block `story-gate spec-pull` writes")
+    fields = {}
+    for ln in m.group(1).splitlines():
+        k, v = ln.split(": ", 1)
+        if k in fields:
+            raise ValueError("its source block names '%s' twice" % k)
+        fields[k] = v
+    keys = SNAPSHOT_KINDS.get(fields.get("source_kind"))
+    if not keys or set(fields) != set(keys) | {"content_sha256"}:
+        raise ValueError("its source block isn't one `story-gate spec-pull` writes")
+    if keys is SNAPSHOT_KEYS:
+        if fields["fetched_by"] not in SNAPSHOT_BY:
+            raise ValueError("'fetched_by: %s' isn't one of %s" % (fields["fetched_by"][:40], ", ".join(SNAPSHOT_BY)))
+        if fields["source_url"] != "https://github.com/%s/issues/%s" % (fields["repo"], fields["issue"]):
+            raise ValueError("its source_url doesn't match its repo and issue")
+    else:
+        kind = fields["source_kind"][:-len("-issue")]
+        if fields["fetched_by"] not in (kind + "-api", "pasted"):
+            raise ValueError("'fetched_by: %s' isn't %s-api or pasted" % (fields["fetched_by"][:40], kind))
+        import sg_trackers as TR
+        if not re.fullmatch(r"[A-Z][A-Z0-9]{0,9}-[0-9]{1,9}", fields["ticket"]) or not TR.site_ok(kind, fields["site"]):
+            raise ValueError("its ticket or site isn't readable")
+        if fields["source_url"] != TR.url_of(kind, fields["site"], fields["ticket"]):
+            raise ValueError("its source_url doesn't match its site and ticket")
+        if (fields["ticket_id"] == "unknown") != (fields["fetched_by"] == "pasted"):
+            raise ValueError("its ticket_id doesn't fit how it was copied")
+    content = text[m.end():]
+    if snapshot_hash(fields, content, keys) != fields["content_sha256"]:
+        raise ValueError("it was changed after `story-gate spec-pull` copied it from %s. Pull it again rather than "
+                         "editing it" % fields["source_url"])
+    return fields, content
+
+
+def spec_snapshot(text, rel=""):
+    """(text to read, problem or None). A file named .story-gate/stories/<ID>/issue-<N>.md must be a valid spec-pull
+    copy of issue N; only the issue text is then read. Any file that claims to be one ('source_kind: github-issue') is
+    held to the same rules. Other files are read whole."""
+    tn, m = tracker_name(rel), snapshot_name(rel)
+    claims_github = "source_kind: github-issue" in text[:2000]
+    if tn or (not m and not claims_github and re.search(r"(?m)^source_kind: [a-z]+-issue$", text[:2000])):
+        return tracker_snapshot(text, rel, tn)  # the place decides the kind; a tracker copy elsewhere is refused there
+    if not m and not claims_github:
+        return text, None
+    if not m:  # it claims to be a pulled copy, but CI only compares copies where spec-pull saves them
+        return "", ("it says it's a copy of an issue, but it isn't where `story-gate spec-pull` saves one "
+                    "(.story-gate/stories/<ID>/issue-<N>.md), so CI can't compare it with the live issue. Pull it again")
+    try:
+        fields, content = parse_snapshot(text)
+    except ValueError as e:
+        return "", str(e)
+    if fields["source_kind"] != "github-issue":  # e.g. a tracker ticket's copy saved under an issue copy's name
+        return "", "it holds a %s copy but is named like a GitHub issue's copy. Pull it again" % fields["source_kind"][:30]
+    if m and fields["issue"] != str(m[1]):
+        return "", "it holds issue %s but is named for issue %s" % (fields["issue"][:12], m[1])
+    if m and m[2] and fields["repo"].lower() != m[2].lower():
+        return "", "it holds an issue of %s but is named for %s" % (fields["repo"][:80], m[2])
+    here = this_repo() if m and not m[2] else None
+    if here and fields["repo"].lower() != here.lower():  # issue-<N>.md is this repository's issue N, never another's
+        return "", ("it holds an issue of %s but is named as one of this repository (%s). Pull it again; a copy from "
+                    "another repository is saved as issue-<owner>--<repo>-<N>.md" % (fields["repo"][:80], here))
+    return content, None
+
+
+def tracker_snapshot(text, rel, tn):
+    """(text to read, problem or None) for a tracker ticket's copy: valid, at its place, for the tracker and workspace this
+    repository is set up for (default branch's config in CI)."""
+    if not tn:
+        return "", ("it says it's a copy of a tracker ticket, but it isn't where `story-gate spec-pull` saves one "
+                    "(.story-gate/stories/<ID>/linear-<KEY>.md or jira-<KEY>.md), so CI can't compare it with the live ticket. "
+                    "Pull it again")
+    try:
+        fields, content = parse_snapshot(text)
+    except ValueError as e:
+        return "", str(e)
+    if fields["source_kind"] != tn[1] + "-issue" or fields["ticket"] != tn[2]:
+        return "", "it holds %s but is named for %s" % (fields["ticket"][:20], tn[2])
+    settings = (cfg().get("trackers") or {}).get(tn[1])
+    if not isinstance(settings, dict):
+        return "", ("it's a %s ticket, but %s isn't set up in .story-gate/config.json (trackers), so it can't be checked"
+                    % (tn[1], tn[1]))
+    import sg_trackers as TR
+    if fields["site"] != TR.site_of(tn[1], settings):
+        return "", "it comes from '%s', but this repository is set up for '%s'" % (fields["site"][:80], TR.site_of(tn[1], settings))
+    return content, None
+
+
+def tracker_links(story_text):
+    """[(rel, story id of its folder, tracker, ticket key)] for the tracker copies a story.md links."""
+    out = []
+    for e in story_spec_refs(front_matter(story_text)):
+        path = e.strip().partition("#")[0]
+        try:
+            rel = repo_rel(path) if path and ".." not in path.replace("\\", "/").split("/") else None
+        except (OSError, ValueError):
+            rel = None
+        t = tracker_name(rel)
+        if t and (rel,) + t not in out:
+            out.append((rel,) + t)
+    return out
+
+
+def this_repo():
+    """'owner/repo' this checkout belongs to: CI's GITHUB_REPOSITORY, else the origin remote; None when unknown."""
+    r = os.environ.get("GITHUB_REPOSITORY", "").strip() or origin_repo() or ""
+    return r if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", r) else None
+
+
+def gh_msg(v):
+    """A workflow-command message (::warning::...) escaped as GitHub requires, so text that came from a pull request's
+    output can't end the line or start another command (%0A, ::)."""
+    return str(v).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def gh_prop(v):
+    """A value for a GitHub Actions workflow-command property (file=...), escaped as GitHub requires."""
+    return str(v).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A").replace(":", "%3A").replace(",", "%2C")
+
+
+# One set of words for a pulled issue's status, the same in CI notes, the validation page and the dashboard. Only CI's
+# own comparison, on the pull request's exact commit, can say "verified"; anything else is "changed" or "not checked".
+SOURCE_WORDS = {"unchanged": "verified", "changed": "changed", "not checked": "not checked"}
+SOURCE_LEGEND = ("verified: CI compared the copy with the live issue in this commit's check and they matched then; changed: "
+                 "they differ; not checked: CI hasn't compared them on this commit. An issue edited after the check shows up "
+                 "at the next check")
+CI_SOURCES = {}  # story id -> [{path, issue, state, detail}] from this CI run, for the validation page
+CI_MEASURED = {}  # story id -> {budget: result} the story-gate job worked out from the tests job's runs (never from the PR)
+CI_AREAS = {}  # story id -> ({"area/check": result}, {area: why it applies}, notes), worked out the same way
+
+
+def snapshot_links(story_text):
+    """([(rel, story id of its folder, issue number, 'owner/repo' or None)], [odd]) for the pulled issues a story.md links, with each path
+    resolved the way linked_scenarios reads it ('./x', 'a//b' and the like). `odd`: links to an 'issue-<N>.md' file that
+    isn't a spec-pull copy's place, which CI can't compare and so reports."""
+    out, odd = [], []
+    for e in story_spec_refs(front_matter(story_text)):
+        path = e.strip().partition("#")[0]
+        try:
+            rel = repo_rel(path) if path and ".." not in path.replace("\\", "/").split("/") else None
+        except (OSError, ValueError):
+            rel = None
+        m = snapshot_name(rel)
+        if m:
+            if (rel,) + m not in out:
+                out.append((rel,) + m)
+        elif re.search(r"(?:^|/)issue-[0-9]+\.md$", path, re.I) or (
+                re.search(r"(?:^|/)(?:linear|jira)-[^/]*\.md$", path, re.I) and not tracker_name(rel)):
+            odd.append(path[:200])
+    return out, odd
+
+
+def story_spec_refs(fm):
+    v = fm.get("spec") or []
+    return [x for x in ([v] if isinstance(v, str) else v) if isinstance(x, str) and x.strip() and x.strip().lower() != "none"]
+
+
+def linked_scenarios(entry):
+    """({'path#id': line}, problem or None) for one `spec:` entry: a spec file, a folder (every spec.md under it, e.g. an
+    OpenSpec change), optionally narrowed to one Spec Kit user story with '#US1'."""
+    path, _, only = entry.strip().partition("#")
+    try:
+        rel = repo_rel(path) if path and not os.path.isabs(path) and ".." not in path.replace("\\", "/").split("/") else None
+        p = ROOT / rel if rel else None
+        if not p or not p.exists():
+            return {}, "%s: not found inside the repository" % entry[:200]
+        files = sorted(p.rglob("spec.md")) if p.is_dir() else [p]
+    except (OSError, ValueError):
+        return {}, "%s: not a usable path" % entry[:200]
+    found = {}
+    for f in files:
+        r = repo_rel(f)
+        if f.is_symlink() or not r:
+            return {}, "%s is a link to another file; story-gate doesn't follow links. Link the real file instead" % (
+                r or f.relative_to(ROOT).as_posix())
+        try:
+            rc = subprocess.run(["git", "check-ignore", "-q", "--", r], cwd=ROOT, capture_output=True, timeout=30).returncode
+        except (OSError, subprocess.SubprocessError):
+            rc = -1
+        if rc == 0:
+            return {}, ("%s is ignored by git (.gitignore), so the pull request and CI never see it. Commit it, or copy it into "
+                        "the story's folder" % r)
+        if rc != 1:  # 1 = not ignored; anything else is git failing, and the check fails closed
+            return {}, "%s: git couldn't say whether this file is ignored (git check-ignore failed), so it can't be checked" % r
+        unread = []
+        body, snap_problem = spec_snapshot(rd(f), r)
+        if snap_problem:
+            return {}, "%s: %s" % (r, snap_problem)
+        scen = spec_scenarios(body, unread)
+        if unread:
+            return {}, ("%s: story-gate can't read %d requirement line(s), so it can't check them: %s. Write each as one list "
+                        "line 'Given ... When ... Then' under a 'User Story N' heading (Spec Kit), as '#### Scenario: <name>' "
+                        "(OpenSpec), as '- [ ] <criterion>' under '## Acceptance criteria', or as '1. As a ..., I want ..., "
+                        "so that ...' under '## User Stories'" % (r, len(unread), "; ".join(u[:80] for u in unread[:3])))
+        for lid, line in scen:
+            if only and not lid.startswith(only + "-"):
+                continue
+            ref = "%s#%s" % (r, lid)
+            if ref in found:
+                return {}, "%s: two scenarios are both called '%s' - give each a unique name" % (r, lid)
+            found[ref] = line
+    if not found:
+        return {}, ("%s: no acceptance scenarios or criteria found (story-gate reads Spec Kit 'Given ... When ... Then' "
+                    "scenarios under '### User Story N', OpenSpec '#### Scenario:' blocks, '- [ ]' checkboxes under '## "
+                    "Acceptance criteria' or in a ticket file, and '## User Stories' lists)" % entry)
+    return found, None
+
+
+def linked_spec_pairs(sd):
+    """[(label, text)] of the scenarios in the specs story.md links, for the READY and DONE evidence hashes."""
+    out = []
+    for e in story_spec_refs(front_matter(rd(sd / "story.md"))):
+        found, problem = linked_scenarios(e)
+        issue_text = ""
+        one = "---\nspec: %s\n---\n" % e
+        for rel in ([x[0] for x in snapshot_links(one)[0] + tracker_links(one)] if not problem else []):
+            # a pulled issue: any change to its text re-opens READY and DONE
+            issue_text = hashlib.sha256(spec_snapshot(rd(ROOT / rel), rel)[0].encode("utf-8", "surrogatepass")).hexdigest()
+        out.append(("spec:" + e, json.dumps([sorted(found.items()), problem] + ([issue_text] if issue_text else []))))
+    return out
+
+
+def spec_coverage(sd, fm, c):
+    """(ok, why) when the story links a spec (or the config requires one): every scenario in the linked spec must be named
+    in some AC's `covers` list in tests.json, and every name there must exist. None when there is nothing to check."""
+    refs = story_spec_refs(fm)
+    if not refs:
+        if c.get("require_spec_link"):
+            return False, "story.md has no 'spec:' line naming the spec it builds (this repository requires one)"
+        return None
+    scen, why = {}, []
+    for e in refs:
+        found, problem = linked_scenarios(e)
+        if problem:
+            why.append(problem)
+        scen.update(found)
+    try:
+        acs_ = json.loads(rd(sd / "tests.json", "{}")).get("acceptance_criteria", [])
+        covers = {x for a in acs_ if isinstance(a, dict) and isinstance(a.get("covers"), list) for x in a["covers"] if isinstance(x, str)}
+    except Exception:
+        covers = set()
+    holes = [r for r, line in scen.items() if any(ph in line for ph in SPEC_PLACEHOLDERS)
+             or CRITERION_PLACEHOLDER.match(line.strip())  # 'Criterion 1' left from a ticket template
+             or re.fullmatch(r"[<\[].*[>\]]", r.split("#", 1)[1].strip())]  # '[Scenario Name]', '<name>'
+
+    missing = [r for r in scen if r not in covers]
+    unknown = sorted(covers - set(scen))
+    if holes:
+        why.append("the spec still has template placeholders: " + ", ".join(holes[:5]))
+    if missing:
+        why.append("spec requirements no AC covers (add them to an AC's `covers` in tests.json): "
+                   + "; ".join('%s ("%s")' % (r, re.sub(r"[*#]", "", scen[r]).strip()[:70]) for r in missing[:8])
+                   + (" and %d more" % (len(missing) - 8) if len(missing) > 8 else ""))
+    if unknown:
+        why.append("`covers` names requirements that aren't in the linked spec (a reworded or reordered checkbox or user "
+                   "story gets a new name: list them again with `story-gate spec-scenarios`): " + ", ".join(unknown[:8]))
+    return not why, "; ".join(why)
+
+
+def test_corpus(c):
+    """Current contents of test files in the working tree (deleted tests and production code never count)."""
+    files = set(zlist("ls-files")) | set(zlist("ls-files", "--others", "--exclude-standard"))
+    out = []
+    for f in sorted(files):
+        if f.startswith(".story-gate/"):
+            continue
+        if any(fnmatch.fnmatch(f, g) or fnmatch.fnmatch("/" + f, g) for g in c.get("test_globs") or []):
+            p = ROOT / f
+            if p.is_file() and p.stat().st_size < 2_000_000:
+                out.append(rd(p))
+    return "\n".join(out)
+
+
+def defined(ref, corpus):
+    """The ref must be a test definition, not merely mentioned (a comment or string elsewhere does not count)."""
+    e = re.escape(ref)
+    pats = [r"\b(?:async\s+)?(?:def|func|function|fn|sub)\s+" + e + r"\s*[\(<\[]",                # python, go, js, rust, perl
+            r"\b(?:void|public\s+void|fun|func)\s+" + e + r"\s*\(",                              # java, kotlin
+            r"\b(?:test|it|describe|context|scenario|specify)(?:\.\w+)?\s*\(\s*['\"`]" + e + r"['\"`]",  # js/ts/rspec style
+            r"\b(?:Scenario|Feature):\s*" + e + r"\s*$"]                                        # gherkin
+    return any(re.search(p, corpus, re.M) for p in pats)
+
+
+def trace(sd, c, tr, results=None, write=True):
+    """AC -> planned cases -> automated tests -> exists in current test files -> executed outcome. Writes trace.md."""
+    t = load_json(sd / "tests.json")
+    plan = {str(a.get("id")): a for a in (t.get("acceptance_criteria") or []) if isinstance(a, dict)}
+    corpus = test_corpus(c)
+    suite = "GREEN" if tr.get("exit_code") == 0 else ("RED" if tr else "NOT RUN")
+    rows, missing = [], []
+    for aid, text, refs in acs(sd):
+        a = plan.get(aid, {})
+        cases = sum(len(a.get(k) or []) for k in TEST_CATS)
+        found = [r for r in refs if defined(r, corpus)]
+        if results is not None:
+            import sg_github as G
+            outcomes = {r: G.ref_outcome(r, results) for r in refs}
+            ok = bool(refs) and len(found) == len(refs) and all(o == "passed" for o in outcomes.values())  # in our test files AND passed
+            res = ", ".join("%s=%s" % kv for kv in outcomes.items()) or "—"
+        elif objective(c):  # no judge checks the tests, so "the suite passed" isn't proof each planned test ran
+            ok, res = False, "no per-test results"
+        else:
+            ok = bool(refs) and len(found) == len(refs) and suite == "GREEN"
+            res = suite
+        if not ok:
+            missing.append(aid)
+        rows.append("| %s | %s | %d | %s | %s | %s |" % (aid, text[:60].replace("|", "/"), cases, ", ".join(refs) or "—",
+                                                     "%d/%d" % (len(found), len(refs)), res))
+    md = ("# Traceability: %s\n\n| AC | Criterion | Planned cases | Automated tests (test_refs) | In current test files | Result |\n"
+          "|---|---|---|---|---|---|\n" % sd.name)
+    if write:
+        wj_text(sd / "trace.md", md + "\n".join(rows) + "\n")
+    return missing
+
+
+def cut(text, n):
+    """Text for the judge, with a visible marker when it was shortened (never a silent cut)."""
+    return text if len(text) <= n else text[:n] + "\n[... cut: %d more characters not shown]" % (len(text) - n)
+
+
+def wj_text(p, text):
+    Path(p).write_text(text, encoding="utf-8")
+
+
+UNISOLATED = ("CI ran %s as story-gate's own account, not as a separate one, so their result counts as reported, not "
+              "checked (ci_isolation is \"relaxed\", or isolation couldn't be set up on this runner)")
+
+
+def isolation_required():
+    """True in GitHub Actions (and in tests that ask for it): the pull request's code must run as a separate account."""
+    return os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("STORY_GATE_ISOLATE") == "1"
+
+
+def ci_account(c, protect):
+    """(account, "") when the pull request's code can run as a throwaway account here (sg_isolate); else (None, why).
+    protect: folders that account must never be able to write, besides story-gate's own runtime."""
+    import sg_isolate as I
+    why = I.available()
+    if not why:
+        try:
+            runtime = [str(HERE)] if not str(HERE.resolve()).startswith(str(ROOT.resolve()) + os.sep) else []  # CI: $RUNNER_TEMP/sg
+            acc = I.Account(str(ROOT), [str(p) for p in protect] + runtime).setup()
+            global GIT_LOCKED
+            GIT_LOCKED = True  # from here on, the checkout holds what pull request code wrote
+            return acc, ""
+        except I.IsolationError as e:
+            why = str(e)
+    return None, why
+
+
+def teardown_warnings(acc, I):
+    """Clean up after the throwaway account; print each problem as a GitHub warning and return them."""
+    try:
+        warn = acc.teardown()
+    except I.IsolationError as e:
+        warn = ["%s; the runner may still have its processes" % e]
+    for w in warn:
+        print("::warning title=story-gate: clean-up::%s" % gh_msg(w))
+    return warn
+
+
+def struct_done(sd, sid, diff_files, c, diff_text="", results=None, truncated=False, in_ci=False, write=True):
+    """Structural (non-judge) DONE checks: the ready gate, tests, handoff, learnings and now validation evidence."""
+    out = {}
+    rj = load_json(sd / "ready.json")
+    out["ready_gate_passed"] = (passed(rj, c, sd), "READY gate not passed or out of date (overall=%s; the story, test plan or PRD/TRD changed since) - re-run READY" % rj.get("overall", "never run"))
+    h = rd(sd / "handoff.md")
+    hs = sections(h)
+    miss = [s for s in HANDOFF_SECTIONS if not hs.get(s, "").strip() or "TODO" in hs.get(s, "")]
+    out["handoff_written"] = (bool(h) and not miss, "handoff.md missing or sections empty/TODO: " + ", ".join(miss or ["(file)"]))
+    has_learn = any(r.get("story") == sid for r in jsonl(LEARNINGS))
+    out["learnings_recorded"] = (has_learn, "no learnings entry for this story (use 'learn --type none' if truly nothing)")
+    cov = spec_coverage(sd, front_matter(rd(sd / "story.md")), c)  # again at DONE: the spec may have changed since READY
+    if cov is not None:
+        out["spec_covered"] = cov
+    dd = dependencies_done(sd, sid, c)
+    if dd is not None:
+        out["dependencies_done"] = dd
+    tr = load_json(sd / "test_results.json")
+    fresh = tr.get("fingerprint") == work_fingerprint()
+    pinned = c.get("test_command")
+    out["tests_ran_green"] = (tr.get("exit_code") == 0 and fresh and (not pinned or tr.get("command") == pinned),
+                              "the recorded test command is not config test_command (%s)" % pinned
+                              if tr and pinned and tr.get("command") != pinned else
+                              "no recorded test run (use record-tests)" if not tr else
+                              "last recorded test run failed (exit %s)" % tr.get("exit_code") if tr.get("exit_code") != 0 else
+                              "code changed after the last green test run — run record-tests again")
+    if out["tests_ran_green"][0] is True and tr.get("source") == "ci" and tr.get("isolated") is False:
+        out["tests_ran_green"] = ("FAIL" if c.get("ci_isolation") == "strict" else "CONCERNS", UNISOLATED % "the tests")
+    code = [f for f in diff_files if not exempt(f, c)]
+    out["code_changed"] = (bool(code), "no code changes found against base")
+    miss = trace(sd, c, tr, results, write)
+    out["traceability"] = (not miss, ("objective mode (no AI judge) needs each test's own result, not just a green suite: %s "
+                                      "(ACs not proven: %s)" % (
+                                          "the test run didn't leave a readable JUnit XML report at %s; make the test command write it there"
+                                          % c["junit_path"] if c.get("junit_path") else
+                                          "make the test command write a JUnit XML report and set junit_path to it", ", ".join(miss)))
+                           if objective(c) and results is None else
+                           "ACs whose tests (tests.json test_refs) are missing from the current test files or did not pass: " + ", ".join(miss))
+    if (c.get("validation") or {}).get("required", True):
+        import sg_validation as V
+        vm = V.sections_missing(rd(sd / "validation.md"))
+        out["validation_written"] = (not vm, ("validation.md is missing (run `%s` to add the template)" % gate_cmd("start " + sid))
+                                     if not (sd / "validation.md").exists() else "validation.md sections empty or TODO: " + ", ".join(vm))
+        ids = [a for a, _, _ in acs(sd)]
+        doc, res = load_json(sd / "scenarios.json"), V.results_of(load_json(sd / "scenario_results.json"))
+        cov = V.coverage(doc, res, ids, work_fingerprint(), in_ci)
+        gone, local = [a for a, s in cov.items() if s == "missing"], [a for a, s in cov.items() if s == "local"]
+        broken = V.failing(doc, res, work_fingerprint(), in_ci)
+        why = []
+        if not ids:
+            why.append("no acceptance criteria in tests.json")
+        if gone:
+            why.append("ACs with no passing scenario on the current code%s: %s. Record one with `%s`" % (
+                " in CI's own run" if in_ci else "", ", ".join(gone),
+                gate_cmd("scenario %s --name ... --ac %s --expect ... -- <command>" % (sid, gone[0]))))
+        if broken:
+            why.append("recorded scenarios that did not pass on the current code: %s. Fix the work (or the scenario), then run `%s`"
+                       % ("; ".join(broken[:5]), gate_cmd("scenarios " + sid)))
+        if local and not why:
+            why.append("ACs proved only on the agent's computer (local-only scenarios; CI did not run them): %s. This blocks "
+                       "unless accept_concerns is on; better, make the scenario runnable in CI" % ", ".join(local))
+        st = "FAIL" if gone or not ids or broken else "CONCERNS" if local else "PASS"
+        if st != "FAIL" and in_ci and any(r.get("source") == "ci" and r.get("isolated") is False for r in res.values() if isinstance(r, dict)):
+            st = "FAIL" if c.get("ci_isolation") == "strict" else "CONCERNS"
+            why.append(UNISOLATED % "the scenarios")
+        out["scenarios_prove_acs"] = (st, " | ".join(why))
+    rows = budget_rows(sd, c, in_ci)
+    if rows:  # only when a budget applies: repositories without budgets.json score exactly as before
+        import sg_measure as M
+        st, why = M.verdict(rows, in_ci)
+        out["budgets_met"] = (st, why + (". Measure again with `%s`" % gate_cmd("measure " + sid) if st != "PASS" and not in_ci else ""))
+    rows, _, _ = area_rows(sd, c, in_ci)
+    if rows:  # only when an area applies: repositories without guardrails score exactly as before
+        import sg_areas as A
+        st, why = A.verdict(rows, in_ci)
+        out["guardrails_met"] = (st, why + (". Measure again with `%s`" % gate_cmd("measure " + sid) if st != "PASS" and not in_ci else ""))
+    if truncated and not objective(c):  # the size limit is the judge's; without one a person reviews the whole diff anyway
+        out["evidence_complete"] = ("CONCERNS", "the change is too large for one judge pass; split the story or get a human review of the whole diff")
+    return out
+
+
+# ------------------------------------------------------------------ verdict (pure, unit-tested)
+def band(p, th):
+    return "PASS" if p >= th["pass"] else ("CONCERNS" if p >= th["concerns"] else "FAIL")
+
+
+def verdict(structural, judged, decisions, waivers, c):
+    th = c["thresholds"]
+    checks = {}
+    for k, (ok, why) in structural.items():
+        st = ok if isinstance(ok, str) else ("PASS" if ok else "FAIL")
+        checks[k] = {"status": st, "why": "" if st == "PASS" else why, "kind": "structural"}
+    for k in judged.get("not_judged", []):  # objective mode: shown, never counted as passed or failed
+        checks[k] = {"status": "NOT_JUDGED", "why": "objective mode: no AI judge", "kind": "objective", "group": CHECK_GROUP.get(k, "")}
+    for k, p in judged.get("scores", {}).items():
+        st = band(p, th)
+        if st == "PASS" and not can_pass(judged["judge"], c):
+            st = "CONCERNS"  # an uncalibrated or self judge cannot award a PASS
+        checks[k] = {"status": st, "score": round(p, 3), "kind": judged["judge"], "group": CHECK_GROUP.get(k, "")}
+    if judged["judge"] == "none":
+        checks["judge_available"] = {"status": "FAIL", "why": "no judge and no self-scores: semantic checks did not run (%s)" % judged.get("jev_error"), "kind": "structural"}
+    drift = judged.get("drift", "none")
+    decided = decisions[-1] if decisions else None
+    if drift == "work_should_change":  # code is simply wrong vs agreed docs: a fix, not an escalation
+        checks["drift_fix_work"] = {"status": "FAIL", "why": "code deviates from the story/TRD — fix the code (no spec change needed)", "kind": "decision"}
+    elif drift != "none":
+        if decided and decided.get("drift") == "story":
+            checks["drift_decision"] = {"status": "FAIL", "why": "decided by %s: the story or the work must change. Apply the decision, then re-score" % decided.get("by"), "kind": "decision"}
+        elif decided:
+            checks["drift_decision"] = {"status": "PASS", "why": "decided: %s by %s%s" % (decided["drift"], decided["by"], "" if decided.get("_trusted") else " (proposal: needs a code owner's approval in CI)"), "kind": "decision"}
+        else:
+            checks["drift_decision"] = {"status": "ESCALATED", "why": "drift points to '%s' — needs a recorded decision from the architect/orchestrator" % drift, "kind": "decision"}
+    for k, w in waivers.items():
+        if k in checks and checks[k]["status"] not in ("PASS", "NOT_JUDGED", "WARN") and checks[k]["kind"] != "structural":
+            checks[k]["status"], checks[k]["why"] = "WAIVED", "waived by %s: %s%s" % (w["by"], w["reason"], "" if w.get("_trusted") else " (proposal: needs a code owner's approval in CI)")
+    sts = [v["status"] for v in checks.values()]  # WARN (a warn-mode guardrail) is shown and never changes the overall verdict
+    overall = ("FAIL" if "FAIL" in sts else "ESCALATED" if "ESCALATED" in sts else
+               "CONCERNS" if "CONCERNS" in sts else "WAIVED" if "WAIVED" in sts else "PASS")
+    return {"overall": overall, "drift": drift, "checks": checks}
+
+
+def passed(v, c, sd=None):
+    v = v or {}
+    o = v.get("overall")
+    if not can_pass(v.get("judge"), c):
+        return False  # without a trusted judge nothing passes
+    if sd is not None and v.get("inputs_hash") != inputs_hash(sd, v.get("phase", "ready"), c):
+        return False  # story/tests/handoff/code/spec changed since this verdict: re-score
+    return o in ("PASS", "WAIVED") or (o == "CONCERNS" and bool(c.get("accept_concerns")))
+
+
+def stale(v, c, sd):
+    return bool(v) and v.get("inputs_hash") != inputs_hash(sd, v.get("phase", "ready"), c)
+
+
+def records(sd, phase, c=None, trusted=False):
+    """Drift decisions and waivers that still match the evidence they were made on.
+    trusted=True only in CI after a code owner approved the current head commit; locally they are proposals."""
+    dec, wav = [], {}
+    cur = inputs_hash(sd, phase, c)
+    for r in jsonl(sd / "decisions.jsonl"):
+        if r.get("phase", phase) != phase or r.get("evidence") != cur:
+            continue  # made on different evidence (or unbound): does not carry over
+        r = dict(r, _trusted=trusted)
+        if r.get("kind") == "drift":
+            dec.append(r)
+        elif r.get("kind") == "waiver" and r.get("check") in READY_Q.keys() | DONE_Q.keys():
+            wav[r["check"]] = r  # only semantic checks can be waived; structural facts cannot
+    return dec, wav
+
+
+# ------------------------------------------------------------------ commands
+SKELETONS = {
+    "story.md": """---
+id: {id}
+title: TODO
+feature: none
+source: TODO (linear:{id} | repo:path | control-hub:doc-id | other)
+depends_on: []
+consumers: []
+---
+## Plain summary
+TODO: 3 to 6 short sentences a non-coder can read (PROTOCOL.md > Writing): who this helps, what changes, how we know it works.
+
+## Story (word for word from the source)
+TODO: paste the full story text: who/why, scope, out of scope, interfaces, NFRs, acceptance criteria (AC-1, AC-2, ...).
+
+## Dependencies
+None
+
+## Risks
+None
+
+## Blockers
+None
+""",
+    "context.md": """# Context for {id}
+Each section: quote only the relevant excerpts and cite the source (file#heading, Linear URL, control-hub id).
+Write 'None — <reason>' if a section truly has nothing. Never leave TODO.
+
+## PRD
+TODO
+
+## TRD
+TODO
+
+## Upstream handoffs
+TODO (one '### <story-id>' block per upstream dependency, or 'None — no upstream dependencies')
+
+## Prior learnings
+TODO (paste relevant hits from `gate.py learnings <words>` with their ids, or 'None — searched: <words>')
+""",
+    "tests.json": json.dumps({"story": "{id}", "acceptance_criteria": [
+        {"id": "AC-1", "text": "TODO", "positive": [], "negative": [], "edge": [], "regression": [], "not_applicable": {}, "test_refs": []}],
+        "proposed_missing_acs": []}, indent=1),
+    "handoff.md": """# Handoff: {id}
+
+## What changed
+TODO (plain English, short sentences. When the change touches several parts, add a ```mermaid diagram of how they connect)
+
+## Interfaces and contracts
+TODO (APIs, schemas, events, env vars, versions — exact names)
+
+## How to verify
+TODO (commands / steps a downstream agent can run)
+
+## Known limits
+TODO (or 'None')
+
+## Downstream consumers
+TODO (story ids / systems that depend on this and what they need from it)
+
+## Release and rollback
+TODO (how it ships, feature flag, migrations, monitoring, how to roll back - or 'Not applicable: <reason>')
+
+## Drift decisions
+None
+""",
+}
+
+
+CLIENT_ENV = (("CLAUDECODE", "claude-code"), ("CURSOR_TRACE_ID", "cursor"), ("CODEX_SANDBOX", "codex"), ("GEMINI_CLI", "gemini"))
+
+
+def start_branch_check(sid, c):
+    """'' when the current branch suits a story; otherwise a plain warning. Raises SystemExit on the base branch in
+    enforce mode: a story's work reaches the base branch through a pull request, where the gate checks it."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return ""
+    enforce = c.get("mode") == "enforce" or "pre_edit" in (c.get("enforce_points") or [])
+    branch = git("symbolic-ref", "-q", "--short", "HEAD").strip()  # also names a branch with no commits yet
+    if not branch and not git("rev-parse", "--git-dir").strip():  # git missing, or not a repository: nothing to check
+        msg = ("can't read the git branch here (git isn't installed, or this folder isn't a git repository), so story-gate "
+               "can't tell whether this is the base branch")
+        if enforce:
+            sys.exit("story-gate: not started: " + msg)
+        return "WARNING: " + msg
+    if not branch:  # detached HEAD: the work has nowhere to go but a later, unchecked commit
+        msg = "no branch is checked out (detached HEAD). Make one for the story first: git switch -c feature/%s" % sid
+        if enforce:
+            sys.exit("story-gate: not started: " + msg)
+        return "WARNING: " + msg
+    configured = c.get("base_branch", "main")
+    ref = T.default_policy_ref(str(ROOT), configured) or configured
+    bases = {configured, ref.split("/", 1)[1] if ref.startswith("origin/") else ref}  # origin/HEAD can be stale: both count
+    if branch.lower() in {b.lower() for b in bases}:  # Main and main are the same branch on most machines
+        base = branch
+        msg = ("you're on %s, the base branch. A story's work should reach %s through a pull request, where story-gate "
+               "checks it. Make a branch for it first: git switch -c feature/%s" % (base, base, sid))
+        if enforce:
+            sys.exit("story-gate: not started: " + msg)
+        return "WARNING: " + msg
+    if not re.search(r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % re.escape(sid), branch, re.I):  # SAT-1 isn't in SAT-10
+        return ("note: branch '%s' doesn't contain %s. CI finds the story from the branch name, or from a leading '[%s]' in "
+                "the pull request title" % (branch[:80], sid, sid))
+    return ""
+
+
+def cmd_start(sid, client=None, model=None):
+    """Create (or complete) a story's folder, including validation.md's template for stories started before it existed."""
+    sd = sdir(sid)
+    branch_note = start_branch_check(sid, cfg())  # before anything is written: a refused start leaves nothing behind
+    sd.mkdir(parents=True, exist_ok=True)
+    client = client or next((name for var, name in CLIENT_ENV if os.environ.get(var)), "")
+    if client or model or not (sd / "coder.json").exists():
+        old = load_json(sd / "coder.json")  # who is coding (the claim): dashboard, and a judge must never be the coder's model
+        wj(sd / "coder.json", {"schema": 1, "client": client or old.get("client", ""), "model": model or old.get("model", ""),
+                               "branch": current_branch(), "claimed_at": old.get("claimed_at") or now(), "at": now()})
+    for name, body in SKELETONS.items():
+        p = sd / name
+        if not p.exists() and name != "handoff.md":
+            p.write_text(body.replace("{id}", sid), encoding="utf-8")
+    if not (sd / "validation.md").exists():  # also how a story started before validation existed gets its template
+        import sg_validation as V
+        (sd / "validation.md").write_text(V.TEMPLATE.replace("{id}", sid), encoding="utf-8")
+    # scoped to this branch; the start commit is the story's baseline if work is committed straight onto the base branch
+    prev, branch = (rd(ACTIVE).splitlines() if ACTIVE.exists() else []), current_branch()
+    baseline = prev[2].strip() if len(prev) >= 3 and prev[0].strip() == sid and prev[1].strip() == branch else git("rev-parse", "HEAD").strip()
+    ACTIVE.write_text("%s\n%s\n%s\n" % (sid, branch, baseline), encoding="utf-8")  # restarting a story keeps its baseline
+    emit("started", sid, load_json(sd / "coder.json"))
+    if branch_note:
+        print("story-gate: " + branch_note)
+    print("story-gate: active story %s -> fill %s (story.md, context.md, tests.json), then: score %s ready. "
+          "Not sure what's next? Run: %s" % (sid, sd.relative_to(ROOT), sid, gate_cmd("next")))
+
+
+FEATURE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}")
+
+
+def cmd_plan(sid, title, feature=None):
+    """Add a story to the backlog without starting it (no claim, no active story). Commit it so the dashboard sees it."""
+    sd = sdir(sid)
+    if feature and not FEATURE_ID.fullmatch(feature):
+        sys.exit("feature ids are letters, digits, . _ - (max 40)")
+    sd.mkdir(parents=True, exist_ok=True)
+    for name, body in SKELETONS.items():
+        p = sd / name
+        if not p.exists() and name != "handoff.md":
+            p.write_text(body.replace("{id}", sid), encoding="utf-8")
+    text = rd(sd / "story.md")
+    if title:
+        text = re.sub(r"(?m)^title:.*$", lambda m: "title: " + title.replace("\n", " ")[:120], text, count=1)
+    if feature:
+        text = re.sub(r"(?m)^feature:.*$", lambda m: "feature: " + feature, text, count=1)
+    (sd / "story.md").write_text(text, encoding="utf-8")
+    emit("planned", sid, {"title": title, "feature": feature})
+    print("story-gate: planned %s%s. Fill story.md, context.md and tests.json, then score %s ready. It's queued once READY passes."
+          % (sid, " in feature " + feature if feature else "", sid))
+
+
+def cmd_feature(fid, title, description=""):
+    if not FEATURE_ID.fullmatch(fid or ""):
+        sys.exit("feature <ID> --title TEXT   (ids: letters, digits, . _ -)")
+    p = GATE / "features.json"
+    data = load_json(p)
+    data[fid] = {"title": (title or data.get(fid, {}).get("title") or fid)[:120], "description": (description or data.get(fid, {}).get("description", ""))[:500]}
+    wj(p, data)
+    print("story-gate: feature %s saved in .story-gate/features.json" % fid)
+
+
+def current_branch():
+    return git("rev-parse", "--abbrev-ref", "HEAD").strip()
+
+
+def cmd_source(sid):
+    sdir(sid)  # validates the id before it goes anywhere near a shell
+    for s in cfg().get("sources", []):
+        if s.get("type") == "command" and s.get("command"):
+            cmd = s["command"].replace("{id}", shlex.quote(sid))
+            r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=120, env=dict(os.environ, STORY_GATE_ID=sid))
+            print("### source: %s (exit %s)\n%s" % (s.get("name", cmd), r.returncode, r.stdout[-20000:]))
+        else:
+            print("### source (%s): fetch with your tools — %s" % (s.get("type"), json.dumps({k: v for k, v in s.items() if k != "type"})))
+
+
+def work_fingerprint():
+    """Hash of the changed files' current content vs the base branch, ignoring .story-gate/.
+    Content-based, so git add / commit do not invalidate a green test run; any edit does."""
+    h = hashlib.sha256()
+    for n, body in sorted(work_state().items()):
+        h.update(n.encode("utf-8", "replace") + b"\0" + body)
+    return h.hexdigest()[:16]
+
+
+def work_state():
+    """{path: mode + content digest} for every file that differs from the base branch or is new (the work's evidence)."""
+    try:
+        mb = resolve_base(cfg()["base_branch"])
+    except Exception:
+        mb = "HEAD"
+    names = sorted(set(zlist("diff", "--name-only", mb)) | set(zlist("diff", "--name-only"))
+                   | set(zlist("ls-files", "--others", "--exclude-standard")))
+    state = {}
+    for n in names:
+        if is_record(n):
+            continue
+        f = ROOT / n
+        if GIT_LOCKED:  # files the pull request's code wrote: never follow a link, open a pipe or run git inside them
+            state[n] = locked_digest(f)
+            continue
+        mode = b"x" if f.is_file() and os.access(f, os.X_OK) else b"-"  # executable bit is part of the evidence
+        if f.is_file():
+            body = hashlib.sha256(f.read_bytes()).digest()
+        elif f.is_dir():  # a submodule: its checked-out commit is the evidence
+            sub = git("-C", str(f), "rev-parse", "HEAD") + git("-C", str(f), "status", "--porcelain") + git("-C", str(f), "diff", "HEAD")
+            for u in sorted(git("-C", str(f), "ls-files", "--others", "--exclude-standard").splitlines()):  # new files' content too
+                try:
+                    sub += u + hashlib.sha256((f / u).read_bytes()).hexdigest()
+                except OSError:
+                    sub += u + "?"
+            body = b"GITLINK:" + hashlib.sha256(sub.encode("utf-8", "replace")).digest()  # commit plus any uncommitted edits
+        else:
+            body = b"DELETED"
+        state[n] = mode + body
+    return state
+
+
+def locked_digest(f):
+    """Evidence for one path without trusting it (GIT_LOCKED): a link's target text, a file's content, a folder's
+    files (each the same way, no git), anything else only its kind. Nothing is followed or executed."""
+    import stat
+    try:
+        st = os.lstat(f)
+    except OSError:
+        return b"-DELETED"
+    if stat.S_ISLNK(st.st_mode):
+        return b"-LINK:" + os.readlink(f).encode("utf-8", "replace")
+    if stat.S_ISREG(st.st_mode):
+        import sg_isolate as I
+        digest = I.sha256_regular(str(f))  # the whole file, however large
+        return (b"x" if st.st_mode & 0o111 else b"-") + (digest if digest is not None else b"UNREADABLE")
+    if stat.S_ISDIR(st.st_mode):
+        h = hashlib.sha256()
+        for top, dirs, files in os.walk(f):  # never follows links
+            dirs.sort()
+            for name in sorted(files + [d for d in dirs if os.path.islink(os.path.join(top, d))]):
+                p = os.path.join(top, name)
+                h.update(os.path.relpath(p, f).encode("utf-8", "replace") + b"\0" + locked_digest(p))
+        return b"-DIR:" + h.digest()
+    return b"-SPECIAL"
+
+
+def is_record(path):
+    return any(path == r or path.startswith(r + "/") for r in RECORD_PATHS)
+
+
+def budgets_policy():
+    """The default branch's budgets, from the same trusted source as config.json ([] when there are none).
+    An invalid budgets.json raises ConfigError: the gate fails closed until it is fixed."""
+    import sg_measure as M
+    try:
+        return M.load(policy_json("budgets.json"))
+    except M.PolicyError as e:
+        raise ConfigError("%s - fix it in a pull request of its own; the gate fails closed until then" % e)
+
+
+def changed_paths(base):
+    """Every path the work changes against the merge base: added, modified, deleted, both sides of a rename, and new
+    untracked files. Story records don't count. Budgets use this to decide which of them apply."""
+    mb = resolve_base(base)
+    names = (set(zlist("diff", "--name-only", "--no-renames", mb)) | set(zlist("diff", "--name-only", "--no-renames"))
+             | set(zlist("ls-files", "--others", "--exclude-standard")))
+    return sorted(n for n in names if not is_record(n))
+
+
+def budget_rows(sd, c, in_ci=False, files=None):
+    """[(budget, result)] for every budget that applies to this work: the default branch's first, then the story's own
+    proposals. In CI the default branch's budgets use only what the story-gate job measured (CI_MEASURED)."""
+    import sg_measure as M
+    main = budgets_policy()
+    names = {b["name"] for b in main}
+    mine = [dict(b, _origin="story") for b in M.story_budgets(load_json(sd / "budgets.json")) if b["name"] not in names]
+    files = changed_paths(c["base_branch"]) if files is None else files
+    stored = load_json(sd / "budget_results.json").get("results")
+    stored = stored if isinstance(stored, dict) else {}
+    fp, rows, ci = work_fingerprint(), [], CI_MEASURED.get(sd.name) if in_ci else None
+    for b in main + mine:
+        mainb = b.get("_origin") != "story"
+        if not (b["name"] in ci if ci is not None and mainb else M.applies(b, files)):
+            continue  # in CI the story-gate job already decided which of the default branch's budgets apply
+        if in_ci and mainb:
+            r = (ci or {}).get(b["name"]) or {"state": "not_run", "value": None, "why": "CI did not measure it"}
+        else:
+            r = M.current(b, stored.get(b["name"]), fp)
+            if b.get("_origin") == "story" and r.get("state") == "checked":
+                r = dict(r, state="reported", why="proposed by this story")
+            elif mainb and r.get("value") is not None and r.get("state") != "not_run":
+                trust = M.trust_problems(b, str(ROOT), files)  # worked out again here: a stored "why" can't clear a pin
+                r = dict(r, state="reported", why="; ".join(trust + ["measured on the agent's computer"]))
+        rows.append((b, r))
+    return rows
+
+
+def areas_policy(c):
+    """The guardrail areas from the merged config (check_config already refused an invalid section)."""
+    import sg_areas as A
+    return A.load(c.get("guardrails"))
+
+
+def areas_that_apply(c, base):
+    """({area: why it applies}, notes, changed paths) for this work against the merge base. When the change can't be read,
+    every area that isn't off applies (a trigger story-gate couldn't evaluate never switches a check off)."""
+    import sg_areas as A
+    areas = areas_policy(c)
+    if not any(a["mode"] != "off" for a in areas.values()):
+        return {}, [], None
+    try:  # git() reads a failure as empty output, so every call here must succeed or the change counts as unreadable
+        mb = resolve_base(base)
+        must("rev-parse", "--verify", "--quiet", mb + "^{commit}")
+        z = lambda *a: [x for x in must("-c", "core.quotepath=false", *a, "-z").split("\0") if x]
+        untracked = [n for n in z("ls-files", "--others", "--exclude-standard") if not is_record(n)]
+        files = sorted(n for n in set(z("diff", "--name-only", "--no-renames", mb)) | set(z("diff", "--name-only", "--no-renames"))
+                       | set(untracked) if not is_record(n))  # both names of a renamed file, deletions, untracked files
+        excl = [":(exclude)%s" % r for r in RECORD_PATHS]
+        new, read_all = untracked_text(untracked)
+        diff = must("diff", mb, "--", ".", *excl) + new
+        binary = any(l.startswith("-\t-\t") for l in must("diff", "--numstat", "--no-renames", mb, "--", ".", *excl).splitlines())
+        whole = read_all and not binary  # a binary file, or a new file story-gate didn't read: its content is unknown
+    except Exception as e:  # any failure, a bug included: every area applies, and the note says why
+        files, diff, whole = None, "", False
+        err = ["story-gate couldn't read the change (%s), so every guardrail area applies" % e.__class__.__name__]
+    else:
+        err = []
+    why, notes = A.applicable(areas, files, diff, is_record, whole)
+    return why, err + notes, files
+
+
+def area_rows(sd, c, in_ci=False):
+    """([(record, result)], {area: why it applies}, notes) for the checks of every guardrail area that applies to this
+    work. In CI only what the story-gate job worked out from the measure job's raw runs counts (CI_AREAS)."""
+    import sg_areas as A, sg_measure as M
+    if in_ci:
+        res, why, notes = CI_AREAS.get(sd.name) or ({}, {}, [])
+        recs = A.records(areas_policy(c), set(why))
+        return [(b, res.get(b["_key"]) or {"state": "not_run", "value": None, "why": "CI did not measure it"}) for b in recs], why, notes
+    why, notes, files = areas_that_apply(c, c["base_branch"])
+    if not why:
+        return [], why, notes
+    stored = load_json(sd / "guardrail_results.json").get("results")
+    stored = stored if isinstance(stored, dict) else {}
+    fp, rows = work_fingerprint(), []
+    for b in A.records(areas_policy(c), set(why)):
+        r = M.current(b, stored.get(b["_key"]), fp)
+        if r.get("value") is not None and r.get("state") != "not_run":
+            trust = M.trust_problems(b, str(ROOT), files) if files is not None else [UNREAD]  # a stored "why" can't clear a pin
+            r = dict(r, state="reported", why="; ".join(trust + ["measured on the agent's computer"]))
+        rows.append((b, A.refresh(b, r)))
+    return rows, why, notes
+
+
+def partially_staged():
+    """Files whose staged version differs from both the last commit and the working copy (git add -p)."""
+    staged = set(zlist("diff", "--cached", "--name-only"))
+    unstaged = set(zlist("diff", "--name-only"))
+    return sorted(f for f in staged & unstaged if not is_record(f))
+
+
+def cmd_record_tests(sid, argv):
+    c = cfg()
+    pinned = c.get("test_command")
+    if pinned:
+        argv = pinned
+    if not argv:
+        sys.exit("usage: record-tests <ID> -- <test command...>   (or set test_command in .story-gate/config.json)")
+    split = partially_staged()
+    if split:
+        sys.exit("story-gate: %s staged differently from the working copy. Tests must run on exactly what you will commit: "
+                 "stage everything (git add) or unstage it, then re-run record-tests." % ", ".join(split[:5]))
+    jf = junit_file(c)
+    if jf and jf.is_file() and not zlist("ls-files", "--", repo_rel(jf)):
+        jf.unlink()  # an untracked report is the last run's output: remove it so only this run's report can count
+    before = jf.stat().st_mtime_ns if jf and jf.is_file() else None  # a tracked one counts only if this run rewrites it
+    t0 = time.time()
+    try:
+        r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800,
+                           shell=isinstance(argv, str) or os.name == "nt")
+        code, tail = r.returncode, (r.stdout + r.stderr)[-4000:]
+    except Exception as e:
+        code, tail = -1, repr(e)
+    rec = {"command": argv if isinstance(argv, str) else " ".join(argv), "exit_code": code, "seconds": round(time.time() - t0, 1),
+           "head": git("rev-parse", "HEAD").strip(), "fingerprint": work_fingerprint(), "at": now(), "output_tail": tail}
+    jf = junit_file(c)
+    if jf and jf.is_file() and jf.stat().st_mtime_ns == before:
+        rec["junit_error"] = "%s was not written by this test run, so it was ignored" % c["junit_path"]  # an old or committed report
+    elif jf and jf.is_file():
+        import sg_github as G
+        try:
+            rec["junit"] = G.junit(jf)
+        except Exception as e:
+            rec["junit_error"] = str(e)
+    wj(sdir(sid) / "test_results.json", rec)
+    print("story-gate: tests %s (exit %s)" % ("GREEN" if code == 0 else "RED", code))
+    return 0 if code == 0 else 1
+
+
+def cmd_scenario(sid, kv, remove, argv):
+    """Record (or replace) one scenario, run it now on this computer, and store the result."""
+    import sg_validation as V
+    sd = sdir(sid)
+    if not sd.exists():
+        sys.exit("no story folder; run: start %s" % sid)
+    specs = [s for s in V.specs_of(load_json(sd / "scenarios.json")) if s.get("name") != kv["name"]]
+    res = V.results_of(load_json(sd / "scenario_results.json"))
+    res.pop(kv["name"], None)
+    if remove:
+        wj(sd / "scenarios.json", {"story": sid, "scenarios": specs})
+        wj(sd / "scenario_results.json", {"story": sid, "results": res})
+        print("story-gate: scenario '%s' removed" % kv["name"])
+        return 0
+    try:
+        s = {"name": kv["name"], "acs": [a.strip() for a in kv.get("ac", "").split(",") if a.strip()], "argv": argv,
+             "expect_exit": int(kv.get("exit", 0)), "expect_output": kv.get("expect", ""),
+             "timeout": int(kv.get("timeout", V.DEFAULT_TIMEOUT)), "local_only": kv.get("local-only", "")}
+    except ValueError:
+        sys.exit("story-gate: --exit and --timeout must be whole numbers")
+    bad = V.problems(s, [a for a, _, _ in acs(sd)])
+    if bad:
+        sys.exit("story-gate: scenario not recorded: " + "; ".join(bad))
+    if len(specs) >= V.MAX_SCENARIOS:
+        sys.exit("story-gate: a story can have at most %d scenarios" % V.MAX_SCENARIOS)
+    specs.append(s)
+    wj(sd / "scenarios.json", {"story": sid, "scenarios": specs})
+    r = V.run(s, str(ROOT), work_state, "local")
+    res[s["name"]] = r
+    wj(sd / "scenario_results.json", {"story": sid, "results": res})
+    print_scenario(s, r)
+    return 0 if r["passed"] else 1
+
+
+def print_scenario(s, r):
+    """Print one scenario's result (pass/fail, exit code, whether the output matched) to the console."""
+    print("story-gate: scenario '%s' (%s) %s - exit %s (expected %s), output %s%s" % (
+        s.get("name"), ", ".join(map(str, s.get("acs") or [])), "PASSED" if r.get("passed") else "FAILED", r.get("exit_code"), s.get("expect_exit"),
+        "matched" if r.get("output_matched") else "did NOT match --expect", ("; " + r["note"]) if r.get("note") else ""))
+    if not r.get("passed"):
+        print("--- last output ---\n" + (r.get("output_tail") or "")[-1500:])
+
+
+def cmd_scenarios(sid):
+    """Run every recorded scenario again on the current code (after a fix, before score done)."""
+    import sg_validation as V
+    sd = sdir(sid)
+    specs = V.specs_of(load_json(sd / "scenarios.json"))
+    if not specs:
+        sys.exit("story-gate: no scenarios recorded for %s; add one with: scenario %s --name ... -- <command>" % (sid, sid))
+    res = V.run_all(specs, str(ROOT), work_state, "local", [a for a, _, _ in acs(sd)], budget=10 ** 6)
+    wj(sd / "scenario_results.json", {"story": sid, "results": res})
+    for s in specs:
+        if s.get("name") in res:
+            print_scenario(s, res[s["name"]])
+    return 0 if all(r.get("passed") for r in res.values()) else 1
+
+
+def cmd_measure(sid, kv, flags_, argv):
+    """Measure budgets on this computer: every one that applies (no --budget), or one. With -- <command> the story
+    proposes a budget of its own (or replaces it); --remove drops a proposal. Results are 'reported' until CI measures."""
+    import sg_measure as M
+    sd = sdir(sid)
+    if not sd.exists():
+        sys.exit("no story folder; run: start %s" % sid)
+    c = cfg()
+    try:
+        main = budgets_policy()
+    except ConfigError as e:
+        sys.exit("story-gate: %s" % e)
+    names = {b["name"] for b in main}
+    doc = load_json(sd / "budgets.json")
+    mine = [b for b in M.story_budgets(doc)]
+    name = kv.get("budget")
+    extra = sorted(set(kv) & {"unit", "limit", "direction", "tolerance", "source", "measure", "report", "pins", "paths", "timeout", "exit"})
+    if extra and not argv:
+        sys.exit("story-gate: --%s only go with a proposed budget's command (... -- <command>)" % ", --".join(extra))
+    if "--remove" in flags_ or argv:
+        if not name:
+            sys.exit("story-gate: say which budget with --budget NAME")
+        if name in names:
+            sys.exit("story-gate: %s is a budget from the default branch. A story can't change it; a code owner changes it with "
+                     "`%s` in a pull request of its own" % (name, gate_cmd("settings budget")))
+        mine = [b for b in mine if b["name"] != name]
+        if argv:
+            try:
+                b = {"name": name, "unit": kv.get("unit", ""), "limit": json.loads(kv.get("limit", "null")), "status": "proposed",
+                     "direction": kv.get("direction", "max"), "tolerance": json.loads(kv.get("tolerance", "0")),
+                     "source": kv.get("source", ""), "measure": kv.get("measure", "number"), "command": argv,
+                     "pins": [x.strip() for x in kv.get("pins", "").split(",") if x.strip()],
+                     "paths": [x.strip() for x in kv.get("paths", "").split(",") if x.strip()],
+                     "timeout": int(kv.get("timeout", M.DEFAULT_TIMEOUT))}
+                if kv.get("report"):
+                    b["report"] = kv["report"]
+                if kv.get("exit") is not None:
+                    b["expect_exit"] = int(kv["exit"])
+            except ValueError:
+                sys.exit("story-gate: --limit and --tolerance must be numbers; --timeout and --exit whole numbers")
+            bad = M.problems(b)
+            if bad:
+                sys.exit("story-gate: budget not recorded: " + "; ".join(bad))
+            if len(mine) >= M.MAX_BUDGETS:
+                sys.exit("story-gate: a story can propose at most %d budgets" % M.MAX_BUDGETS)
+            mine.append(M.normal(b))
+        wj(sd / "budgets.json", {"story": sid, "budgets": mine})
+        if not argv:
+            print("story-gate: proposed budget '%s' removed" % name)
+            return 0
+    every = main + [dict(b, _origin="story") for b in mine if b["name"] not in names]
+    files = changed_paths(c["base_branch"])
+    check = kv.get("check")
+    if name:
+        todo = [b for b in every if b["name"] == name]
+        if not todo:
+            sys.exit("story-gate: no budget called %s. Budgets here: %s" % (name, ", ".join(b["name"] for b in every) or "none"))
+    else:
+        todo = [] if check else [b for b in every if M.applies(b, files)]
+    code = 0
+    if todo:
+        stored = load_json(sd / "budget_results.json").get("results")
+        stored = stored if isinstance(stored, dict) else {}
+        for b in todo:
+            rec, raw = M.run(b, str(ROOT), work_state)
+            stored[b["name"]] = M.evaluate(b, rec, raw, rec.get("fingerprint"), "local", M.trust_problems(b, str(ROOT), files))
+        wj(sd / "budget_results.json", {"v": M.SCHEMA, "story": sid, "results": stored})
+        rows = [(b, M.current(b, stored.get(b["name"]), work_fingerprint())) for b in todo]
+        print("\n".join(M.summary_lines(rows, False)).strip())
+        st, why = M.verdict(rows, False)
+        print("story-gate: budgets %s%s" % (st, (": " + why) if why else ""))
+        code = 0 if st == "PASS" else 1
+    elif not check and not name:
+        print("story-gate: no budget applies to this change%s." % ("" if every else " (there are no budgets)"))
+    if name:
+        return code
+    return max(code, measure_areas(sd, sid, c, check))
+
+
+def measure_areas(sd, sid, c, only=None):
+    """Run the checks of the guardrail areas that apply (or one check, 'area/name') on this computer and print them."""
+    import sg_areas as A, sg_measure as M
+    why, notes, files = areas_that_apply(c, c["base_branch"])
+    recs = A.records(areas_policy(c), None if only else set(why))
+    if only:
+        recs = [b for b in recs if b["_key"] == only]
+        if not recs:
+            sys.exit("story-gate: no guardrail check called %s. Checks here: %s" % (
+                only, ", ".join(b["_key"] for b in A.records(areas_policy(c))) or "none"))
+    for n in notes:
+        print("story-gate: " + n)
+    if not recs:
+        if A.records(areas_policy(c)):
+            print("story-gate: no guardrail area applies to this change.")
+        return 0
+    stored = load_json(sd / "guardrail_results.json").get("results")
+    stored = stored if isinstance(stored, dict) else {}
+    for b in recs:
+        rec, raw = M.run(b, str(ROOT), work_state)
+        stored[b["_key"]] = M.evaluate(b, rec, raw, rec.get("fingerprint"), "local",
+                                       M.trust_problems(b, str(ROOT), files) if files is not None else [UNREAD])
+    wj(sd / "guardrail_results.json", {"v": M.SCHEMA, "story": sid, "results": stored})
+    rows, why, _ = area_rows(sd, c)
+    rows = [x for x in rows if x[0]["_key"] in {b["_key"] for b in recs}] or [
+        (b, A.refresh(b, M.current(b, stored.get(b["_key"]), work_fingerprint()))) for b in recs]
+    print("\n".join(A.summary_lines(rows, False, why)).strip())
+    st, w = A.verdict(rows, False)
+    print("story-gate: guardrails %s%s" % (st, (": " + w) if w else ""))
+    return 1 if st == "FAIL" else 0
+
+
+def report_facts(sid, in_ci=False):
+    """Everything the validation page shows, read from the story's records (sg_report renders it)."""
+    import sg_validation as V, sg_report as R
+    c, sd = cfg(), sdir(sid)
+    fp = work_fingerprint()
+    doc, res = load_json(sd / "scenarios.json"), V.results_of(load_json(sd / "scenario_results.json"))
+    ids = acs(sd)
+    tr = load_json(sd / "test_results.json")
+    if tr:
+        tr = dict(tr, fresh=tr.get("fingerprint") == fp)
+    verdicts = {}
+    for ph in ("ready", "done"):
+        v = load_v(sid, ph)
+        verdicts[ph] = dict(v, fresh=not stale(v, c, sd)) if v else None
+    images, skipped = R.load_images(sd, load_json(sd / "evidence.json"))
+    story = rd(sd / "story.md")
+    return {"id": sid, "title": front_matter(story).get("title", ""), "summary": sections(story).get("## Plain summary", ""),
+            "generated_at": now(), "branch": os.environ.get("SG_HEAD_REF") or current_branch(), "commit": git("rev-parse", "HEAD").strip(),
+            "ready": verdicts["ready"], "done": verdicts["done"], "tests": tr, "acs": ids,
+            "coverage": V.coverage(doc, res, [a for a, _, _ in ids], fp, in_ci), "scenarios": V.specs_of(doc), "results": res,
+            "fingerprint": fp, "spec_hash": V.spec_hash, "validation_md": rd(sd / "validation.md"), "images": images, "images_skipped": skipped,
+            "sources": CI_SOURCES.get(sid) if in_ci else [  # off CI nothing is compared: say so, never "verified"
+                {"path": rel, "issue": num, "state": "not checked", "detail": "CI compares it with the live issue on each pull request"}
+                for rel, _, num, _ in snapshot_links(story)[0]] + [
+                {"path": rel, "issue": key, "state": "not checked", "detail": "CI compares it with the live ticket on each pull request"}
+                for rel, _, _, key in tracker_links(story)],
+            "source_legend": SOURCE_LEGEND}
+
+
+def cmd_report(sid, out=None, open_=False, in_ci=False):
+    """Write a story's HTML validation report, optionally open it in a browser, and return zero."""
+    import sg_report as R
+    sd = sdir(sid)
+    if not sd.exists():
+        sys.exit("no story folder; run: start %s" % sid)
+    if out:
+        path = Path(out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+    else:  # outside the repository by default (the page is a view, not a record), in a folder only you can write
+        import tempfile
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        base = Path(tempfile.gettempdir()) / ("story-gate-reports-%s" % uid if uid else "story-gate-reports")
+        base.mkdir(mode=0o700, exist_ok=True)
+        if base.is_symlink() or (hasattr(os, "getuid") and base.stat().st_uid != uid):
+            sys.exit("story-gate: %s is not yours; use --out to choose where the page goes" % base)
+        path = base / ("%s-%s.html" % (re.sub(r"[^\w.-]", "_", ROOT.name), sid))
+    if path.is_symlink():
+        path.unlink()  # write the page itself, never through a link someone left there
+    path.write_text(R.to_html(report_facts(sid, in_ci)), encoding="utf-8")
+    print("story-gate: validation page for %s -> %s" % (sid, path))
+    if open_:
+        import webbrowser
+        webbrowser.open(path.resolve().as_uri())
+    return 0
+
+
+TRY_APP = '''import sys
+
+
+def total(qty, unit):
+    """Order total. Orders of 10 or more items get 10% off."""
+    t = qty * unit
+    if qty > 10:  # the bug story-gate catches: 10 items should already get the discount
+        t = t * 0.9
+    return t
+
+
+if __name__ == "__main__":
+    print("%.2f" % total(int(sys.argv[1]), float(sys.argv[2])))
+'''
+TRY_VALIDATION = """# Validation: TRY-1
+This is what your AI writes for you at the end of each story. In this example story-gate wrote it.
+
+## Result
+Not done. The total is right for small orders, but an order of exactly 10 items doesn't get the 10% discount.
+
+## Acceptance criteria
+- AC-1: met. Shown by the scenario "3 items cost 6.00".
+- AC-2: not met. The scenario "10 items get the discount" printed 20.00 instead of 18.00.
+
+## Scenarios run
+Two real runs of `price.py`, one per goal. The second one failed, so DONE can't pass.
+
+## Bugs found and fixed
+Found: `price.py` checks `qty > 10`, so 10 items miss the discount. Not fixed yet; the fix is `qty >= 10`, then run `story-gate scenarios TRY-1` again.
+
+## Lessons learnt
+Test the exact boundary a story names ("10 or more").
+
+## Known limits
+This is a throwaway example. No judge and no GitHub checks ran.
+
+## Demo
+Run `python price.py 10 2.00`. It should print 18.00.
+"""
+TRY_STORY = '''---
+id: TRY-1
+title: Bulk discount on orders
+feature: none
+source: story-gate try (a built-in example)
+depends_on: []
+consumers: []
+---
+## Plain summary
+Shoppers who buy 10 or more items get 10% off. The order total shows the discount. This example story has a real bug, so you can see story-gate catch it.
+
+## Story (word for word from the source)
+As a shopper, I get 10% off when I buy 10 or more items.
+AC-1: The total is the quantity times the unit price.
+AC-2: Orders of 10 or more items get 10% off.
+
+## Dependencies
+None
+
+## Risks
+None
+
+## Blockers
+None
+'''
+
+
+def cmd_try(open_=True):
+    """A two-minute look at story-gate with nothing to set up: a throwaway project with a tiny story and a real bug.
+    Two goals are run as real scenarios on this computer; one fails, and the validation page shows why. No judge, no
+    GitHub, no network. The throwaway folder is in your temp folder; your own repositories are never touched."""
+    import tempfile
+    box = Path(tempfile.mkdtemp(prefix="story-gate-try-"))
+    env = dict(os.environ, STORY_GATE_ROOT=str(box), GIT_TERMINAL_PROMPT="0")
+    for k in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        env.pop(k, None)
+
+    def run(*a, check=True):
+        r = subprocess.run(list(a), cwd=str(box), env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        if check and r.returncode != 0:
+            sys.exit("story-gate try: %s failed: %s" % (" ".join(map(str, a[:3])), (r.stderr or r.stdout).strip()[-400:]))
+        return r
+    # an empty folder for git's template and hooks, so the user's init.templateDir and global hooks can't run here
+    empty = Path(tempfile.mkdtemp(prefix="story-gate-nohooks-"))
+    run("git", "init", "-q", "-b", "main", "--template=%s" % empty)
+    run("git", "config", "user.name", "story-gate try"); run("git", "config", "user.email", "try@story-gate.invalid")
+    (box / "price.py").write_text(TRY_APP, encoding="utf-8")
+    (box / ".story-gate").mkdir()
+    wj(box / ".story-gate" / "config.json", DEFAULT_CONFIG)
+    sd = box / ".story-gate" / "stories" / "TRY-1"
+    sd.mkdir(parents=True)
+    (sd / "story.md").write_text(TRY_STORY, encoding="utf-8")
+    wj(sd / "tests.json", {"story": "TRY-1", "acceptance_criteria": [
+        {"id": "AC-1", "text": "The total is the quantity times the unit price.", "positive": ["3 items at 2.00 cost 6.00"],
+         "negative": [], "edge": [], "regression": [], "not_applicable": {}, "test_refs": []},
+        {"id": "AC-2", "text": "Orders of 10 or more items get 10% off.", "positive": ["10 items at 2.00 cost 18.00"],
+         "negative": ["9 items get no discount"], "edge": ["exactly 10 items"], "regression": [], "not_applicable": {}, "test_refs": []}],
+        "proposed_missing_acs": []})
+    import sg_validation as V
+    (sd / "validation.md").write_text(V.TEMPLATE.replace("{id}", "TRY-1"), encoding="utf-8")
+    # your own git settings must not break a throwaway commit: no signing, no hooks
+    run("git", "add", "-A"); run("git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=%s" % empty, "commit", "-q", "-m", "story-gate try: example project")
+    me = [sys.executable, str(HERE / "gate.py")]
+    print("story-gate try: a throwaway project with one story (TRY-1: bulk discount) and a real bug, in %s\n" % box)
+    checks = (("AC-1", "3 items cost 6.00", r"^6\.00$", "3", "The total is quantity times price"),
+              ("AC-2", "10 items get the discount", r"^18\.00$", "10", "10 or more items get 10% off"))
+    for ac, name, expect, qty, _ in checks:
+        run(*me, "scenario", "TRY-1", "--name", name, "--ac", ac, "--expect", expect, "--", sys.executable, "price.py", qty, "2.00", check=False)
+    (sd / "validation.md").write_text(TRY_VALIDATION, encoding="utf-8")
+    out = box / "TRY-1-validation.html"
+    run(*me, "report", "TRY-1", "--out", str(out))
+    res = V.results_of(load_json(sd / "scenario_results.json"))
+    for ac, name, expect, qty, label in checks:
+        r = res.get(name)
+        if not r:
+            sys.exit("story-gate try: the scenario for %s didn't run; please report this" % ac)
+        got = (r.get("output_tail") or "").strip().splitlines()[-1:] or ["nothing"]
+        print("  %s %s %s %s" % (ac, label, "." * max(3, 44 - len(label)),
+                                 "PASSED" if r.get("passed") else "FAILED (%s x 2.00 printed %s, expected %s)" % (qty, got[0], expect.strip("^$").replace("\\", ""))))
+    print("\nstory-gate ran each goal for real%s" % (" and caught the bug before anyone said 'done'."
+                                                     if not all(r.get("passed") for r in res.values()) else "."))
+    print("The validation page shows the evidence: %s" % out)
+    print("This is what happens on every story in your own project. To set it up there: story-gate init")
+    if open_:
+        import webbrowser
+        webbrowser.open(out.resolve().as_uri())
+    return 0
+
+
+def cmd_evidence(sid, src, kv):
+    """Record a screenshot for the named scenario, exiting with an error if it cannot be added."""
+    import sg_report as R, sg_validation as V
+    sd = sdir(sid)
+    if not sd.exists():
+        sys.exit("no story folder; run: start %s" % sid)
+    names = {s.get("name") for s in V.specs_of(load_json(sd / "scenarios.json"))}
+    try:
+        rec = R.add_evidence(sd, src, kv.get("scenario", ""), kv.get("caption", ""), names)
+    except (OSError, ValueError) as e:
+        sys.exit("story-gate: screenshot not added: %s" % e)
+    print("story-gate: screenshot added for scenario '%s' (%dx%d, %d KB). It shows on the validation page, marked as "
+          "reported by the agent." % (rec["scenario"], rec["width"], rec["height"], rec["bytes"] // 1000))
+    return 0
+
+
+def resolve_base(base):
+    """First of base, origin/base, master, origin/master that exists; on the base branch itself use its upstream."""
+    if not git("rev-parse", "--git-dir").strip():
+        raise RuntimeError("not a git repository — cannot see what changed")
+    for b in (base, "origin/" + base if not base.startswith("origin/") else base, "master", "origin/master"):
+        if git("rev-parse", "--verify", "--quiet", b + "^{commit}").strip():
+            mb = git("merge-base", "HEAD", b).strip()
+            if mb and mb == git("rev-parse", "HEAD").strip():  # on the base branch: compare with its upstream if ahead
+                up = git("rev-parse", "--verify", "--quiet", "@{upstream}").strip()
+                if up:
+                    mb = git("merge-base", "HEAD", up).strip()
+                else:  # no upstream: compare with the commit where the active story started, so committed work stays visible
+                    act = rd(ACTIVE).split()
+                    if len(act) >= 3 and subprocess.run(["git", *(GIT_LOCK_ARGS if GIT_LOCKED else ()), "merge-base", "--is-ancestor", act[2], "HEAD"],
+                                                        cwd=ROOT, capture_output=True, env=git_env()).returncode == 0:
+                        mb = act[2]
+            return mb or b
+    raise RuntimeError("base branch %r not found (set base_branch in .story-gate/config.json)" % base)
+
+
+def zlist(*args):
+    return [x for x in git("-c", "core.quotepath=false", *args, "-z").split("\0") if x]
+
+
+def diff_against(base):
+    mb = resolve_base(base)
+    untracked = [n for n in zlist("ls-files", "--others", "--exclude-standard") if not is_record(n)]
+    names = set(zlist("diff", "--name-only", mb)) | set(zlist("diff", "--name-only")) | set(untracked)
+    excl = [":(exclude)%s" % r for r in RECORD_PATHS]
+    diff = git("diff", mb, "--", ".", *excl)  # story records never count as code evidence; the gate's own code does
+    return mb, sorted(names), diff + untracked_diff(untracked)
+
+
+UNTRACKED_MAX, UNTRACKED_BYTES = 200, 500_000  # new files read as evidence: how many, and how large each
+
+
+def untracked_diff(untracked):
+    """New files as diff text (they are evidence too, even before `git add`). Files untracked_text skips are left out;
+    use untracked_text when you need to know whether every file was read."""
+    return untracked_text(untracked)[0]
+
+
+def untracked_text(untracked):
+    """(new files as diff text, True when every one of them was read). A file story-gate skips (too many, too large, a
+    link, unreadable) makes the second value False, so a content pattern can't be ruled out for it."""
+    out, whole = "", len(untracked) <= UNTRACKED_MAX
+    for n in untracked[:UNTRACKED_MAX]:
+        f = ROOT / n
+        try:
+            ok = f.is_file() and not f.is_symlink() and f.stat().st_size < UNTRACKED_BYTES
+            body = f.read_text(encoding="utf-8", errors="ignore") if ok else ""
+        except OSError:
+            ok = False
+        if not ok:
+            whole = False
+            continue
+        out += "\ndiff --git a/%s b/%s\nnew file (untracked)\n+++ b/%s\n" % (n, n, n) + "".join("+" + l + "\n" for l in body.splitlines())
+    return out, whole
+
+
+NOT_CODE = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".pdf", ".woff", ".woff2", ".ttf", ".otf",
+            ".mp3", ".mp4", ".wav", ".mov", ".zip", ".md", ".txt", ".csv", ".lock")  # assets and docs: not code for diagram advice
+
+
+def writing_report(sd, sid, phase, c, files=()):
+    """Advisory plain-writing report for text the agent wrote: the story's plain summary (READY), the handoff and this
+    story's learnings (DONE). The word-for-word story, quotes and code are never scored."""
+    import sg_writing as W
+    w = c.get("writing") or {}
+    target = float(w.get("target", 0.8))
+    advice = []
+    if phase == "ready":
+        summ = W.section(rd(sd / "story.md"), "Plain summary")
+        if not summ.strip() or "TODO" in summ:
+            advice.append("story.md has no '## Plain summary' yet: add 3 to 6 short sentences a non-coder can read")
+        rep_ = W.report({"story.md plain summary": summ}, target)
+    else:
+        learn = "\n".join(str(r.get("summary", "")) + ". " + str(r.get("rule", "")) for r in jsonl(LEARNINGS) if r.get("story") == sid)
+        handoff = rd(sd / "handoff.md")
+        rep_ = W.report({"validation.md": rd(sd / "validation.md"), "handoff.md": handoff, "learnings": learn}, target)
+        code = [f for f in files if not exempt(f, c) and not f.lower().endswith(NOT_CODE)]
+        if len(code) >= int(w.get("diagram_min_files", 5)) and not W.has_diagram(handoff):
+            advice.append("this change touches %d code files: add a ```mermaid diagram to handoff.md that shows how the parts connect" % len(code))
+            rep_["diagram_missing"] = True
+    if rep_["status"] == "below_target":
+        worst = next((p for p in rep_["parts"].values() if p["examples"]), None)
+        advice.append("plain writing %.2f is below the target %.2f (%d of %d sentences pass)%s" % (
+            rep_["score"], target, rep_["passed"], rep_["checked"], (": " + worst["examples"][0]) if worst else ""))
+    rep_["advice"] = advice
+    return rep_
+
+
+def cmd_score(sid, phase, base=None, ci_trust=None, results=None, quiet=False):
+    """ci_trust: None = local run (waivers/decisions shown as proposals), True = CI with a code owner's approval
+    on the head commit (honoured), False = CI without it (ignored). results = per-test outcomes from CI's own run."""
+    c = cfg()
+    sd = sdir(sid)
+    if not sd.exists():
+        sys.exit("no story folder; run: start %s" % sid)
+    DEP_BASE.clear()  # CI scores several stories in one run: never carry one story's base_commit into another's verdict
+    mx = int(c["judge"].get("max_chars", 90000))
+    if phase == "ready":
+        structural, fm = struct_ready(sd)
+        pf = pitfalls_ready(sd, sid, c, in_ci=ci_trust is not None, show=not quiet)
+        if pf is not None:
+            structural["pitfalls_acknowledged"] = pf
+        wr = writing_report(sd, sid, "ready", c)
+        pl = sections(rd(sd / "context.md")).get("## Prior learnings", "").strip().lower()
+        skip = {"learnings_applied"} if pl.startswith("none") and "searched" in pl else set()  # skip only with search evidence
+        state = {"story": rd(sd / "story.md")[:mx // 3], "context": rd(sd / "context.md")[:mx // 3],
+                 "test_plan": rd(sd / "tests.json")[:mx // 3]}
+    elif phase == "done":
+        mb, files, diff = diff_against(base or c["base_branch"])
+        budget = mx // 2
+        if results is None:
+            results = (load_json(sd / "test_results.json").get("junit") or None)
+        structural = struct_done(sd, sid, files, c, diff, results, truncated=len(diff) > budget, in_ci=ci_trust is not None)
+        wr = writing_report(sd, sid, "done", c, files)
+        skip = set()
+        learn = [l for l in rd(LEARNINGS).splitlines() if '"%s"' % sid in l]
+        state = {"story": rd(sd / "story.md")[:mx // 6], "context": rd(sd / "context.md")[:mx // 6],
+                 "test_plan": rd(sd / "tests.json")[:mx // 8], "handoff": rd(sd / "handoff.md")[:mx // 8],
+                 "learnings": "\n".join(learn)[:mx // 16], "changed_files": files[:300],
+                 "validation": cut(rd(sd / "validation.md"), mx // 16), "scenarios": cut(rd(sd / "scenarios.json"), mx // 32),
+                 "diff": diff[:budget], "diff_truncated": len(diff) > budget}
+    else:
+        sys.exit("phase must be ready or done")
+    if (c.get("writing") or {}).get("enforce"):  # opt-in, after calibration: plain writing becomes a real check
+        structural["plain_writing"] = (not wr["advice"], "; ".join(wr["advice"]))
+    judged = judge(phase, state, c, sd, skip)
+    dec, wav = ([], {}) if ci_trust is False else records(sd, phase, c, trusted=bool(ci_trust))
+    v = verdict(structural, judged, dec, wav, c)
+    v.update({"story": sid, "phase": phase, "at": now(), "judge": judged["judge"], "judge_provider": judged.get("provider"),
+              "judge_model": judged.get("model"), "judge_note": judged.get("judge_note"), "jev_error": judged.get("jev_error"), "inputs_hash": inputs_hash(sd, phase, c),
+              "inputs_hash_base": ready_hash_from(rd(sd / "story.md"), rd(sd / "context.md"), rd(sd / "tests.json"),
+                                                  [(f, rd(ROOT / f)) for f in spec_files(c)], c) if phase == "ready" else None,
+              "drift_confidence": judged.get("drift_conf"), "cost": judged.get("cost"), "gate_version": VERSION, "writing": wr})
+    if DEP_BASE.get("commit"):
+        v["base_commit"] = DEP_BASE["commit"]  # the default branch's latest commit that dependencies were checked against
+    wj(sd / ("%s.json" % phase), v)
+    failed = [k for k, x in v["checks"].items() if x["status"] not in ("PASS", "WAIVED", "NOT_JUDGED", "WARN")]
+    emit(phase + "_scored", sid, {"overall": v["overall"], "drift": v["drift"], "judge": v["judge"], "failed": failed})
+    if (v["checks"].get("drift_decision") or {}).get("status") == "ESCALATED":  # even when another check FAILs
+        emit("drift_escalated", sid, {"direction": v["drift"], "phase": phase})
+    calib_log(sid, phase, v, judged)
+    if not quiet:
+        print_verdict(v)
+    return 0 if passed(v, c, sd) else 1
+
+
+def pitfalls_ready(sd, sid, c, in_ci=False, show=True, out=None):
+    """The known-pitfalls READY check (status, why), or None when the feature is off. It reads the feed, matches it to the
+    story's tags and checks context.md's acknowledgements. On this computer it also shows the pitfalls and records them in
+    pitfalls.json. CI never trusts that record (the pull request can edit it): it reads the feed itself, an https URL or
+    the file on the base branch, and a feed it can't read is never a pass. `out` (a dict) gets the record this run wrote,
+    under "rec", only when the matching ran."""
+    import sg_pitfalls as PF
+    m = PF.mode(c)
+    if m == "off":
+        return None
+    stack, domain = PF.story_tags(front_matter(rd(sd / "story.md")))
+    if not stack or not domain:
+        why = ("story.md's front matter needs stack: and domain: (for example stack: [python] and domain: [auth], or none) "
+               "so known pitfalls can be matched")
+        if show:
+            print("story-gate: " + why)
+        return PF.check(m, [], set(), why)
+    text, why = (pitfalls_feed_ci(c) if in_ci else PF.read_feed(c["pitfalls"]["source"], ROOT))
+    patterns, notes = PF.parse_feed(text) if text is not None else ([], [why])
+    if text is not None and not patterns and notes:
+        why = notes[0]
+    shown = PF.matching(patterns, stack, domain)
+    acked = PF.acknowledged(rd(sd / "context.md"), {p["id"] for p in shown})
+    if show:
+        print("\n".join(["story-gate: " + n for n in notes] + PF.show_lines(shown, acked, stack, domain)))
+    if text is None or why:
+        return PF.check(m, [], set(), why)
+    if not in_ci:
+        rec = PF.record(sid, now(), m, stack, domain, shown, acked, load_json(sd / "pitfalls.json"), work_fingerprint())
+        wj(sd / "pitfalls.json", rec)
+        if out is not None:
+            out["rec"] = rec
+        hp = sd / "handoff.md"
+        if (rec.get("scan") or {}).get("state") == "stale" and PF.BLOCK_START in rd(hp):  # the handoff must not show old hits
+            hp.write_text(PF.put_block(rd(hp), PF.handoff_block(rec)), encoding="utf-8")
+        emit("pitfalls_shown", sid, {"shown": [p["id"] for p in shown], "acknowledged": sorted(acked)})
+    return PF.check(m, shown, acked)
+
+
+def pitfalls_feed_ci(c):
+    """(text, "") or (None, why): the feed as CI reads it. An https URL is fetched; a file is read from the base branch
+    (never the pull request's copy); a path on one computer can't be read in CI."""
+    import sg_pitfalls as PF
+    src = c["pitfalls"]["source"]
+    if src.lower().startswith("https://"):
+        return PF.read_feed(src, ROOT)
+    rel = src.replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    if not rel or rel.startswith(("/", "~")) or re.match(r"^[A-Za-z]:", rel) or ".." in rel.split("/"):
+        return None, ("CI can't read a pitfalls feed that is on one computer (%s): use an https:// URL or a file in the "
+                      "repository" % PF.clean(src, 80))
+    b = c["base_branch"]
+    text, err = None, None
+    for ref in (b,) if b.startswith("origin/") else (b, "origin/" + b):  # a CI checkout may have only the remote branch
+        try:
+            text = must("show", "%s:%s" % (ref, rel))
+            text = text[1:] if text.startswith("\ufeff") else text  # one BOM, exactly as utf-8-sig drops on this computer
+            break
+        except RuntimeError as e:  # a missing file or a failed git read: never a pass
+            err = e
+    if text is None:
+        return None, "CI couldn't read the pitfalls feed %s from the base branch (%s)" % (PF.clean(rel, 80), err.__class__.__name__)
+    if len(text.encode("utf-8", "ignore")) > PF.MAX_FEED:
+        return None, "the pitfalls feed is larger than %d MB" % (PF.MAX_FEED // 1_000_000)
+    return text, ""
+
+
+def cmd_deps(sid):
+    """Print what a story waits on, what waits on it (worked out from the other stories, never stored), its open blockers and
+    its risks. Exit 1 only for a bad story ID or a story that can't be found."""
+    c = cfg()
+    if not re.fullmatch(c["story_id_pattern"], sid or ""):
+        print("story-gate: '%s' is not a story ID (like SAT-9)" % (sid or "")[:40])
+        return 1
+    w = DepWorld(c)
+    me = w.state(sid)
+    if not me["found"]:
+        print("story-gate: %s isn't on this branch, on %s, or on any other branch" % (sid, w.name))
+        return 1
+    story = me["text"]
+    print("%s (found on %s)" % (sid, where_text(me)))
+    if w.err:
+        print("note: " + w.err)
+    ids = sorted({d for d in SS.depends_on_ids(SS.front_matter(story)) if w.pat.fullmatch(d)}, key=SS.natural_key)
+    recs, errs, d1 = SS.parse_dependencies(story, c["story_id_pattern"])
+    print("Depends on:" + ("" if ids else " nothing"))
+    for d in ids:
+        st = w.state(d)
+        state = ("done (waived)" if st["waived"] else "done") if st["done"] else \
+            "not done (found on %s)%s" % (where_text(st), " - " + st["note"] if st["note"] else "") if st["found"] else "not found anywhere"
+        r = recs.get(d) or {}
+        print("  %s  %s  %s%s" % (d, r.get("when", "before-start"), state, "  - " + r["why"] if r.get("why") else ""))
+    texts = w.stories()
+    texts[sid] = story
+    edges = {i: set(SS.depends_on_ids(SS.front_matter(t))) for i, t in texts.items()}
+    waiting = SS.blocks_of(edges, sid)
+    print("Blocks (stories on this branch or %s that depend on it):%s" % (w.name, "" if waiting else " nothing"))
+    for b in waiting:
+        r = SS.parse_dependencies(texts[b], c["story_id_pattern"])[0].get(sid) or {}
+        print("  %s  %s%s" % (b, r.get("when", "before-start"), "  - " + r["why"] if r.get("why") else ""))
+    bl, e2 = SS.parse_blockers(story)
+    rk, e3 = SS.parse_risks(story)
+    print("Blockers:" + ("" if bl else " none"))
+    for b in bl:
+        print("  %s  %s  (owner: %s, %s)" % (b["id"], b["title"], b["owner"], b["status"]))
+    print("Risks:" + ("" if rk else " none"))
+    for r in rk:
+        print("  %s  %s  (likelihood: %s, impact: %s, mitigation: %s)" % (r["id"], r["title"], r["likelihood"], r["impact"], r["mitigation"] or "none"))
+    for e in errs + e2 + e3:
+        print("problem: " + e)
+    return 0
+
+
+def cmd_pitfalls(sid, scan=False, base=None):
+    """Show the known pitfalls for a story and record them (no judge). With scan: run the sast-check rules written for
+    the pitfalls shown on this change, and put the result in pitfalls.json and handoff.md."""
+    import sg_pitfalls as PF
+    c, sd = cfg(), sdir(sid)
+    if not sd.exists():
+        sys.exit("no story folder; run: start %s" % sid)
+    if PF.mode(c) == "off":
+        print('story-gate: known pitfalls are off. Turn them on in .story-gate/config.json: "pitfalls": {"mode": "warn", '
+              '"source": "<path or https URL of patterns-public.json>"} (docs/pitfalls.md).')
+        return 0
+    got = {}
+    st = pitfalls_ready(sd, sid, c, out=got)
+    if not scan:
+        return 0 if st[0] is not False else 1
+    rec = got.get("rec")
+    if rec is None:  # the matching didn't run now: never scan a list recorded for older tags or another feed
+        sys.exit("story-gate: the known pitfalls for %s couldn't be matched (see above), so there is nothing to scan for" % sid)
+    rec["scan"] = pitfalls_scan(PF.shown_in(rec), base or c["base_branch"])
+    wj(sd / "pitfalls.json", rec)
+    hp = sd / "handoff.md"
+    text = rd(hp) or SKELETONS["handoff.md"].replace("{id}", sid)
+    hp.write_text(PF.put_block(text, PF.handoff_block(rec)), encoding="utf-8")
+    print("\n".join(["story-gate: " + x for x in PF.scan_lines(rec["scan"])]))
+    print("story-gate: the result is in %s (section %s)." % (hp.relative_to(ROOT), PF.SECTION))
+    return 0 if rec["scan"]["state"] in ("ran", "no_rules", "not_installed") and st[0] is not False else 1
+
+
+def pitfalls_scan(shown, base):
+    """Run sast-check, if it is installed on this computer, for the rules whose metadata.learner_pattern_id is one of the
+    pitfalls shown. -> {state: ran | no_rules | not_installed | error, rules, hits, detail, at}."""
+    import sg_pitfalls as PF, tempfile
+    out = {"at": now(), "state": "not_installed", "rules": [], "hits": [], "fingerprint": work_fingerprint()}  # the code scanned
+    home = PF.sast_home(ROOT)
+    if home is None:
+        return out
+    try:
+        rules = PF.rule_patterns((home / "dist" / "rules.yaml").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as e:
+        return dict(out, state="error", detail="couldn't read sast-check's rules (%s)" % e.__class__.__name__)
+    ids = {p["id"] for p in shown}
+    want = {r: lp for r, lp in rules.items() if lp in ids}
+    out["rules"] = sorted(want)
+    if not want:
+        return dict(out, state="no_rules")
+    try:
+        mb = resolve_base(base)
+    except RuntimeError as e:
+        return dict(out, state="error", detail=str(e)[:200])
+    out["base"] = mb  # the merge base this scan compared with (the fingerprint above uses config's base branch)
+    with tempfile.TemporaryDirectory() as td:
+        try:  # diff mode: only what this change brings in; its own settings, suppressions and fail-closed rules apply
+            p = subprocess.run([sys.executable, "-I", str(home / "scripts" / "sast.py"), "--repo", str(ROOT), "--mode", "diff",
+                                "--base", mb, "--only", "opengrep", "--out", td], cwd=ROOT, capture_output=True, text=True,
+                               timeout=900)
+            doc = json.loads(Path(td, "findings.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            return dict(out, state="error", detail="sast-check didn't run (%s)" % e.__class__.__name__)
+    if not isinstance(doc, dict) or not isinstance(doc.get("runs"), list) or not isinstance(doc.get("findings"), list):
+        return dict(out, state="error", detail="sast-check's findings.json isn't in the expected shape")
+    runs = {r.get("name"): r for r in doc["runs"] if isinstance(r, dict)}
+    og = runs.get("opengrep") or {}
+    if og.get("status") != "ran" or doc.get("verdict") == "error" or p.returncode == 2:
+        bad = [r for r in runs.values() if r.get("status") != "ran"]
+        why = "; ".join("%s %s: %s" % (r.get("name"), r.get("status"), PF.clean(r.get("detail", ""), 120)) for r in bad[:2])
+        return dict(out, state="error", detail=why or "exit %d" % p.returncode)
+    return dict(out, state="ran", hits=PF.scan_hits(doc.get("findings"), want))
+
+
+def calib_log(sid, phase, v, judged):
+    """Every verdict is logged so thresholds can be tuned against human labels (gate.py label)."""
+    qset = hashlib.sha256(json.dumps([READY_Q, DONE_Q], sort_keys=True).encode()).hexdigest()[:10]
+    row = {"at": v["at"], "story": sid, "phase": phase, "overall": v["overall"], "judge": v["judge"], "provider": judged.get("provider"),
+           "model": judged.get("model"), "questions": qset, "gate_version": VERSION, "inputs_hash": v["inputs_hash"],
+           "scores": judged.get("scores"), "drift": v["drift"]}
+    with CALIB.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+
+
+def cmd_label(sid, phase, label, note):
+    if label not in ("correct", "wrong"):
+        sys.exit("label <ID> ready|done correct|wrong [--note TEXT]")
+    with CALIB.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"at": now(), "story": sid, "phase": phase, "label": label, "note": note}) + "\n")
+    print("story-gate: labelled %s %s as %s (used to tune thresholds)" % (sid, phase, label))
+
+
+DRIFT_CHOICE_MID = {
+    "none": "The work so far is consistent with the story and PRD/TRD (being unfinished is fine).",
+    "work_should_change": "The work so far deviates from the agreed story/TRD and should be corrected now.",
+    "spec_should_change": "The work deliberately departs from the story/PRD/TRD in a way that may be better; the documents may need updating.",
+    "architect_must_decide": "The work exposes a conflict between story and PRD/TRD that someone must decide.",
+}
+
+
+CHECKPOINT_BUDGET = 150  # seconds; post-edit hooks allow 180
+
+
+def cmd_checkpoint(sid, quiet=False):
+    """Mid-story Jev check: per-AC progress, on course?, drift, deferrals, tests keeping pace. Never blocks by itself."""
+    c = cfg()
+    sd = sdir(sid)
+    if objective(c):  # no AI judge by the owner's choice: nothing to ask, and saying "judge unavailable" would mislead
+        res = {"story": sid, "at": now(), "status": "UNKNOWN", "error": "objective mode: no AI judge, so no mid-story check"}
+        if not quiet:
+            print("story-gate %s CHECKPOINT: skipped (objective mode: no AI judge)" % sid)
+        return res
+    mx = int(c["judge"].get("max_chars", 90000))
+    _, files, diff = diff_against(c["base_branch"])
+    items = acs(sd)
+    base_q = {
+        "on_course": "The work so far is heading toward the story's acceptance criteria and follows the TRD (unfinished is fine).",
+        "no_unplanned_scope": "The work so far stays inside the story's scope (no extra features or rewrites).",
+        "no_deferrals": "The work so far has no TODO/FIXME/'temporary'/stub markers that defer required work.",
+        "tests_keeping_pace": "Automated tests are being written alongside the implemented behaviour (not left for the end).",
+    }
+    state = {"story": rd(sd / "story.md")[:mx // 6], "context": rd(sd / "context.md")[:mx // 8],
+             "test_plan": rd(sd / "tests.json")[:mx // 8], "changed_files": files[:300], "diff": diff[:mx // 2]}
+    scores, drift, conf, err = {}, "none", 0.0, None
+    chunks = [items[i:i + 12] for i in range(0, len(items), 12)] or [[]]
+    deadline = time.time() + CHECKPOINT_BUDGET  # stays inside the clients' hook timeouts
+    for n, chunk in enumerate(chunks):
+        left = deadline - time.time()
+        if left < 5:
+            err = "checkpoint ran out of time (%ds budget); run `gate.py checkpoint %s` by hand" % (CHECKPOINT_BUDGET, sid); break
+        cc = json.loads(json.dumps(c)); cc["judge"]["timeout"] = int(min(left, J.settings(c).get("timeout", 90)))
+        q = {"ac_%02d" % j: {"type": "noul", "instructions": "The code so far fully implements %s: %s" % (aid, text)}
+             for j, (aid, text, _) in enumerate(chunk)}
+        if n == 0:
+            q.update({k: {"type": "noul", "instructions": v} for k, v in base_q.items()})
+            q["drift_direction"] = {"type": "choice", "instructions": "Is the work drifting from the story/PRD/TRD?", "criteria": DRIFT_CHOICE_MID}
+        r = jev(state, q, cc)
+        if not isinstance(r.get("answers"), dict):
+            err = r.get("error") or "unexpected Jev response"; break
+        a = r["answers"]
+        for j, (aid, _, _) in enumerate(chunk):
+            scores[aid] = num((a.get("ac_%02d" % j) or {}).get("noul"))
+        if n == 0:
+            for k in base_q:
+                scores[k] = num((a.get(k) or {}).get("noul"))
+            d = a.get("drift_direction") if isinstance(a.get("drift_direction"), dict) else {}
+            drift = d.get("choice") if d.get("choice") in DRIFT_CHOICE_MID else "architect_must_decide"
+            conf = num(d.get("confidence"))
+    if err:
+        res = {"story": sid, "at": now(), "status": "UNKNOWN", "error": err}
+        if not quiet:
+            print("story-gate %s CHECKPOINT: UNKNOWN (judge unavailable: %s)" % (sid, err))
+        return res
+    ac_p = [scores[aid] for aid, _, _ in items]
+    pct = int(round(100 * sum(ac_p) / len(ac_p))) if ac_p else 0
+    done_n = sum(p >= 0.7 for p in ac_p)
+    prev = (jsonl(sd / "checkpoints.jsonl") or [{}])[-1]
+    why = []
+    if drift != "none" and conf >= 0.6:
+        why.append("drift: " + drift)
+    if scores["on_course"] < 0.4: why.append("off course (%.2f)" % scores["on_course"])
+    if scores["no_unplanned_scope"] < 0.4: why.append("scope creep (%.2f)" % scores["no_unplanned_scope"])
+    status = "OFF_COURSE" if why else "ON_TRACK"
+    if status == "ON_TRACK":
+        if scores["on_course"] < 0.7: why.append("course unclear (%.2f)" % scores["on_course"])
+        if scores["no_deferrals"] < 0.5: why.append("deferred work / TODOs")
+        if scores["tests_keeping_pace"] < 0.4 and done_n: why.append("tests lagging behind code")
+        if isinstance(prev.get("percent"), int) and pct < prev["percent"] - 15: why.append("progress went backwards (%d%% -> %d%%)" % (prev["percent"], pct))
+        status = "AT_RISK" if why else "ON_TRACK"
+    res = {"story": sid, "at": now(), "status": status, "percent": pct, "acs_done": done_n, "acs_total": len(items),
+           "per_ac": {aid: round(scores[aid], 2) for aid, _, _ in items}, "drift": drift, "drift_conf": round(conf, 2),
+           "signals": {k: round(scores[k], 2) for k in base_q}, "why": why, "files": len(files)}
+    with (sd / "checkpoints.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(res) + "\n")
+    emit("checkpoint", sid, {k: res[k] for k in ("status", "percent", "acs_done", "acs_total", "drift", "why")})
+    if status == "OFF_COURSE" and drift in ("spec_should_change", "architect_must_decide"):
+        emit("drift_escalated", sid, {"direction": drift, "phase": "build"})
+    if not quiet:
+        print(checkpoint_line(res))
+        for aid, p in res["per_ac"].items():
+            print("  %-8s %s %.2f" % (aid, "done   " if p >= 0.7 else "partial" if p >= 0.4 else "todo   ", p))
+    return res
+
+
+def checkpoint_line(res):
+    return "story-gate %s CHECKPOINT: %s ~%d%% (%d/%d ACs done, estimate)%s" % (
+        res["story"], res["status"], res.get("percent", 0), res.get("acs_done", 0), res.get("acs_total", 0),
+        " — " + "; ".join(res["why"]) if res.get("why") else "")
+
+
+def contained(sid, c):
+    """Last checkpoint OFF_COURSE and no later decision -> message, else ''."""
+    sd = STORIES / sid
+    cps = jsonl(sd / "checkpoints.jsonl")
+    if not cps or cps[-1].get("status") != "OFF_COURSE":
+        return ""
+    later = [d for d in jsonl(sd / "decisions.jsonl") if d.get("kind") == "drift" and d.get("phase") == "build" and d.get("at", "") >= cps[-1].get("at", "")]
+    if later:
+        return ""
+    return "Story %s is OFF COURSE at the last checkpoint (%s). Correct the work and re-run `gate.py checkpoint %s`, or record `gate.py decide %s --phase build --drift story|spec|none --by <who>`." % (
+        sid, "; ".join(cps[-1].get("why", [])), sid, sid)
+
+
+def print_verdict(v):
+    print("story-gate %s %s: %s  (judge=%s, drift=%s)" % (v["story"], v["phase"].upper(), v["overall"], v["judge"], v["drift"]))
+    if v.get("judge_note"):
+        print("  note: " + v["judge_note"])
+    for k, x in sorted(v["checks"].items(), key=lambda kv: (kv[1].get("group", ""), kv[0])):
+        if x["status"] not in ("PASS", "NOT_JUDGED"):
+            print("  %-10s %-24s %s" % (x["status"], k, x.get("why") or "score=%s" % x.get("score")))
+    nj = [k for k, x in v["checks"].items() if x["status"] == "NOT_JUDGED"]
+    if nj:
+        print("  NOT JUDGED (objective mode, no AI judge): %s" % ", ".join(sorted(nj)))
+    w = v.get("writing") or {}
+    if w.get("score") is not None:
+        print("  writing    plain-English score %.2f (target %.2f, STE-style proxy)" % (w["score"], w.get("target", 0.8)))
+        for name, part in (w.get("parts") or {}).items():
+            if part.get("score") is not None:
+                print("             %-24s %.2f (%d sentences, %d long paragraphs, %d passive)" % (
+                    name, part["score"], part["checked"], part["long_paragraphs"], part["passive"]))
+    for a in w.get("advice") or []:
+        if "plain_writing" not in v["checks"]:
+            print("  advice     " + a)
+
+
+def append_decision(sid, rec):
+    sd = sdir(sid)
+    sd.mkdir(parents=True, exist_ok=True)
+    rec["at"] = now()
+    if rec.get("phase") in ("ready", "done"):
+        rec["evidence"] = inputs_hash(sd, rec["phase"])  # only valid for the evidence it was made on
+    with (sd / "decisions.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    emit(rec["kind"], sid, rec)
+    print("story-gate: recorded %s for %s — re-run score to refresh the verdict" % (rec["kind"], sid))
+
+
+def cmd_learn(sid, kv):
+    t = kv.get("type")
+    if t not in ("error", "learning", "pattern", "none") or not kv.get("summary"):
+        sys.exit("learn needs --type error|learning|pattern|none and --summary")
+    if t in ("error", "pattern") and not (kv.get("root-cause") and kv.get("rule")):
+        sys.exit("errors/patterns need --root-cause and --rule (the prevention rule other agents should follow)")
+    rec = {"id": "L-%s-%d" % (sid, int(time.time() * 1000) % 10 ** 9), "story": sid, "type": t, "summary": kv["summary"],
+           "root_cause": kv.get("root-cause", ""), "rule": kv.get("rule", ""),
+           "tags": [x.strip() for x in kv.get("tags", "").split(",") if x.strip()],
+           "client": kv.get("client", ""), "at": now()}
+    LEARNINGS.parent.mkdir(parents=True, exist_ok=True)
+    with LEARNINGS.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    emit("learning", sid, rec)
+    print("story-gate: learning %s saved" % rec["id"])
+
+
+def cmd_learnings(words):
+    rows = jsonl(LEARNINGS)  # tolerant: a bad line (e.g. merge-conflict marker) is skipped, never fatal
+    ws = [w.lower() for w in words]
+    hits = []
+    for r in rows:
+        if r.get("type") == "none":
+            continue
+        blob = json.dumps(r).lower()
+        score = sum(blob.count(w) for w in ws) if ws else 1
+        if score:
+            hits.append((score, r))
+    hits.sort(key=lambda x: -x[0])
+    rules = {}
+    for r in rows:
+        if r.get("rule"):
+            rules.setdefault(str(r["rule"]).strip().lower(), []).append(r.get("story", "?"))
+    for _, r in hits[:20]:
+        tags = r.get("tags") if isinstance(r.get("tags"), list) else []
+        print("- [%s] %s (%s) %s%s" % (r.get("id", "?"), r.get("summary", ""), r.get("type", "?"),
+                                      ("RULE: " + str(r["rule"])) if r.get("rule") else "", "  tags=" + ",".join(map(str, tags)) if tags else ""))
+    for k, v in rules.items():
+        if len(v) >= 3:
+            print("! repeated %dx — promote to AGENTS.md/CLAUDE.md: %s" % (len(v), k))
+    if not hits:
+        print("None found for: %s" % " ".join(words))
+
+
+def story_id(c, payload=None):
+    """Explicit env > branch name > active file > PR title (title last: 'Fix UTF-8' must not become a story)."""
+    pat = re.compile(r"(?<![A-Za-z0-9])(?:%s)(?![0-9])" % c["story_id_pattern"])
+    for src in (os.environ.get("STORY_GATE_ID", ""), os.environ.get("SG_HEAD_REF") or os.environ.get("GITHUB_HEAD_REF", ""),
+                git("rev-parse", "--abbrev-ref", "HEAD").strip()):
+        m = pat.search(src or "")
+        if m:
+            return m.group(0)
+    if {"linear", "jira"} & set(c.get("trackers") or {}):  # 'eng-12-title' branches (Linear, some Jira tools): a story that exists
+        low = re.compile(r"(?<![A-Za-z0-9])(?:%s)(?![0-9])" % c["story_id_pattern"], re.I)
+        for src in (os.environ.get("SG_HEAD_REF") or os.environ.get("GITHUB_HEAD_REF", ""), git("rev-parse", "--abbrev-ref", "HEAD").strip()):
+            for m in low.finditer(src or ""):
+                cand = m.group(0).upper()
+                if pat.fullmatch(cand) and (STORIES / cand / "story.md").is_file():
+                    return cand
+    lines = rd(ACTIVE).strip().splitlines()
+    if lines and lines[0].strip():
+        if len(lines) < 2 or lines[1].strip() == current_branch():
+            return lines[0].strip()  # an active story only applies on the branch where it was started
+    m = re.match(r"\s*\[?(%s)\]?(?:[:\s]|$)" % c["story_id_pattern"], os.environ.get("PR_TITLE", ""))  # only a leading "VIA-12: ..." / "[VIA-12] ..."
+    return m.group(1) if m else None
+
+
+def load_v(sid, phase):
+    p = STORIES / sid / ("%s.json" % phase)
+    return load_json(p) or None if p.exists() else None
+
+
+def cmd_status(sid=None):
+    c = cfg()
+    sid = sid or story_id(c)
+    if not sid:
+        print("story-gate: no active story (mode=%s). Start one with: start <ID>" % c["mode"]); return 0
+    sd = STORIES / sid
+    def show(v):
+        if not v:
+            return "not run"
+        return v.get("overall", "?") + (" (OUT OF DATE - re-score)" if stale(v, c, sd) else "")
+    print("story-gate %s: READY=%s DONE=%s mode=%s" % (sid, show(load_v(sid, "ready")), show(load_v(sid, "done")), c["mode"]))
+    return 0
+
+
+NEXT_READY = (("story_present", "story.md", "Paste the full story into story.md, with a plain summary and the acceptance criteria (AC-1, AC-2, ...)"),
+              ("story_source", "story.md", "Say where the story came from in story.md's front matter ('source: linear:ID', 'repo:path', ...)"),
+              ("context_present", "context.md", "Fill every section of context.md"),
+              ("test_matrix", "tests.json", "Plan a positive, negative, edge and regression case for every AC in tests.json (or give an N/A reason)"),
+              ("upstream_handoffs", "context.md", "Add a handoff for each story this one depends on"),
+              ("dependencies", "dependencies", "Fix the story's dependencies: finish what it must wait for, or fix the ## Dependencies section (docs/dependencies.md)"),
+              ("blockers_resolved", "blockers", "Resolve every open blocker in story.md's ## Blockers (or move it to ## Risks with a mitigation)"),
+              ("risks_handled", "risks", "Fix the ## Risks section of story.md (docs/dependencies.md)"),
+              ("consumers_match", "consumers", "Drop the legacy `consumers:` line from story.md: story-gate works it out from depends_on"),
+              ("spec_covered", "spec links", "Name every scenario of the linked spec in an AC's `covers` list in tests.json "
+               "(list them with `story-gate spec-scenarios <spec path>`)"))
+NEXT_DONE = (("spec_covered", "spec links", "Name every scenario of the linked spec in an AC's `covers` list in tests.json"),
+             ("tests_ran_green", "tests", "Run the tests and record them: `{cmd}`"),
+             ("traceability", "test links", "Point each AC to its automated tests in tests.json (`test_refs`: the test function names), and make them pass"),
+             ("scenarios_prove_acs", "scenarios", "{scenario}"),
+             ("budgets_met", "budgets", "Measure the budgets and keep the work within them (fix the work, never the measuring script): `{measure}`"),
+             ("guardrails_met", "guardrails", "Run the guardrail checks and fix what they find (fix the work, never the check or its "
+              "settings): `{measure}`"),
+             ("validation_written", "validation.md", "Fill in validation.md for the owner"),
+             ("handoff_written", "handoff.md", "Write handoff.md with these sections: " + ", ".join(s.lstrip("# ") for s in HANDOFF_SECTIONS)),
+             ("learnings_recorded", "learnings", "Record what you learnt: `{learn}`"))
+
+
+def _ok(x):
+    return x is True or x in ("PASS", "CONCERNS", "WARN")
+
+
+def next_step(sid, c):
+    """-> (done list, next step) for a story, from the same structural facts the gates use. No judge call, no cost."""
+    sd = STORIES / sid
+    if not sd.exists():
+        return [], "Start the story: `%s`" % gate_cmd("start %s --model <your model id>" % sid)
+    done, ready = [], struct_ready(sd)[0]
+    for key, label, todo in NEXT_READY:
+        if key not in ready:
+            continue  # e.g. no spec linked, so nothing to cover
+        ok, why = ready[key]
+        if not ok:
+            return done, "%s (%s)." % (todo, why)
+        if label not in done:
+            done.append(label)
+    rv = load_v(sid, "ready")
+    if not passed(rv, c, sd):
+        bad = [k for k, x in ((rv or {}).get("checks") or {}).items() if x.get("status") not in ("PASS", "WAIVED", "NOT_JUDGED", "WARN")]
+        if rv and not stale(rv, c, sd) and bad:
+            return done, "READY is %s on: %s. Fix those (see `%s`), then run `%s`." % (
+                rv.get("overall"), ", ".join(bad), gate_cmd("status " + sid), gate_cmd("score %s ready" % sid))
+        return done, "Check the story is ready to build: `%s`." % gate_cmd("score %s ready" % sid)
+    done.append("READY passed")
+    _, files, _ = diff_against(c["base_branch"])
+    if not [f for f in files if not exempt(f, c) and not is_record(f) and f not in GATE_FILES]:  # story-gate's own files aren't the story's code
+        return done, "Build it: write the code and the tests for each AC. Then run `%s` again." % gate_cmd("next " + sid)
+    done.append("code")
+    results = load_json(sd / "test_results.json").get("junit") or None  # the same per-test outcomes `score done` uses
+    facts = struct_done(sd, sid, files, c, results=results, write=False)  # read-only: next never writes trace.md
+    import sg_validation as V
+    acs_ = [a for a, _, _ in acs(sd)]
+    sdoc, sres, fp = load_json(sd / "scenarios.json"), V.results_of(load_json(sd / "scenario_results.json")), work_fingerprint()
+    cov = V.coverage(sdoc, sres, acs_, fp, False)
+    recorded = {a for sp in V.specs_of(sdoc) if isinstance(sp.get("acs"), list) for a in sp["acs"]}
+    need = [a for a in acs_ if cov.get(a) == "missing" and a not in recorded]  # ACs with no scenario recorded at all
+    if need or not V.failing(sdoc, sres, fp, False):
+        scenario = "Run the feature for every AC and record it: `%s`" % gate_cmd(
+            "scenario %s --name \"...\" --ac %s --expect <text> -- <command>" % (sid, (need or acs_ or ["AC-1"])[0]))
+    else:  # every AC is covered, but a recorded scenario failed or ran on older code: run them again, don't add another
+        scenario = "Run the recorded scenarios again on the current code: `%s`. If one still fails, fix the work" % gate_cmd("scenarios " + sid)
+    fill = {"cmd": gate_cmd("record-tests %s" % sid) if c.get("test_command") else  # a pinned command is used as is
+            gate_cmd("record-tests %s -- <your test command>" % sid),
+            "scenario": scenario, "measure": gate_cmd("measure " + sid),
+            "learn": gate_cmd("learn %s --type none --summary \"...\"" % sid) + " (or --type error|pattern with --root-cause and --rule)"}
+    for key, label, todo in NEXT_DONE:
+        if key not in facts:
+            continue  # e.g. validation turned off in config
+        ok, why = facts[key]
+        if not _ok(ok):
+            return done, "%s (%s)." % (todo.format(**fill), why)
+        done.append(label)
+    dv = load_v(sid, "done")
+    if not passed(dv, c, sd):
+        bad = [k for k, x in ((dv or {}).get("checks") or {}).items() if x.get("status") not in ("PASS", "WAIVED", "NOT_JUDGED", "WARN")]
+        if dv and not stale(dv, c, sd) and bad:
+            return done, "DONE is %s on: %s. Fix the cause (don't skip the check), then run `%s`." % (
+                dv.get("overall"), ", ".join(bad), gate_cmd("score %s done" % sid))
+        return done, "Check the work is done: `%s`." % gate_cmd("score %s done" % sid)
+    done.append("DONE passed")
+    return done, ("Open the pull request (the branch name or title must include %s), then show the owner the validation "
+                  "page: `%s`." % (sid, gate_cmd("report %s --open" % sid)))
+
+
+def cmd_next(sid=None):
+    """Print the single next step for the active story: what's done, and exactly what to do now."""
+    c = cfg()
+    sid = sid or story_id(c)
+    if not sid:
+        print("story-gate next: no active story. Start one on a story branch (e.g. feat/SHOP-12-refunds): `%s`"
+              % gate_cmd("start <ID> --model <your model id>"))
+        return 0
+    done, step = next_step(sid, c)
+    print("story-gate next %s" % sid)
+    if done:
+        print("  done: %s" % ", ".join(done))
+    print("  next: %s" % step)
+    return 0
+
+
+# ------------------------------------------------------------------ hooks (one entry point for every client)
+def detect_client(payload, hint):
+    if "hookEventName" in payload or "toolName" in payload:
+        return "grok"
+    if "agent_action_name" in payload or "tool_info" in payload:
+        return "windsurf"
+    if payload.get("hook_event_name") in ("BeforeTool", "AfterAgent"):
+        return "gemini"
+    if "cursor_version" in payload or "workspace_roots" in payload or "loop_count" in payload:
+        return "cursor"
+    return hint or "claude"
+
+
+STOP_LIMIT = 3  # blocked stops in a row before an enforce-mode session is allowed to end (CI still blocks)
+SHELL_TOOLS = ("bash", "shell", "run_shell_command", "terminal", "exec_command", "local_shell", "execute_code", "run_in_terminal")
+# VS Code runs every hook for every tool (no matchers). Fail closed: only these tools, which only read or ask, skip the
+# checks; anything else (a new or unknown tool) goes through them. Names seen live (Read, Glob, ...) and from
+# microsoft/vscode-copilot-chat toolNames.ts (October 2026).
+VSCODE_READ_ONLY = frozenset(x.lower() for x in (
+    "Read", "Glob", "Grep", "LS", "AskUserQuestion", "TodoWrite", "WebFetch", "WebSearch",
+    "read_file", "file_search", "grep_search", "semantic_search", "list_dir", "get_errors", "get_changed_files",
+    "read_project_structure", "search_workspace_symbols", "view_image", "fetch_webpage", "test_failure", "get_vscode_api",
+    "github_repo", "test_search", "get_project_setup_info", "get_search_view_results", "get_terminal_output",
+    "terminal_selection", "terminal_last_command", "get_task_output", "read_notebook_cell_output",
+    "copilot_getnotebooksummary", "manage_todo_list", "vscode_get_confirmation", "vscode_get_confirmation_with_options",
+    "vscode_get_terminal_confirmation", "vscode_askquestions", "tool_search", "resolve_memory_file_uri"))
+SHELLISH = re.compile(r"bash|shell|terminal|run_task|create_and_run_task|exec", re.I)  # VS Code tools that run commands
+
+
+def shell_command(payload):
+    """The shell command an agent is about to run, or None for non-shell tools."""
+    name = str(payload.get("tool_name") or payload.get("toolName") or "").lower()
+    ti = payload.get("tool_input") or payload.get("toolInput") or payload.get("tool_info") or {}
+    if isinstance(payload.get("command"), str) and not ti:  # Cursor beforeShellExecution
+        return payload["command"]
+    if isinstance(ti, dict):
+        cmd = ti.get("command") or ti.get("command_line") or ti.get("cmd") or (ti.get("code") if name == "execute_code" else None)
+        if isinstance(cmd, list):
+            cmd = " ".join(map(str, cmd))
+        if isinstance(cmd, str) and "*** Begin Patch" not in cmd and (name in SHELL_TOOLS or "command_line" in ti or not name
+                                                                      or SHELLISH.search(name)):
+            return cmd
+    return None
+
+
+WRITE_TARGETS = [
+    r"(?:^|[^0-9&<>=-])>>?\s*([^\s;|&<>]+)",                       # > file, >> file
+    r"\btee\s+(?:-a\s+)?([^\s;|&]+)",                              # tee file
+    r"\bsed\s+(?:-[^\s]*i[^\s]*)\s+\S+\s+([^\s;|&]+)",              # sed -i expr file
+    r"\b(?:cp|mv)\s+(?:-\S+\s+)*\S+\s+([^\s;|&]+)",                   # cp/mv src dest
+    r"\b(?:rm|truncate|shred|touch)\s+(?:-\S+\s+)*([^\s;|&]+)",       # rm/touch file
+    r"\bperl\s+-\S*i\S*\s+(?:-\S+\s+)*\S+\s+([^\s;|&]+)",
+    r"\bdd\s+.*\bof=([^\s;|&]+)",
+    r"\b(?:Set-Content|Add-Content|Out-File)\s+(?:-\w+\s+)*([^\s;|&]+)",
+]
+GATE_WRITE = re.compile(r"(>|\btee\b|\brm\b|\brmdir\b|\bmv\b|\bcp\b|\bdd\b|\bsed\b|\bperl\b|write|unlink|remove|rename|truncate|"
+                        r"-delete|\bcheckout\b|\brestore\b|\bapply\b|\bpatch\b|\bchmod\b|\bln\b|\btouch\b|Set-Content|Add-Content|"
+                        r"Out-File|Remove-Item|Move-Item|Copy-Item|\bcd\b|open\()", re.I)
+GATE_CLI = re.compile(r"\s*(?:python3?|py)(?:\s+-3)?\s+(?:\./)?\.story-gate[/\\]gate\.py(?:\s+[A-Za-z0-9_.:,=@/+-]+)*\s*")
+
+
+def unquote(cmd):
+    """Quoted single paths ('app.py', ".github/x.yml") keep their text so quoting can't hide a write target;
+    other quoted text (messages, sed expressions) is blanked so it isn't mistaken for commands."""
+    cmd = re.sub(r"(['\"])([\w./\\~-]*[./\\][\w./\\~-]*)\1", r"\2", cmd)
+    cmd = re.sub(r"(>>?\s*)(['\"])([^'\"]*)\2", lambda m: m.group(1) + m.group(3).replace(" ", "?"), cmd)  # > "my file.py"
+    return re.sub(r"'[^']*'|\"[^\"]*\"", "''", cmd)
+
+
+def shell_writes(cmd):
+    """Best-effort list of repo files a shell command would write. Opaque scripts are not detectable; CI is the backstop."""
+    bare = unquote(cmd)
+    out = []
+    for rx in WRITE_TARGETS:
+        out += [m.strip("'\"") for m in re.findall(rx, bare)]
+    keep = []
+    for t in out:
+        if t and user_protected(t):
+            keep.append(t); continue  # the trusted runtime and user-level hook files are always ours to guard
+        if not t or t.startswith("/dev/") or t in ("&1", "&2") or repo_rel(t) is None:
+            continue  # outside the repository: not our business
+        if git("check-ignore", "-q", "--", t) == "" and subprocess.run(["git", "check-ignore", "-q", "--", t], cwd=ROOT).returncode == 0:
+            continue  # ignored files (node_modules, build output) are not code
+        keep.append(t)
+    return keep
+
+
+ADMIN_COMMANDS = {"install", "uninstall", "enroll", "unenroll", "upgrade", "rollback", "release-sign", "setup-repo", "setup-agent",
+                  "judge-calibrate", "lockdown", "filter", "hook-trust", "init", "tracker-setup"}
+# Ways to switch off or route around the checkout filter (sg_guard), or to change what "the default branch" means.
+# Nothing an agent needs; refused in any shell command (matched with quotes removed). The hooks also check the filter
+# itself on every call (sg_guard.tampered), because text matching can't see every spelling.
+FILTER_BYPASS = re.compile(
+    r"filter\.storygate|filter\.[^\s.]*\.(?:smudge|clean|required|process)\b|\bgit\s+config\b[^|;&]*\b(?:smudge|clean|required|process)\b"
+    r"|info[/\\]attributes|attributesfile|--no-filters|GIT_ATTR|GIT_CONFIG|--config-env|\binclude\.path|\bincludeif\."
+    r"|\.git[/\\]config\b|config\.worktree|\bgit\b[^|;&]*\s-c\s*(?:filter|include|core\.attributes|core\.hookspath|remote)"
+    r"|update-ref|refs/remotes|\bremote\s+(?:add|set-url|rename|remove|rm|set-head|set-branches)\b|\bremote\.[^.\s]+\.(?:url|fetch|pushurl)",
+    re.I)
+ADMIN_CALL = re.compile(r"(?:(?:gate|launch)\.py|\bstory-gate(?:\.cmd)?)\s+(?:-\S+\s+)*(%s)\b" % "|".join(sorted(ADMIN_COMMANDS)))
+# Running story-gate's own code from the repository. Hooks never do; with the trusted runtime installed, agents don't either:
+# a branch can replace that code. Reading it (cat, grep, git diff...) is fine.
+REPO_GATE_CODE = re.compile(r"\.story-gate/[\w.-]+\.py\b", re.I)
+READ_ONLY_CMD = re.compile(r"\s*(?:cat|head|tail|less|more|grep|egrep|rg|wc|ls|diff|file|stat|type|Get-Content|Select-String|"
+                           r"git\s+(?:diff|show|log|blame|status|grep|ls-files))\s", re.I)
+
+
+def runs_repo_gate_code(cmd):
+    if not REPO_GATE_CODE.search(cmd.replace("\\", "/")):
+        return False
+    return not (READ_ONLY_CMD.match(cmd) and not re.search(r"[;&|`$<>\n(]", cmd))
+
+
+def verified_gate_call(cmd):
+    """`story-gate <args>` or the exact full launcher command gate_cmd prints, with plain arguments and no other shell."""
+    c = cmd.strip()
+    if "`" in c or "$(" in c or "${" in c:
+        return False  # double quotes still run these
+    for prefix in ("story-gate ", "story-gate.cmd ", '"%s" -I "%s" ' % (sys.executable, T.launcher_path())):
+        if c.startswith(prefix):
+            rest = re.sub(r"'[^']*'|\"[^\"]*\"", "Q", c[len(prefix):])
+            return not re.search(r"[;&|`$<>\n(){}]", rest)
+    return False
+
+
+def gate_cmd(args):
+    """What to tell an agent to run: the verified copy on this computer when it's installed, else the repository's copy."""
+    import shutil
+    if not RUNTIME:
+        return "python .story-gate/gate.py " + args
+    if shutil.which("story-gate") and Path(shutil.which("story-gate")).resolve().parent == T.shim_dir().resolve():
+        return "story-gate " + args
+    return '"%s" -I "%s" %s' % (sys.executable, T.launcher_path(), args)
+
+
+def is_admin_or_bypass(cmd):
+    bare = re.sub(r"[\'\"\\]", "", cmd)
+    return bool(FILTER_BYPASS.search(bare) or ADMIN_CALL.search(bare)
+                or (GATE_CLI.fullmatch(re.sub(r"'[^']*'|\"[^\"]*\"", "Q", cmd)) and
+                    (re.sub(r"'[^']*'|\"[^\"]*\"", "Q", cmd).split("gate.py", 1)[1].split() or [""])[0] in ADMIN_COMMANDS))
+
+
+def touches_gate(cmd):
+    """Any write-capable command that mentions .story-gate (outside the story docs) is refused, except a plain gate.py call."""
+    plain = re.sub(r"'[^']*'|\"[^\"]*\"", "Q", cmd)  # quoted free text (--summary "...") is data, not shell
+    m = GATE_CLI.fullmatch(plain)
+    sub = (plain.split("gate.py", 1)[1].split() or [""])[0] if m else ""
+    bare = re.sub(r"[\'\"\\]", "", cmd)  # 'filter.story''gate' and "filter".x read as what the shell will run
+    if FILTER_BYPASS.search(bare) or ADMIN_CALL.search(bare):
+        return True  # switching protection off, changing the policy source or any admin command: human only, anywhere in the line
+    if sub in ADMIN_COMMANDS:
+        return True  # installing, enrolling, upgrading or signing is for the human, never an agent
+    if RUNTIME and verified_gate_call(cmd):
+        return False  # the verified copy (`story-gate ...` or the full command the hooks print); admin calls were refused above
+    if ("`" not in cmd and "$(" not in cmd and "${" not in cmd and m and plain.count(".story-gate") == 1):
+        return False
+    low = cmd.replace("\\", "/").lower()
+    guarded = [str(T.runtime_root()).replace("\\", "/").lower(), "enrolled.json", "agent.json", "story_gate_home", ".git/hooks",
+               "packed-refs", ".git/refs/",
+               "approved-cache", "local-hook-trust.json", "install-manifest.json"]
+    if any(x in low for x in guarded) and GATE_WRITE.search(cmd):
+        return True
+    mentions = [m for m in re.finditer(r"\.story-gate(?:[/\\][^\s;|&'\"]*)?", cmd, re.I)]
+    sensitive = [m.group(0) for m in mentions if not re.match(r"\.story-gate[/\\]stories[/\\][^/\\]+[/\\](?:[^/\\]+\.md|tests\.json)$", m.group(0), re.I)]
+    hooks = [h for h in HOOK_FILES if h in cmd.replace("\\", "/").lower()]
+    return bool((sensitive or hooks) and GATE_WRITE.search(cmd))
+
+
+def edited_paths(payload):
+    """Extract edited file paths from client tool inputs and patch headers."""
+    ti = payload.get("tool_input") or payload.get("toolInput") or payload.get("tool_info") or {}
+    paths = []
+    if isinstance(ti, dict):
+        for k in ("file_path", "path", "filePath", "target_file", "notebook_path"):
+            if isinstance(ti.get(k), str):
+                paths.append(ti[k])
+        for r in ti.get("replacements") if isinstance(ti.get("replacements"), list) else []:  # VS Code multi_replace_string_in_file
+            if isinstance(r, dict) and isinstance(r.get("filePath"), str):
+                paths.append(r["filePath"])
+        patch = ti.get("command") if isinstance(ti.get("command"), str) else ti.get("patch") or ti.get("input")
+        if isinstance(patch, str):
+            paths += re.findall(r"^\*\*\* (?:Update File|Add File|Delete File|Move to): (.+)$", patch, re.M)
+    return paths
+
+
+def hook_out(client, event, msg, block, notice=None):
+    """Exit 2 + stderr blocks in every client that has hooks. Warnings use each client's visible channel."""
+    if client == "hermes" and event == "stop":  # pre_verify: exit 2 isn't read here; "block" + reason means keep working
+        print(json.dumps({"decision": "block", "reason": msg}) if msg else "{}")
+        return 0
+    if block and client == "vscode" and event == "pre":
+        # VS Code shows an exit-2 block as "hook errored", and the agent then tried to debug the hook instead of following
+        # story-gate. A "deny" decision with the reason reads as a policy answer (hooks reference: permissionDecision).
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                 "permissionDecisionReason": msg}}))
+        return 0
+    if block:
+        sys.stderr.write(msg + "\n")
+        return 2
+    client = "claude" if client == "vscode" else client  # VS Code reads Claude Code's output format (hooks reference)
+    if not msg:
+        print("{}"); return 0
+    if event == "session":  # instructions for the agent at session start, from the verified copy (not repository files)
+        if client in ("claude", "codex", "gemini"):
+            out = {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": msg}}
+            if notice:
+                out["systemMessage"] = notice  # shown to the person, not only the agent
+            print(json.dumps(out))
+        elif client == "cursor":
+            print(json.dumps({"additional_context": msg}))
+        else:
+            print(msg)
+        return 0
+    if event == "post":  # model-visible context after an edit
+        if client in ("claude", "codex"):
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}, "systemMessage": msg}))
+        elif client == "gemini":
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "AfterTool", "additionalContext": msg}, "systemMessage": msg}))
+        elif client == "cursor":
+            print(json.dumps({"additional_context": msg}))
+        elif client == "hermes":
+            print(json.dumps({"context": msg}))
+        else:
+            print(msg)
+        return 0
+    if client == "hermes":  # pre_tool_call has no warn-only channel; warnings reach Hermes at pre_verify (end of turn)
+        print("{}")
+        return 0
+    if client in ("claude", "codex"):
+        out = {"systemMessage": msg}
+        if event == "pre":
+            out["hookSpecificOutput"] = {"hookEventName": "PreToolUse", "additionalContext": msg}
+        print(json.dumps(out))
+    elif client == "gemini":
+        print(json.dumps({"systemMessage": msg}))
+    elif client == "cursor":
+        print(json.dumps({"permission": "allow", "user_message": msg, "agent_message": msg} if event == "pre"
+                         else {"followup_message": msg}))  # stop: one follow-up; loop_count guard prevents repeats
+    elif client == "grok":
+        print(json.dumps({"decision": "allow", "reason": msg}))
+    else:  # windsurf: show_output prints stdout to the user
+        print(msg)
+    return 0
+
+
+def cmd_hook(client, event):
+    """Read a client hook event, apply gate policy, and return its exit status."""
+    try:
+        raw = HOOK_STDIN if HOOK_STDIN is not None else (sys.stdin.read() if not sys.stdin.isatty() else "")
+        payload = json.loads(raw) if raw.strip() else {}
+    except Exception:
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    try:
+        client = detect_client(payload, client)
+    except Exception:
+        client = client or "claude"
+    enforce = False
+    if RUNTIME:
+        early = runtime_precheck(client, event)
+        if early is not None:
+            return early
+    try:
+        try:
+            c = cfg()
+        except ConfigError as e:
+            if event == "post":
+                return hook_out(client, "post", "", False)
+            return hook_out(client, event, "STORY GATE (BLOCKED): %s" % e, True)  # unknown mode: fail closed
+        if event == "session":
+            if not RUNTIME:
+                return hook_out(client, "session", "", False)
+            notice = None
+            e = enrolled()
+            changes = policy_weakened(e)[0] if e else []
+            if changes:
+                notice = ("story-gate: the rules on %s got weaker since you last accepted them (%s). Check with gate.py doctor; "
+                          "if it was intended, accept with gate.py enroll." % (e["policy_ref"], "; ".join(changes)))
+            ctx = session_context(c) + ("\n\nTell the person at the start of your first reply: " + notice if notice else "")
+            return hook_out(client, "session", ctx, False, notice)
+        point = {"pre": "pre_edit", "stop": "stop", "post": "checkpoint"}.get(event, event)
+        enforce = c["mode"] == "enforce" or point in c.get("enforce_points", [])
+        if RUNTIME and event != "post":
+            problem = runtime_policy_problem(c)
+            if problem:
+                return hook_out(client, event, "STORY GATE (%s): %s" % ("BLOCKED" if enforce else "warning only", problem), enforce)
+            import sg_pin as PIN
+            allowed = PIN.allowed_commands(c)  # from the default branch's policy only
+            _, psha, pcfg = PIN.policy(str(ROOT))
+            ents = PIN.entries(pcfg)
+            def approved(cmd):
+                orig = PIN.unwrap_cmd(cmd)
+                if orig is not None:  # our runner: it re-checks everything itself
+                    return orig in allowed
+                # a raw command that runs repository code must go through the runner (e.g. a file the filter skipped)
+                return cmd in allowed and PIN.classify(cmd, str(ROOT), psha, ents.get(cmd))[0] in ("plain", "accepted")
+            unknown = [(f, cmd) for f, cmd in T.other_project_hooks(ROOT, HOOK_FILES) if not approved(cmd)]
+            if unknown:
+                return hook_out(client, event, "STORY GATE (%s): this branch has AI-tool hooks the default branch hasn't approved, so "
+                                "story-gate can't vouch for them: %s. If they're wanted, a code owner lists the exact commands in "
+                                "project_hooks_allowed in .story-gate/config.json on the default branch."
+                                % ("BLOCKED" if enforce else "warning only", "; ".join("%s: %s" % (f, cmd[:80]) for f, cmd in unknown[:5])), enforce)
+        if event == "pre" and client == "vscode" and str(payload.get("tool_name") or "").lower() in VSCODE_READ_ONLY:
+            return hook_out(client, event, "", False)  # VS Code runs the hook for every tool (no matchers): reads pass
+        if event == "post":
+            return hook_out(client, "post", post_edit(payload, c), False)  # checkpoints inform; containment happens at the next pre-edit
+        msg, bad = gate_check(event, payload, c)
+        shell = shell_command(payload) if event == "pre" else None
+        if bad and shell is not None and (is_admin_or_bypass(shell) or (RUNTIME and runs_repo_gate_code(shell))):
+            enforce = True  # protection itself is never warn-only: installing, trusting or switching off is for the human
+        if bad and event == "pre" and msg.startswith("Story ") and "OFF COURSE" in msg:
+            enforce = c["mode"] == "enforce" or "checkpoint" in c.get("enforce_points", [])
+    except Exception as e:  # never crash a client; fails closed only when enforcing
+        msg, bad = "story-gate internal error: %r" % e, True
+    if not bad:
+        return hook_out(client, event, "", False)
+    prefix = "STORY GATE (%s): " % ("BLOCKED" if enforce else "warning only")
+    return hook_out(client, event, prefix + msg, enforce)
+
+
+def runtime_precheck(client, event):
+    """Trusted runtime only. Returns a hook result to stop early, or None to carry on."""
+    if not T.repo_identity(os.getcwd())[1]:
+        if _in_git(os.getcwd()) and event != "post":  # a .git is here but git gave no answer (e.g. it hung): fail closed
+            return hook_out(client, event, "STORY GATE (BLOCKED): git didn't answer in time, so story-gate can't tell which "
+                            "repository this is. Try again; if it keeps happening, run: git status", True)
+        return hook_out(client, event, "", False)  # not in a git repository: nothing to gate
+    problems = T.verify_self(HERE)
+    if problems:  # the installed runtime itself was changed: never run it
+        return hook_out(client, event, "STORY GATE (BLOCKED): the installed story-gate runtime failed its integrity check (%s). "
+                        "Re-install it: gate.py install --user" % "; ".join(problems[:3]), event != "post")
+    if not enrolled():
+        if event == "stop" and GATE.is_dir():
+            return hook_out(client, event, "STORY GATE (warning only): this repository has story-gate but this computer hasn't "
+                            "enrolled it, so nothing is checked here. A human runs: gate.py enroll", False)
+        return hook_out(client, event, "", False)
+    return None
+
+
+def runtime_policy_problem(c):
+    """Policy-level problems the trusted runtime reports for an enrolled repository."""
+    need = c.get("min_runtime_version")
+    if need and T.version_tuple(VERSION) < T.version_tuple(need):
+        return "this repository needs story-gate %s or newer; this computer runs %s. Upgrade: gate.py upgrade" % (need, VERSION)
+    import sg_guard as SG
+    links = SG.symlinked_hook_paths(str(ROOT))
+    if links:
+        return ("this branch stores AI-tool settings as symlinks (%s). Git writes symlinks without the checkout filter, so a "
+                "branch could point your AI tool at hooks nobody approved. Replace them with regular files." % ", ".join(links[:5]))
+    if SG.tampered(str(ROOT)):
+        return ("the checkout filter that keeps a branch's AI-tool hooks off this computer was switched off outside story-gate. "
+                "A human turns it back on with: gate.py filter on  (or off on purpose, logged: gate.py filter off)")
+    found = T.project_hook_findings(ROOT, HOOK_FILES)
+    if found:
+        return ("project hook files run story-gate code from the branch (%s), which a branch could swap. Remove those entries "
+                "(gate.py install --user does it) - the hooks in your user settings already cover this repository" % ", ".join(found))
+    return None
+
+
+def post_edit(payload, c):
+    """Count code edits; every N run a Jev checkpoint and return a model-visible line (or '')."""
+    paths = edited_paths(payload)
+    if paths and all(exempt(p, c) for p in paths):
+        return ""
+    sid = story_id(c, payload)
+    if not sid or not (STORIES / sid).exists():
+        return ""
+    cnt_p = GATE / ".edits"
+    cnt = load_json(cnt_p)
+    n = int(cnt.get(sid, 0)) + 1
+    every = int((c.get("checkpoint") or {}).get("every_edits", 10) or 0)
+    cnt[sid] = n
+    wj(cnt_p, cnt)
+    if not every or n % every:
+        return ""
+    res = cmd_checkpoint(sid, quiet=True)
+    if res.get("status") == "UNKNOWN":
+        return ""
+    line = checkpoint_line(res).replace("story-gate ", "STORY GATE ", 1)
+    if res["status"] != "ON_TRACK":
+        line += ". Pause and correct course before continuing (see .story-gate/PROTOCOL.md > Checkpoints)."
+    return line
+
+
+def gate_check(event, payload, c):
+    """Returns (message, problem?)."""
+    if event == "pre":
+        cmd = shell_command(payload)
+        if cmd is not None and RUNTIME and runs_repo_gate_code(cmd):
+            m = re.search(r"\.story-gate[/\\]gate\.py\s*(.*)$", cmd)
+            return ("This runs story-gate's code from the repository, which a branch can replace. Run the verified copy on this "
+                    "computer instead: `%s`" % gate_cmd((m.group(1).strip() if m else "<command>") or "status")), True
+        if cmd is not None:
+            targets = shell_writes(cmd)
+            bad = [t for t in targets if protected(t, c)]
+            if bad or touches_gate(cmd):
+                return "Agents must not change story-gate files from the shell (%s). Verdicts, config and records are written only by gate.py or a human." % (", ".join(bad) or "gate files"), True
+            paths = [t for t in targets if not exempt(t, c)]
+            if not paths and str(payload.get("tool_name") or "").lower() != "execute_code":
+                return "", False  # Python cells (Hermes execute_code) can write to computed paths: never assume read-only
+        else:
+            paths = edited_paths(payload)
+            if paths and all(exempt(p, c) for p in paths):
+                return "", False
+            bad = [p for p in paths if protected(p, c)]
+            if bad:
+                return "Agents must not edit gate files (%s). Use gate.py commands; verdicts, config and records are written only by gate.py or a human." % ", ".join(bad), True
+        sid = story_id(c, payload)
+        if not sid:
+            return "No active story. Before editing code run `%s` and the READY gate (.story-gate/PROTOCOL.md)." % gate_cmd("start <STORY-ID>"), True
+        v = load_v(sid, "ready")
+        if not passed(v, c, STORIES / sid):
+            return "Story %s READY gate is %s (or out of date). Finish the READY steps in .story-gate/PROTOCOL.md before editing code." % (sid, (v or {}).get("overall", "not run")), True
+        msg = contained(sid, c)
+        return (msg, True) if msg else ("", False)
+    # stop
+    extra = payload.get("extra") if isinstance(payload.get("extra"), dict) else {}  # Hermes pre_verify: extra.attempt
+    retry = bool(payload.get("stop_hook_active") or int(payload.get("loop_count") or 0) >= 1 or int(extra.get("attempt") or 0) >= 1)
+    if retry and c["mode"] == "warn" and "stop" not in c.get("enforce_points", []):
+        return "", False  # warn mode: nag once per turn
+    # Enforce keeps blocking on retries, but not forever: after STOP_LIMIT blocked stops in a row the session may end.
+    # Nothing is lost - the PR check in CI still blocks the merge.
+    stops = 0
+    try:
+        stops = int(rd(GATE / ".stops").strip() or 0) + 1 if retry else 0
+    except ValueError:
+        stops = 0
+    if stops >= STOP_LIMIT:
+        (GATE / ".stops").write_text("0", encoding="utf-8")
+        return "", False
+    if GATE.is_dir():
+        (GATE / ".stops").write_text(str(stops), encoding="utf-8")
+    sid = story_id(c, payload)
+    _, files, _ = diff_against(c["base_branch"])
+    code = [f for f in files if not exempt(f, c)]
+    if not code:
+        return "", False
+    if not sid:
+        return "Code changed (%d files) with no active story. Link the work to a story and run the gate." % len(code), True
+    d = load_v(sid, "done")
+    if not passed(d, c, STORIES / sid):
+        return "Story %s has code changes but the DONE gate is %s. Run the DONE steps (handoff, tests, learnings) in .story-gate/PROTOCOL.md; `%s` names the next one." % (sid, (d or {}).get("overall", "not run"), gate_cmd("next")), True
+    return "", False
+
+
+# ------------------------------------------------------------------ CI
+GATE_FILES = HOOK_FILES + (".story-gate/gate.py", ".story-gate/sg_judges.py", ".story-gate/sg_github.py", ".story-gate/sg_trust.py",
+              ".story-gate/sg_guard.py", ".story-gate/sg_pin.py", ".story-gate/sg_dashboard.py", ".story-gate/sg_writing.py", ".story-gate/sg_validation.py", ".story-gate/sg_report.py", ".story-gate/sg_specpull.py", ".story-gate/sg_trackers.py", ".story-gate/sg_setup.py", ".story-gate/sg_reusable.py", ".story-gate/sg_settings.py", ".story-gate/sg_trackersetup.py", ".story-gate/sg_measure.py", ".story-gate/sg_isolate.py", ".story-gate/sg_areas.py", ".story-gate/sg_pitfalls.py", ".story-gate/sg_stories.py", ".story-gate/config.json", ".story-gate/budgets.json", ".story-gate/release.json", ".story-gate/release.json.sig",
+              ".story-gate/judge-calibration.json",
+              ".github/workflows/story-gate.yml", ".github/workflows/story-gate-audit.yml", ".github/workflows/story-gate-dashboard.yml",
+              ".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
+
+
+def summary(lines):
+    p = os.environ.get("GITHUB_STEP_SUMMARY")
+    if p:
+        with open(p, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+
+def cmd_ci_tests(out_dir):
+    """Job 1 (no secrets): run the base branch's pinned test command and the story's scenarios on the PR code, as a
+    separate throwaway account in CI (sg_isolate), and save exit code, JUnit and scenario results as data."""
+    import sg_isolate as I, sg_validation as V
+    c = cfg()
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    cmd = c.get("test_command")
+    rec, junit, scen = {"command": cmd, "at": now()}, None, None
+    sid = story_id(c)
+    jf = junit_file(c)
+    if cmd and jf and jf.is_file():
+        jf.unlink()  # a report committed in the PR never counts: only the one this test run writes
+    acc, why = (ci_account(c, [out]) if isolation_required() else (None, ""))
+    if isolation_required():
+        rec["isolated"] = acc is not None
+    if isolation_required() and acc is None and c.get("ci_isolation") == "strict":
+        rec.update({"exit_code": None, "error": "story-gate couldn't run the pull request's code as a separate account (%s), "
+                                               "so it ran nothing (ci_isolation is \"strict\")" % why})
+        print("story-gate tests: not run - %s" % rec["error"])
+        wj(out / "results.json", rec)
+        return 0
+    if why:
+        print("story-gate: running the pull request's code as story-gate's own account (%s); its results count as "
+              "reported, not checked" % why)
+    try:
+        if not cmd:
+            rec.update({"exit_code": None, "error": "no test_command configured"})
+        else:
+            t0 = time.time()
+            if acc is not None:
+                code, text, _, note = V.execute(["/bin/sh", "-c", cmd], str(ROOT), 3000, account=acc)
+                rec.update({"exit_code": code, "output_tail": (text + ("\n" + note if note else ""))[-4000:]})
+            else:
+                try:
+                    r = subprocess.run(cmd, shell=True, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=3000)
+                    rec.update({"exit_code": r.returncode, "output_tail": (r.stdout + r.stderr)[-4000:]})
+                except Exception as e:
+                    rec.update({"exit_code": -1, "output_tail": repr(e)})
+            rec["seconds"] = round(time.time() - t0, 1)
+            jf = junit_file(c)
+            if jf:  # read now, after the test run's processes are stopped: the scenarios below run PR code too
+                junit = I.read_regular(str(jf), 5_000_000) if acc is not None else (jf.read_bytes()[:5_000_000] if jf.is_file() else None)
+        print("story-gate tests: %s" % ("exit %s" % rec.get("exit_code") if cmd else "no test_command configured"))
+        if sid and (STORIES / sid / "scenarios.json").is_file():
+            res = V.run_all(V.specs_of(load_json(STORIES / sid / "scenarios.json")), str(ROOT), work_state, "ci",
+                            [a for a, _, _ in acs(STORIES / sid)], skip_local_only=True, account=acc)
+            scen = {"story": sid, "results": res}
+            if isolation_required():
+                scen["isolated"] = acc is not None
+            print("story-gate scenarios: %d of %d passed" % (len([r for r in res.values() if r.get("passed")]), len(res)))
+    except I.IsolationError as e:  # couldn't verify every process stopped: nothing from this run counts
+        rec.update({"exit_code": None, "isolated": False, "error": "story-gate couldn't confirm the pull request's code had "
+                                                                    "stopped (%s), so nothing from this run counts" % e})
+        junit = scen = None
+    finally:
+        if acc is not None:
+            for w in teardown_warnings(acc, I):  # results were read after verified stops: clean-up can't change them
+                rec.setdefault("warnings", []).append(w)
+    # Written last, by story-gate's own account, into a folder the pull request's code can't write.
+    wj(out / "results.json", rec)
+    if junit is not None:
+        (out / "junit.xml").write_bytes(junit)
+    if scen is not None:
+        wj(out / "scenarios.json", scen)
+    return 0
+
+
+def cmd_ci_measure(out_dir):
+    """The measure job (no secrets, its own runner): measure the default branch's budgets that apply to this pull request
+    and save only the raw output. It runs before, and apart from, the project's tests and scenarios, so their code can't
+    touch these files. The story-gate job parses and compares; nothing here decides."""
+    import sg_areas as A, sg_measure as M
+    c = cfg()
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if not story_id(c):
+        print("story-gate budgets: no story on this pull request, nothing to measure")
+        return 0
+    try:
+        bref = os.environ.get("SG_BASE_REF") or os.environ.get("GITHUB_BASE_REF")
+        base = ("origin/" + bref) if bref else c["base_branch"]
+        files = changed_paths(base)
+        todo = [b for b in budgets_policy() if M.applies(b, files)]
+        todo += A.records(areas_policy(c), set(areas_that_apply(c, base)[0]))  # guardrail checks: the same runner and rules
+    except (ConfigError, RuntimeError) as e:  # the story-gate job reads the same policy and reports it
+        print("story-gate budgets: not measured (%s)" % e)
+        return 0
+    head = git("rev-parse", "HEAD").strip()
+    import sg_isolate as I
+    acc, why = (ci_account(c, [out]) if isolation_required() and todo else (None, ""))
+    meta = {"head": head, "isolated": acc is not None} if isolation_required() else {"head": head}
+    if isolation_required() and todo and acc is None and c.get("ci_isolation") == "strict":
+        print("story-gate budgets: not measured - story-gate couldn't run the pull request's code as a separate account (%s)" % why)
+        wj(out / "measures.json", dict(meta, runs={}, error=why))
+        return 0
+    try:
+        measured = M.run_all(todo, str(ROOT), work_state, account=acc)
+    except Exception as e:  # the story-gate job then sees every budget as not run (never a pass)
+        print("story-gate budgets: not measured (%s: %s)" % (e.__class__.__name__, str(e)[:200]))
+        return 0
+    finally:
+        if acc is not None:
+            teardown_warnings(acc, I)
+    for n, (r, raw) in measured.items():
+        f = raw_path(out, n)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_bytes(raw)
+    wj(out / "measures.json", dict(meta, runs={n: r for n, (r, _) in measured.items()}))
+    print("story-gate budgets: measured %d" % len(measured))
+    return 0
+
+
+CHANGE_LABEL = "story-gate-change"
+
+
+def raw_path(out_dir, key):
+    """Where the measure job saves one run's raw output: measures/<budget>.raw, or measures/areas/<area>/<check>.raw.
+    Names are validated (letters, digits, '.', '_', '-'), so a key can't leave the folder."""
+    return Path(out_dir) / "measures" / ("areas/%s.raw" % key if "/" in key else key + ".raw")
+
+
+def ci_runs(measures_dir):
+    """(runs, why every value is only reported) from the measure job's measures.json: nothing when it is for another
+    commit, or when strict isolation was required and the runs aren't known to be isolated."""
+    meta = load_json(Path(measures_dir) / "measures.json") if measures_dir else {}
+    runs = meta.get("runs") if isinstance(meta.get("runs"), dict) and meta.get("head") == git("rev-parse", "HEAD").strip() else {}
+    unisolated = isolation_required() and meta.get("isolated") is not True
+    if unisolated and cfg().get("ci_isolation") == "strict":
+        runs = {}  # strict: a run not known to be isolated is no run at all (not_run), whatever the file says
+    loose = ["measured as story-gate's own account, not a separate one (ci_isolation is \"relaxed\", or isolation "
+             "couldn't be set up)"] if unisolated else []
+    return runs, loose
+
+
+def ci_result(measures_dir, runs, key, b, fp, trust):
+    """One record's result from the measure job's run: parsed and compared here, never taken from the run."""
+    import sg_measure as M
+    rec = runs.get(key) if isinstance(runs.get(key), dict) else None
+    raw = b""
+    if rec:
+        rec = dict(rec, fingerprint=fp)  # the same commit as the tests job (its run may leave build files a clean checkout lacks)
+        f = raw_path(measures_dir, key)
+        if f.is_file() and not f.is_symlink():
+            with open(f, "rb") as fh:
+                raw = fh.read(M.OUTPUT_CAP + 1)
+    return M.evaluate(b, rec, raw, fp, "ci", trust)
+
+
+def ci_budgets(measures_dir, base, files_of):
+    """{budget: result} for the default branch's budgets that apply, from the tests job's raw runs. Everything is decided
+    here: which budgets apply, whether a pinned file changed, the parse and the comparison. A run for another command,
+    or from another commit, doesn't count."""
+    import sg_measure as M
+    runs, loose = ci_runs(measures_dir)
+    fp, out = work_fingerprint(), {}
+    for b in budgets_policy():
+        if M.applies(b, files_of):
+            out[b["name"]] = ci_result(measures_dir, runs, b["name"], b, fp, M.trust_problems(b, str(ROOT), files_of) + loose)
+    return out
+
+
+def ci_areas(measures_dir, base, c):
+    """({"area/check": result}, {area: why it applies}, notes) for the guardrail areas that apply, decided here from this
+    job's own checkout (triggers, pins) and the measure job's raw runs, exactly as ci_budgets does."""
+    import sg_areas as A, sg_measure as M
+    why, notes, files = areas_that_apply(c, base)
+    if not why:
+        return {}, why, notes
+    runs, loose = ci_runs(measures_dir)
+    fp, out = work_fingerprint(), {}
+    for b in A.records(areas_policy(c), set(why)):
+        trust = M.trust_problems(b, str(ROOT), files) if files is not None else [UNREAD]
+        r = ci_result(measures_dir, runs, b["_key"], b, fp, trust + loose)
+        out[b["_key"]] = A.refresh(b, r)
+    return out, why, notes
+
+
+def cmd_ci(tests_dir=None, measures_dir=None):
+    """Job 2 (has the judge key, runs no PR code): re-score READY and DONE with CI's own test results,
+    verify human acceptance through GitHub, report clearly whether merges are actually blocked."""
+    import sg_github as G
+    problems, notes, code, enforce, c = [], [], [], True, {}
+    sid, pitfall_warn = None, ""
+    try:
+        c = cfg()
+        enforce = c["mode"] == "enforce" or "ci" in c.get("enforce_points", [])
+        bref = os.environ.get("SG_BASE_REF") or os.environ.get("GITHUB_BASE_REF")  # pull_request_review has no GITHUB_BASE_REF
+        base = ("origin/" + bref) if bref else c["base_branch"]
+        c["base_branch"] = base
+        _, files, _ = diff_against(base)
+        code = [f for f in files if not exempt(f, c) and not is_record(f)]
+        sid = story_id(c)
+        ctx = G.pr_context()
+        token = os.environ.get("GITHUB_TOKEN")
+        touched = sorted(f for f in files if f in GATE_FILES or f.startswith(".github/workflows/") or f.startswith(".grok/hooks/")
+                         or (f.startswith(".story-gate/") and (f.endswith(".py") or f.startswith(".story-gate/vendor/"))))
+        if touched:
+            who = G.label_added_by(ctx, token, CHANGE_LABEL) if ctx and token else None
+            owners_txt = (git("show", "%s:.github/CODEOWNERS" % base) or git("show", "%s:CODEOWNERS" % base)
+                          or git("show", "%s:docs/CODEOWNERS" % base) or "")  # the same lookup as story acceptance below
+            allowed = {u.lower() for u in G.codeowners(owners_txt)[0]} | {a.lower().lstrip("@") for a in (c.get("approvers") or [])}
+            others = [f for f in code if f not in touched]  # anything besides story-gate's own files (docs may ride along)
+            if who and who.lower() in allowed:
+                notes.append("This PR changes story-gate code, hook or workflow files (%s); %s confirmed with the '%s' label."
+                             % (", ".join(touched), who, CHANGE_LABEL))
+            elif not others:
+                # A pull request that changes only story-gate's files: a code owner's approval of its latest commit is the
+                # confirmation (no separate label). Owners come from the base branch, as for any other acceptance.
+                acc = G.acceptance(ctx, token, owners_txt, c.get("approvers") or []) if ctx and token else \
+                    {"accepted": False, "why": "not running on a pull request"}
+                code_like = [f for f in touched if f != ".story-gate/config.json"]
+                if code_like:  # weaker() reads config.json only; it can't tell whether a code, hook or workflow change loosens the gate
+                    notes.append("This PR changes story-gate's code, hooks, workflows or code owners (%s). story-gate can't judge "
+                                 "whether that loosens the gate: read the diff before you approve." % ", ".join(code_like))
+                if acc["accepted"]:
+                    notes.append("This PR changes only story-gate files (%s); %s confirmed by approving the latest commit."
+                                 % (", ".join(touched), acc.get("approver")))
+                else:
+                    problems.append("This PR changes only story-gate files (%s). A code owner confirms it by approving the latest "
+                                    "commit (%s). GitHub doesn't count an approval from whoever opened the pull request or pushed "
+                                    "its latest commit: if that's you, ask your AI to open it, or add the label '%s'."
+                                    % (", ".join(touched), acc["why"], CHANGE_LABEL))
+            else:
+                problems.append("This PR changes story-gate code, hook or workflow files (%s) together with other files. Put the "
+                                "story-gate changes in their own pull request (a code owner's approval then confirms them), or a "
+                                "code owner adds the label '%s'%s." % (", ".join(touched), CHANGE_LABEL,
+                                                                     " (it was added by %s, who is not a code owner)" % who if who else ""))
+            code = others  # story-gate's own files never need a story; the confirmation above covers them
+        if ".story-gate/config.json" in files:  # say in plain words when this PR makes the rules weaker
+            w = T.weaker(full_config(git("show", "%s:.story-gate/config.json" % base) or None),
+                         full_config(rd(GATE / "config.json") or None))
+            if w:  # a warning, so GitHub shows it on the pull request, not only in the check's summary
+                weak = "This PR makes story-gate's rules weaker: %s. Reviewers: make sure that's intended." % "; ".join(w)
+                notes.insert(0, weak)
+                print("::warning title=story-gate: rules made weaker::%s" % gh_msg(weak.replace("\n", " ")))
+        import sg_measure as M
+        has_budgets = git("cat-file", "-t", "%s:.story-gate/budgets.json" % base).strip() == "blob"
+        base_budgets = git("show", "%s:.story-gate/budgets.json" % base) if has_budgets else None
+        if os.environ.get("STORY_GATE_TRUSTED_DIR") and has_budgets and not trusted("budgets.json").is_file():
+            raise ConfigError("the default branch has budgets (.story-gate/budgets.json) but this workflow didn't hand them to "
+                              "story-gate, so they can't be checked. A code owner runs `story-gate install` to update the workflow")
+        if ".story-gate/budgets.json" in files:  # the same plain words for looser budgets
+            try:
+                mine = rd(GATE / "budgets.json") if (GATE / "budgets.json").is_file() else None
+                wb = M.weaker(M.load(base_budgets), M.load(mine, "this PR's .story-gate/budgets.json"))
+            except M.PolicyError as e:
+                problems.append("%s. Once merged it would stop the gate (it fails closed), so fix it first" % e)
+                wb = []
+            if wb:
+                weak = "This PR makes story-gate's budgets looser: %s. Reviewers: make sure that's intended." % "; ".join(wb)
+                notes.insert(0, weak)
+                print("::warning title=story-gate: rules made weaker::%s" % gh_msg(weak.replace("\n", " ")))
+        try:  # pinned project hooks (sg_pin): flag scripts that seem to use repository files outside their pins
+            import sg_pin as PIN
+            head_sha = git("rev-parse", "HEAD").strip()
+            for hook_cmd, ent in PIN.entries(c).items():
+                extra = PIN.unpinned_references(str(ROOT), head_sha, ent["pins"]) if ent["pins"] else []
+                if extra:
+                    notes.append("pinned hook '%s' seems to use repository files that aren't pinned (%s); add them to its pins"
+                                 % (hook_cmd, ", ".join(extra[:5])))
+        except Exception:
+            pass
+        if sid and (STORIES / sid / "story.md").is_file():  # the spec this story is checked against, changed in the same PR
+            linked = set()
+            for e in story_spec_refs(front_matter(rd(STORIES / sid / "story.md"))):
+                linked |= {ref.split("#", 1)[0] for ref in linked_scenarios(e)[0]}
+            changed = sorted(f for f in files if f in linked)
+            if changed:
+                msg = ("This PR also changes the spec its story is checked against (%s). Reviewers: check that no scenario was "
+                       "removed or weakened to make the check pass." % ", ".join(changed))
+                notes.append(msg)
+                print("::warning title=story-gate: spec changed::%s" % gh_msg(msg))
+            import sg_specpull as SP  # issues copied in with spec-pull: compare each copy with the live issue
+            story_text = rd(STORIES / sid / "story.md")
+            snaps, odd = snapshot_links(story_text)
+            base_story = git("show", "%s:.story-gate/stories/%s/story.md" % (base, sid))
+            dropped = sorted(set(story_spec_refs(front_matter(base_story))) - set(story_spec_refs(front_matter(story_text))))
+            if dropped:  # a link the base branch had is gone: its requirements are no longer checked
+                msg = ("This PR removes the story's link to %s, so its requirements are no longer checked. Reviewers: make sure "
+                       "that's intended." % ", ".join(dropped))
+                notes.append(msg)
+                print("::warning title=story-gate: spec link removed::%s" % gh_msg(msg))
+            sources = CI_SOURCES.setdefault(sid, [])
+
+            def report_source(rel, label, issue, state, detail):
+                """One pulled copy's result: a GitHub annotation on its path (the dashboard reads these), the validation
+                page's row, and a note or (with spec_source_check "block") a problem."""
+                msg = "%s (%s): %s" % (rel, label, detail)
+                word = SOURCE_WORDS.get(state, "not checked")
+                try:
+                    fields = parse_snapshot(rd(ROOT / rel))[0]
+                except ValueError:
+                    fields = {}
+                run_url = ("%s/%s/actions/runs/%s" % (os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+                                                      os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_RUN_ID", ""))
+                           if os.environ.get("GITHUB_RUN_ID") else "")
+                sources.append({"path": rel, "issue": issue, "state": word, "detail": detail, "checked_at": now(), "run": run_url,
+                                "copied_at": fields.get("fetched_at", ""), "issue_updated_at": fields.get("source_updated_at", "")})
+                if state == "unchanged":
+                    print("::notice file=%s,title=story-gate: source verified::%s" % (gh_prop(rel), gh_msg(msg)))
+                    notes.append(msg)
+                    return
+                print("::warning file=%s,title=story-gate: source %s::%s" % (gh_prop(rel), gh_prop(word), gh_msg(msg)))
+                if c.get("spec_source_check") == "block":
+                    problems.append(msg + " (spec_source_check is \"block\")")
+                else:
+                    notes.append(msg)
+            for path in odd:
+                msg = ("%s looks like a pulled issue but isn't where `spec-pull` saves one (.story-gate/stories/<ID>/issue-<N>.md), "
+                       "so CI can't compare it with the live issue" % path)
+                print("::warning file=%s,title=story-gate: source not checked::%s" % (gh_prop(path), gh_msg(msg)))
+                sources.append({"path": path, "issue": None, "state": "not checked", "detail": msg})
+                (problems if c.get("spec_source_check") == "block" else notes).append(msg)
+            allowed = {r.lower() for r in c.get("spec_repos") or []}
+            here = os.environ.get("GITHUB_REPOSITORY", "")
+            for rel, owner, num, other in snaps:
+                if other and other.lower() == here.lower():
+                    other = None  # this repository's own issue, however the copy is named: compare it as one
+                try:
+                    if other and other.lower() not in allowed:  # never fetch outside the default branch's allowlist
+                        state, detail = "not checked", ("%s isn't on spec_repos in the default branch's config, so CI doesn't "
+                                                        "read it" % other)
+                    elif other and not os.environ.get("STORY_GATE_SPECS_TOKEN"):
+                        state, detail = "not checked", ("no STORY_GATE_SPECS_TOKEN secret (or the pull request comes from a fork, "
+                                                        "which gets no secrets), so CI can't read %s" % other)
+                    else:
+                        state, detail = SP.live_status(sys.modules[__name__], owner, rel, num,
+                                                       other or os.environ.get("GITHUB_REPOSITORY", ""),
+                                                       os.environ.get("STORY_GATE_SPECS_TOKEN") if other else os.environ.get("GITHUB_TOKEN"))
+                except Exception as e:  # never let the comparison itself crash CI or pass silently
+                    state, detail = "not checked", "the comparison failed (%s)" % type(e).__name__
+                report_source(rel, "issue %s#%d" % (other or "", num), num, state, detail)
+            import sg_trackers as TR  # tickets copied in from a tracker set up in the default branch's config
+            for rel, owner, kind, key in tracker_links(story_text):
+                settings = (c.get("trackers") or {}).get(kind)
+                # its own variable: `token` is the GitHub token the acceptance and branch-protection checks below use
+                tracker_token, missing = TR.ci_token(kind, settings=settings) if kind in TR.CI_SECRETS else ("", ["a key"])
+                try:
+                    if not isinstance(settings, dict):
+                        state, detail = "not checked", ("%s isn't set up in the default branch's config (trackers), so CI "
+                                                        "doesn't read it" % TR.LABEL.get(kind, kind))
+                    elif SP.public_here() and settings.get("allow_in_public_repo") is not True:
+                        state, detail = "not checked", ("this repository is public and trackers.%s doesn't allow ticket text "
+                                                        "in a public repository, so CI doesn't read it" % kind)
+                    elif not tracker_token:
+                        state, detail = "not checked", ("no %s secret (or the pull request comes from a fork, which gets no "
+                                                        "secrets), so CI can't read %s" % (" / ".join(missing), key))
+                    else:
+                        state, detail = TR.live_status(sys.modules[__name__], owner, rel, kind, key, settings, tracker_token)
+                except Exception as e:  # never let the comparison itself crash CI or pass silently
+                    state, detail = "not checked", "the comparison failed (%s)" % type(e).__name__
+                report_source(rel, "%s %s" % (TR.LABEL.get(kind, kind), key), key, state, detail)
+        if code and not sid:
+            problems.append("code changed but no story id in the branch name or a leading '[ID]' in the PR title (pattern %s)" % c["story_id_pattern"])
+        elif code:
+            sd = STORIES / sid
+            results, tr = None, None
+            if tests_dir and not (Path(tests_dir) / "results.json").is_file():
+                # Never fall back to the agent's own recorded results.
+                tr = {"command": c.get("test_command"), "exit_code": None, "error": "the CI tests job left no results"}
+                if sd.exists():
+                    wj(sd / "test_results.json", dict(tr, fingerprint="", source="ci"))
+                problems.append("CI test results are missing (the tests job failed before recording, or its artifact did not upload)")
+            elif tests_dir:
+                tr = load_json(Path(tests_dir) / "results.json")
+                junit = Path(tests_dir) / "junit.xml"
+                try:
+                    results = G.junit(junit) if junit.is_file() else None
+                except Exception as e:
+                    problems.append("JUnit report rejected: %s" % e)
+                if isolation_required():
+                    tr["isolated"] = tr.get("isolated") is True
+                if sd.exists():  # CI's own run replaces anything the agent recorded
+                    wj(sd / "test_results.json", dict(tr, fingerprint=work_fingerprint(), head=git("rev-parse", "HEAD").strip(), source="ci"))
+                if tr.get("exit_code") != 0:
+                    problems.append("tests failed or did not run in CI (%s)" % (tr.get("error") or "exit %s" % tr.get("exit_code")))
+            if sd.exists():  # scenario results: CI's own runs only; the agent's runs count only for local-only scenarios
+                import sg_validation as V
+                ci_doc = load_json(Path(tests_dir) / "scenarios.json") if tests_dir else {}
+                ci_runs = V.results_of(ci_doc)
+                if isolation_required():  # stamped here from the tests job's own record, never from the story folder
+                    ci_runs = {n: dict(r, isolated=ci_doc.get("isolated") is True) for n, r in ci_runs.items() if isinstance(r, dict)}
+                specs = V.specs_of(load_json(sd / "scenarios.json"))
+                local_only = {s.get("name") for s in specs if s.get("local_only")}
+                if tests_dir and any(not s.get("local_only") for s in specs) and not (Path(tests_dir) / "scenarios.json").is_file():
+                    notes.append("The tests job ran no scenarios. If this repository's story-gate workflow is older than "
+                                 "the scenarios feature, ask a code owner to run `story-gate install` to update it.")
+                mine = V.results_of(load_json(sd / "scenario_results.json"))
+                merged = {n: r for n, r in mine.items() if n in local_only and isinstance(r, dict) and r.get("source") == "local"}
+                fp = work_fingerprint()  # same commit as the tests job; its run may leave build files that a clean checkout lacks
+                merged.update({n: dict(r, source="ci", fingerprint=fp) for n, r in ci_runs.items() if isinstance(r, dict) and n not in local_only})
+                wj(sd / "scenario_results.json", {"story": sid, "results": merged})
+            if sd.exists():  # budgets: parsed and compared here, from the tests job's raw output, never from the PR's records
+                CI_MEASURED[sid] = ci_budgets(measures_dir, base, files_of=changed_paths(base))
+                if CI_MEASURED[sid] and not measures_dir:
+                    notes.append("No budgets were measured: this repository's story-gate workflow has no measure job yet. "
+                                 "A code owner runs `story-gate install` to update it; until then decided budgets fail.")
+                kept = load_json(sd / "budget_results.json").get("results")
+                kept = {n: r for n, r in (kept if isinstance(kept, dict) else {}).items() if n not in CI_MEASURED[sid]}
+                wj(sd / "budget_results.json", {"v": M.SCHEMA, "story": sid, "results": dict(kept, **CI_MEASURED[sid])})
+                CI_AREAS[sid] = ci_areas(measures_dir, base, c)
+                if CI_AREAS[sid][1] and not measures_dir:
+                    notes.append("No guardrail checks were run: this repository's story-gate workflow has no measure job yet. "
+                                 "A code owner runs `story-gate install` to update it; until then enforced areas fail.")
+                notes += CI_AREAS[sid][2]
+                kept = load_json(sd / "guardrail_results.json").get("results")
+                kept = {n: r for n, r in (kept if isinstance(kept, dict) else {}).items() if n not in CI_AREAS[sid][0]}
+                wj(sd / "guardrail_results.json", {"v": M.SCHEMA, "story": sid, "results": dict(kept, **CI_AREAS[sid][0])})
+            accepted = {"accepted": False, "why": "not running on a pull request"}
+            if ctx and token:
+                # Owners come only from the base branch: a PR can never name its own approvers.
+                base_owners = (git("show", "%s:.github/CODEOWNERS" % base) or git("show", "%s:CODEOWNERS" % base)
+                               or git("show", "%s:docs/CODEOWNERS" % base))
+                accepted = G.acceptance(ctx, token, base_owners, c.get("approvers") or [])  # owners from the base branch
+            if not objective(c) and not J.available(c):
+                problems.append("judge unavailable in CI (%s). Add the judge key as a repository secret%s." % (
+                    J.settings(c).get("key_env"), "; PRs from forks never get secrets, so a maintainer must re-run the check" if (ctx or {}).get("fork") else ""))
+            elif not sd.exists():
+                problems.append("no story folder .story-gate/stories/%s in this PR" % sid)
+            else:
+                for ph in ("ready", "done"):
+                    cmd_score(sid, ph, base, ci_trust=accepted["accepted"], results=results if ph == "done" else None, quiet=True)
+                    v = load_v(sid, ph)
+                    pa = ((v or {}).get("checks") or {}).get("pitfalls_acknowledged") or {}
+                    if pa.get("status") == "WARN":  # warn mode never blocks, but the approver must still see it
+                        pitfall_warn = pa.get("why") or "known pitfalls could not be checked"
+                        print("::warning title=story-gate: known pitfalls::%s" % gh_msg(pitfall_warn.replace("\n", " ")[:900]))
+                    if not passed(v, c):
+                        bad = ["%s (%s)" % (k, x.get("why") or x.get("score")) for k, x in (v or {}).get("checks", {}).items() if x["status"] not in ("PASS", "WAIVED", "NOT_JUDGED", "WARN")]
+                        problems.append("%s %s gate is %s: %s" % (sid, ph.upper(), (v or {}).get("overall", "missing"), "; ".join(bad)[:900]))
+            if ctx and token and c.get("require_independent_review"):
+                try:
+                    who = G.reviewed_by(ctx, token, c.get("reviewers") or [])
+                    open_threads = G.unresolved_threads(ctx, token, c.get("reviewers") or [])
+                    if not who and not accepted["accepted"] and c.get("reviewers"):  # with no reviewers listed, acceptance below covers it
+                        problems.append("no independent review yet (expected one of: %s, or a code owner)" % ", ".join(c["reviewers"]))
+                    if open_threads:
+                        problems.append("%d unresolved review thread(s) from the independent reviewers" % open_threads)
+                except Exception as e:
+                    problems.append("could not read reviews: %s" % e)
+            if not accepted["accepted"]:
+                problems.append("human acceptance: " + accepted["why"])
+            enforced, missing = (G.protection(ctx["repo"], ctx["base"], token, G.ci_check_name(ROOT)) if ctx and token else (False, ["not running on a pull request"]))
+            if not enforced:
+                notes.insert(0, "ADVISORY - NOT ENFORCED: GitHub will not block this merge (%s). Run `gate.py setup-repo` or see the README." % "; ".join(missing))
+    except ConfigError as e:
+        problems.append(str(e)); enforce = True
+    except Exception as e:
+        problems.append("story-gate could not run: %s" % e)
+    level = "error" if enforce else "warning"
+    for p in problems:
+        print("::%s title=story-gate::%s" % (gh_prop(level), gh_msg(p.replace("\n", " "))))
+    for n in notes:
+        if not n.startswith(("This PR makes story-gate's rules weaker", "This PR makes story-gate's budgets looser")):  # already printed as a warning
+            print("::notice title=story-gate::%s" % gh_msg(n))
+    lines = ["## story-gate %s%s" % ("- %s" % sid if sid else "", " (objective mode: no AI judge)" if objective(c) else ""), ""]
+    if objective(c) and code:
+        lines += ["> **Checked without an AI judge.** story-gate ran your tests and every scenario itself and checked the story's "
+                  "paperwork, but nobody independently checked: %s. Add a judge key to check those too (see the guide: "
+                  "judge_mode)." % "; ".join(OBJECTIVE_LIMITS), ""]
+        print("::notice title=story-gate: objective mode::Checked without an AI judge. Not checked: %s." % gh_msg("; ".join(OBJECTIVE_LIMITS)))
+    lines += ["> **%s**" % n for n in notes] + [""]
+    if problems:
+        lines += ["- [ ] %s" % p for p in problems]
+    elif code:
+        lines += ["- [x] READY and DONE gates passed, CI tests passed, and a code owner approved this commit."]
+    else:
+        lines += ["- [x] No code files changed, so the story gates were skipped. Normal code owner review still applies."]
+    if sid and (STORIES / sid / "trace.md").exists():
+        lines += ["", rd(STORIES / sid / "trace.md")]
+    if sid and code and (STORIES / sid / "validation.md").exists():
+        import sg_validation as V
+        res_ = V.result_section(rd(STORIES / sid / "validation.md"))
+        if res_:  # shown as plain text in a code block: the agent's words can't add links, images or mentions here
+            fence = "`" * max(3, 1 + max([len(m) for m in re.findall(r"`+", res_)] or [0]))
+            lines += ["", "### Result (from validation.md, written by the agent)", "", fence + "text", res_, fence]
+        if os.environ.get("RUNNER_TEMP"):
+            try:
+                cmd_report(sid, str(Path(os.environ["RUNNER_TEMP"]) / "sg-report" / ("validation-%s.html" % sid)), in_ci=True)
+                lines += ["", "The full validation page is attached to this run as the **story-gate-validation** artifact."]
+            except Exception as e:
+                lines += ["", "The validation page could not be built: %s" % str(e)[:200]]
+    if sid and (STORIES / sid / "scenarios.json").exists():
+        import sg_validation as V
+        lines += V.summary_lines(load_json(STORIES / sid / "scenarios.json"), V.results_of(load_json(STORIES / sid / "scenario_results.json")),
+                                 [a for a, _, _ in acs(STORIES / sid)], work_fingerprint(), True)
+    if sid and code and (STORIES / sid).exists():
+        try:
+            import sg_measure as M
+            lines += M.summary_lines(budget_rows(STORIES / sid, c, True), True)
+        except Exception as e:  # ConfigError is already a problem above
+            lines += ["", "Budgets could not be shown: %s" % str(e)[:200]]
+        try:
+            import sg_areas as A
+            rows, why, _ = area_rows(STORIES / sid, c, True)
+            lines += A.summary_lines(rows, True, why)
+            st, w = A.verdict(rows, True)
+            if st == "WARN":
+                print("::warning title=story-gate: guardrails::%s" % gh_msg(w.replace("\n", " ")[:900]))
+        except Exception as e:
+            lines += ["", "Guardrails could not be shown: %s" % str(e)[:200]]
+    lines += writing_summary(sid)
+    if sid and (STORIES / sid).exists():
+        import sg_pitfalls as PF
+        if PF.mode(c) != "off":  # the story picks its own tags, so the approver sees them
+            lines += PF.tag_lines(*PF.story_tags(front_matter(rd(STORIES / sid / "story.md"))))
+            if pitfall_warn:
+                lines += ["", "**Warning (warn mode, doesn't block):** " + PF.clean(pitfall_warn, 900)]
+    if sid:
+        recs = jsonl(STORIES / sid / "decisions.jsonl")
+        if recs:
+            lines += ["", "### Waivers and drift decisions in this story (count only after a code owner approves this commit)"]
+            lines += ["- %s %s: %s by %s - %s" % (r.get("phase"), r.get("kind"), r.get("check") or r.get("drift"), r.get("by"), r.get("reason") or r.get("note", "")) for r in recs]
+    summary(lines)
+    print("story-gate CI: %s (%s mode, %d code files)" % ("OK" if not problems else "%d problem(s)" % len(problems), "enforce" if enforce else "warn", len(code)))
+    return 1 if (problems and enforce) else 0
+
+
+def writing_summary(sid):
+    """CI summary lines: plain-writing scores for the story's own text and the PR description (advisory)."""
+    import sg_writing as W
+    target = float((cfg().get("writing") or {}).get("target", 0.8))
+    rows = []
+    for ph in ("ready", "done"):
+        w = load_json(STORIES / sid / ("%s.json" % ph)).get("writing") if sid else None
+        if w and w.get("score") is not None:
+            rows.append("| %s (%s) | %.2f | %s |" % ("story summary" if ph == "ready" else "validation + handoff + learnings", ph.upper(), w["score"],
+                                                   "; ".join(w.get("advice") or []) or "-"))
+    try:
+        with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
+            body = json.load(f)["pull_request"].get("body") or ""
+    except Exception:
+        body = None
+    if body is not None:
+        r = W.report({"PR description": body}, target)
+        if r["score"] is not None:
+            ex = (r["parts"]["PR description"]["examples"] or [""])[0]
+            rows.append("| PR description | %.2f | %s |" % (r["score"], ex.replace("|", "/") or "-"))
+    if not rows:
+        return []
+    return (["", "### Plain writing (advisory, STE-style; target %.2f)" % target, "", "| Text | Score | Advice |", "|---|---|---|"]
+            + rows)
+
+
+def cmd_audit():
+    """After a merge: record who merged and whether a code owner approved the merged commit; flag anything else."""
+    import sg_github as G
+    ctx, token = G.pr_context(), os.environ.get("GITHUB_TOKEN")
+    if not ctx or not token:
+        print("story-gate audit: not a pull_request event"); return 0
+    ev = json.load(open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8"))["pull_request"]
+    if not ev.get("merged"):
+        print("story-gate audit: PR closed without merge"); return 0
+    b = os.environ.get("BASE") or "HEAD"  # the base commit before the merge, so the merged PR can't pick its own owners
+    owners = git("show", "%s:.github/CODEOWNERS" % b) or git("show", "%s:CODEOWNERS" % b)
+    acc = G.acceptance(ctx, token, owners, (cfg().get("approvers") or []))
+    merged_by = ev.get("merged_by") or {}
+    issues = []
+    if not acc["accepted"]:
+        issues.append("merged without a code owner approving the final commit (%s)" % acc["why"])
+    if merged_by.get("type") == "Bot":
+        issues.append("merged by a bot account (%s)" % merged_by.get("login"))
+    row = {"at": now(), "pr": ctx["number"], "sha": ctx["head_sha"], "merged_by": merged_by.get("login"), "approver": acc.get("approver"), "issues": issues}
+    print(json.dumps(row))
+    if issues:
+        for i in issues:
+            print("::warning title=story-gate audit::%s" % gh_msg(i))
+        st, r, _ = G.call("POST", "/repos/%s/issues" % ctx["repo"], token, {"title": "story-gate audit: PR #%s merged without human acceptance" % ctx["number"],
+               "body": "\n".join("- " + i for i in issues) + "\n\nCommit %s. Review it, then revert or record why it was acceptable." % ctx["head_sha"]})
+        if st not in (200, 201):
+            print("::error title=story-gate audit::could not open the audit issue (HTTP %s %s). The findings are in this log." % (gh_msg(st), gh_msg((r or {}).get("message", "") if isinstance(r, dict) else "")))
+            return 1
+    return 0
+
+
+# ------------------------------------------------------------------ sinks
+def cmd_publish():
+    """`publish`: send new story events to the sinks configured in config.json (command, webhook, control-hub), each from where it left off."""
+    c = cfg()
+    lines = [l for l in rd(OUTBOX).splitlines() if l.strip()]
+    sent_p = GATE / ".outbox.sent"
+    sent = load_json(sent_p)  # per-sink cursor: a failing sink never causes duplicates in a working one
+    rc, delivered = 0, 0
+    for i, s in enumerate(c.get("sinks", [])):
+        t = s.get("type")
+        key = "%d:%s" % (i, json.dumps(s, sort_keys=True))  # full identity: duplicate-looking sinks never share a cursor
+        todo = lines[int(sent.get(key, 0)):]
+        if t == "repo" or not todo:
+            continue
+        try:
+            if t == "command" and s.get("command"):
+                r = subprocess.run(s["command"], shell=True, cwd=ROOT, input="\n".join(todo) + "\n", text=True,
+                                   encoding="utf-8", errors="replace", capture_output=True, timeout=120)
+                ok = r.returncode == 0
+            elif t == "webhook" and os.environ.get(s.get("url_env", "")):
+                hook = os.environ[s["url_env"]]
+                if J.endpoint_error(hook):
+                    raise RuntimeError(f"webhook address refused: {J.endpoint_error(hook)}")
+                for l in todo:
+                    J.open_url(urllib.request.Request(hook, data=l.encode(), headers={"Content-Type": "application/json"}), 30)
+                ok = True
+            elif t == "control-hub" and os.environ.get(s.get("url_env", "")) and os.environ.get(s.get("key_env", "")):
+                ok = publish_control_hub(s, todo)
+            else:
+                print("story-gate: sink %s not configured here, skipped" % t); continue
+        except Exception as e:
+            # no addresses in the log: a webhook URL often carries its own secret (e.g. chat-app incoming webhooks)
+            reason = re.sub(r"[a-z][a-z0-9+.-]*://\S+", "<address>", str(e), flags=re.IGNORECASE)[:200]
+            print(f"story-gate: sink {t} FAILED ({type(e).__name__}: {reason})"); ok = False
+        print("story-gate: sink %s %s (%d events)" % (t, "OK" if ok else "FAILED", len(todo)))
+        if ok:
+            sent[key] = len(lines); delivered += 1
+        else:
+            rc = 1
+    wj(sent_p, sent)
+    if not delivered and rc == 0:
+        print("story-gate: nothing new delivered (no external sink configured/reachable, or all up to date)")
+    return rc
+
+
+def publish_control_hub(s, todo):
+    """Send events to a control-hub (Supabase REST) endpoint over https with its key; never follows a redirect. -> True on success."""
+    url, key = os.environ[s["url_env"]].rstrip("/"), os.environ[s["key_env"]]
+    if J.endpoint_error(url):  # the key goes in the headers: never to an unencrypted or redirected address
+        raise RuntimeError(f"control-hub address refused: {J.endpoint_error(url)}")
+    h = {"apikey": key, "Authorization": "Bearer " + key, "Content-Type": "application/json"}
+    pid = None
+    if s.get("project_slug"):
+        q = urllib.request.Request(url + "/rest/v1/projects?select=id&slug=eq." + urllib.request.quote(s["project_slug"]), headers=h)
+        rows = json.loads(J.open_url(q, 30).read().decode())
+        pid = rows[0]["id"] if rows else None
+    body = [{"project_id": pid, "event_type": e["event_type"], "actor": "story-gate", "payload": e} for e in map(json.loads, todo)]
+    r = J.open_url(urllib.request.Request(url + "/rest/v1/events", data=json.dumps(body).encode(), headers=h, method="POST"), 30)
+    return 200 <= r.status < 300
+
+
+# ------------------------------------------------------------------ install / doctor
+BLOCK_START, BLOCK_END = "<!-- story-gate:start -->", "<!-- story-gate:end -->"
+INSTRUCTION_BLOCK = BLOCK_START + """
+## Story gate (required for any code change)
+Every code change belongs to a story and passes the story gate. Full steps: `.story-gate/PROTOCOL.md`.
+Run story-gate as `story-gate <command>`: that is the verified copy installed on this computer. If `story-gate` isn't
+found, use the full command a story-gate message prints. Only where story-gate isn't installed (cloud agents, where hooks
+don't run) use `{py} .story-gate/gate.py <command>`.
+1. Before editing code: `story-gate start <STORY-ID>`, fill the story folder, then `story-gate score <STORY-ID> ready`.
+2. Drift between story and PRD/TRD is never resolved silently: escalate, then record `story-gate decide`.
+3. Before saying you are done: run tests via `story-gate record-tests`, run the feature for every acceptance criterion with `story-gate scenario`, measure any budgets with `story-gate measure <STORY-ID>`, fill in `validation.md` and `handoff.md`, record learnings with `story-gate learn`, then `story-gate score <STORY-ID> done`. Show the owner the page from `story-gate report <STORY-ID> --open`.
+4. Read past learnings first: `story-gate learnings <keywords>`.
+5. Write for a non-coder: short sentences, active voice, plain words, and a Mermaid diagram where a picture is clearer (`.story-gate/PROTOCOL.md` > Writing). This covers replies, PR descriptions, story summaries, validation.md, handoffs and learnings.
+Mode is in `.story-gate/config.json` (warn = report only, enforce = block).
+""" + BLOCK_END
+
+
+def full_config(text):
+    """Return a fresh DEFAULT_CONFIG overlaid with config.json text, stripping leading BOMs.
+
+    None, empty text, invalid JSON, or a non-object JSON value gives the defaults.
+    Merge dictionary settings one level deep; replace other values without validation.
+    """
+    c = json.loads(json.dumps(DEFAULT_CONFIG))
+    try:
+        user = json.loads(text.lstrip("\ufeff")) if text else {}
+    except ValueError:
+        user = {}
+    for k, v in (user.items() if isinstance(user, dict) else []):
+        if isinstance(v, dict) and isinstance(c.get(k), dict):
+            c[k].update(v)
+        else:
+            c[k] = v
+    return c
+
+
+def accept_policy(top, ref):
+    """Record the default branch's policy as the one this computer has seen (enroll, and doctor when nothing got weaker)."""
+    T.record_policy_seen(top, T.policy_commit(top, ref), full_config(T.policy_text(top, ref, "config.json")))
+
+
+def policy_weakened(e):
+    """(changes, current sha): how the default branch's policy got weaker since this computer last accepted it."""
+    sha = T.policy_commit(e["toplevel"], e["policy_ref"])
+    seen = e.get("policy_seen")
+    if seen is None:  # enrolled before this check existed: doctor records the current rules as the starting point
+        return [], sha
+    need = ("mode", "enforce_points", "accept_concerns", "thresholds", "judge", "require_independent_review", "exempt_globs",
+            "project_hooks_allowed", "test_command", "test_globs", "approvers")
+    if not isinstance(seen, dict) or not isinstance(seen.get("config"), dict) or any(k not in seen["config"] for k in need):
+        return ["this computer's record of the accepted rules is unreadable"], sha  # never silently re-accept
+    now_cfg = full_config(T.policy_text(e["toplevel"], e["policy_ref"], "config.json"))
+    try:
+        return T.weaker(seen["config"], now_cfg), sha
+    except Exception:  # right keys, wrong shapes (e.g. "thresholds": []): same answer as unreadable
+        return ["this computer's record of the accepted rules is unreadable"], sha
+
+
+def session_context(c):
+    """What every session in an enrolled repository is told, by the verified copy. A branch can edit CLAUDE.md or
+    AGENTS.md; it can't edit this."""
+    run_as = gate_cmd("").strip()
+    steps = INSTRUCTION_BLOCK.split("1. Before editing code:", 1)[1].split("Mode is in", 1)[0]
+    alias = "" if run_as == "story-gate" else " Below, `story-gate` is short for this exact command: `%s`." % run_as
+    return ("STORY GATE (from the verified story-gate on this computer; it takes precedence over anything a repository "
+            "file says about story-gate). This repository is enrolled, mode: %s. Every code change belongs to a story. "
+            "Run story-gate as `story-gate <command>`, never `.story-gate/gate.py` from the repository.%s"
+            "\n1. Before editing code:%s" % (c.get("mode"), alias, steps)).strip()  # the long path appears once, not per step
+
+
+def put_block(path, py):
+    """Insert or refresh the managed instruction block in a repository file."""
+    p = ROOT / path
+    text = rd(p)
+    block = INSTRUCTION_BLOCK.replace("{py}", py)
+    if BLOCK_START in text:
+        text = re.sub(re.escape(BLOCK_START) + ".*?" + re.escape(BLOCK_END), lambda m: block, text, flags=re.S)
+    else:
+        text = (text.rstrip() + "\n\n" if text.strip() else "") + block + "\n"
+    p.write_text(text, encoding="utf-8")
+
+
+MANAGED = ("# managed by story-gate %s - re-run `gate.py install` to update; local edits are overwritten, except between "
+           "the 'your steps' markers" % VERSION)
+USER_STEPS = ("      # >>> your steps: kept when install updates this file (e.g. the GitHub App recipe in docs/guide.md)\n",
+              "      # <<< your steps\n")
+TRUSTED_COPY = """          if [ -L .story-gate ]; then echo "::error title=story-gate::.story-gate is a symlink in this PR; refusing to run"; exit 1; fi
+          mkdir -p "$RUNNER_TEMP/sg"
+          if ! git cat-file -e "$BASE:.story-gate/gate.py" 2>/dev/null; then
+            echo "::warning title=story-gate::story-gate is not on the base branch yet, so this PR is checked by human review only. It never runs code from the PR itself."
+            exit 0
+          fi
+          # Every module gate.py imports, from the base branch (a fixed list missed sg_trust.py and broke this job).
+          for f in $(git ls-tree --name-only "$BASE" .story-gate/ | sed -n 's#^\\.story-gate/##p' | grep -E '^[A-Za-z0-9_]+\\.py$|^config\\.json$|^budgets\\.json$|^judge-calibration\\.json$'); do
+            rm -f "$RUNNER_TEMP/sg/$f"
+            git show "$BASE:.story-gate/$f" > "$RUNNER_TEMP/sg/$f"
+          done
+          mkdir -p "$RUNNER_TEMP/sg/vendor"  # styles and logo for the HTML pages (data, never run)
+          for f in tabler.min.css viaknox-wordmark.svg; do
+            git show "$BASE:.story-gate/vendor/$f" > "$RUNNER_TEMP/sg/vendor/$f" 2>/dev/null || rm -f "$RUNNER_TEMP/sg/vendor/$f"
+          done
+          # Settings, budgets and judge calibration are read from the base branch's copies; the PR's own files stay as evidence.
+          export STORY_GATE_TRUSTED_DIR="$RUNNER_TEMP/sg\""""
+CI_YML = MANAGED + """
+name: story-gate
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+permissions:
+  contents: read
+concurrency:
+  group: story-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  tests:
+    # Runs the PR's code with the BASE branch's pinned test command. No secrets here.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: run pinned tests
+        env:
+          BASE: origin/${{ github.event.pull_request.base.ref }}
+          SG_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SG_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          STORY_GATE_ROOT: ${{ github.workspace }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+""" + TRUSTED_COPY + """
+          python3 "$RUNNER_TEMP/sg/gate.py" ci-tests "$RUNNER_TEMP/sg-tests"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sg-tests
+          path: ${{ runner.temp }}/sg-tests
+          retention-days: 7
+  measure:
+    # Measures the BASE branch's budgets on the PR's code, on its own runner, apart from the tests. No secrets here.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: measure budgets
+        env:
+          BASE: origin/${{ github.event.pull_request.base.ref }}
+          SG_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SG_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          STORY_GATE_ROOT: ${{ github.workspace }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+""" + TRUSTED_COPY + """
+          python3 "$RUNNER_TEMP/sg/gate.py" ci-measure "$RUNNER_TEMP/sg-measures"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: sg-measures
+          path: ${{ runner.temp }}/sg-measures
+          retention-days: 7
+  story-gate:
+    # Has the judge key; runs story-gate from the BASE branch and never executes PR code.
+    needs: [tests, measure]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: sg-tests
+          path: ${{ runner.temp }}/sg-tests
+        continue-on-error: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: sg-measures
+          path: ${{ runner.temp }}/sg-measures
+        continue-on-error: true
+""" + USER_STEPS[0] + USER_STEPS[1] + """      - name: story gate
+        env:
+          BASE: origin/${{ github.event.pull_request.base.ref }}
+          SG_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SG_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          STORY_GATE_ROOT: ${{ github.workspace }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          JUDGE_API_KEY: ${{ secrets.JUDGE_API_KEY }}
+          # read access to the issues of other repositories on spec_repos: a secret, or a token your own step made
+          STORY_GATE_SPECS_TOKEN: ${{ steps.specs_token.outputs.token || secrets.STORY_GATE_SPECS_TOKEN }}
+          # read-only key for tickets on trackers set up in config (trackers)
+          STORY_GATE_LINEAR_KEY: ${{ secrets.STORY_GATE_LINEAR_KEY }}
+          STORY_GATE_JIRA_EMAIL: ${{ secrets.STORY_GATE_JIRA_EMAIL }}
+          STORY_GATE_JIRA_TOKEN: ${{ secrets.STORY_GATE_JIRA_TOKEN }}
+        run: |
+""" + TRUSTED_COPY + """
+          python3 "$RUNNER_TEMP/sg/gate.py" ci --tests "$RUNNER_TEMP/sg-tests" --measures "$RUNNER_TEMP/sg-measures"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: story-gate-validation
+          path: ${{ runner.temp }}/sg-report
+          if-no-files-found: ignore
+          retention-days: 14
+"""
+AUDIT_YML = MANAGED + """
+name: story-gate-audit
+on:
+  pull_request:
+    types: [closed]
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+jobs:
+  audit:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: who merged, and was it accepted?
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          STORY_GATE_ROOT: ${{ github.workspace }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+""" + TRUSTED_COPY + """
+          python3 "$RUNNER_TEMP/sg/gate.py" audit
+"""
+
+
+DASH_YML = MANAGED + """
+name: story-gate-dashboard
+# Runs only the default branch's copy of this file and of story-gate (schedule, workflow_run and default-branch
+# pushes always use the default branch). Records on other branches are read as data, never executed.
+on:
+  schedule:
+    - cron: "11,41 * * * *"
+  workflow_run:
+    workflows: [story-gate]
+    types: [completed]
+  push:
+    branches: [{base}]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read  # which pull request each story is on
+  checks: read  # the story-gate check's result and its source notes
+concurrency:
+  group: story-gate-dashboard
+  cancel-in-progress: false
+jobs:
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{{{ github.event.repository.default_branch || github.ref_name }}}}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: build
+        env:
+          SG_DEFAULT_BRANCH: ${{{{ github.event.repository.default_branch || github.ref_name }}}}
+          STORY_GATE_ROOT: ${{{{ github.workspace }}}}
+          GITHUB_TOKEN: ${{{{ github.token }}}}  # not exported by default; the dashboard reads CI results only when it has it
+        run: python3 .story-gate/gate.py dashboard --out "$RUNNER_TEMP/sg-dashboard"
+      - id: report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: story-gate-dashboard
+          path: ${{{{ runner.temp }}}}/sg-dashboard/dashboard.html
+          retention-days: 30
+      - name: publish
+        env:
+          STORY_GATE_ROOT: ${{{{ github.workspace }}}}
+          GITHUB_TOKEN: ${{{{ github.token }}}}
+          ARTIFACT_URL: ${{{{ steps.report.outputs.artifact-url }}}}
+        run: python3 .story-gate/gate.py dashboard --from-json "$RUNNER_TEMP/sg-dashboard/dashboard.json" --publish --artifact-url "$ARTIFACT_URL" --out "$RUNNER_TEMP/sg-dashboard"
+      - name: say so if the refresh failed (the last good snapshot stays)
+        if: failure()
+        env:
+          STORY_GATE_ROOT: ${{{{ github.workspace }}}}
+          GITHUB_TOKEN: ${{{{ github.token }}}}
+        run: python3 .story-gate/gate.py dashboard --report-failure
+"""
+
+
+def with_user_steps(old, body):
+    """body, with the user's own steps from the current file (between the 'your steps' markers) carried over."""
+    a, b = USER_STEPS
+    if old and a in old and b in old.split(a, 1)[1] and a + b in body:
+        return body.replace(a + b, a + old.split(a, 1)[1].split(b, 1)[0] + b, 1)
+    return body
+
+
+def write_managed(rel, body):
+    """Write a story-gate workflow; refuse to overwrite a hand-made file with the same name."""
+    p = ROOT / rel
+    old = rd(p)
+    if old and not old.startswith("# managed by story-gate"):
+        return "%s exists and is not managed by story-gate - left untouched (rename it or delete it, then re-run install)" % rel
+    body = with_user_steps(old, body)  # the user's own steps are kept
+    if old == body:
+        return "%s up to date" % rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return "%s %s" % (rel, "updated" if old else "created")
+
+
+def cmd_install(py, ci="copy", kv=None, rest=()):
+    """Repository setup (commit the result). Hooks are NOT written into the repository any more: each person runs
+    `gate.py install --user` once per computer, so a branch can never change what the hooks run."""
+    GATE.mkdir(exist_ok=True)
+    STORIES.mkdir(exist_ok=True)
+    if HERE.resolve() != GATE.resolve():  # run from the installed package: the repository needs its own copy (CI runs
+        import shutil                     # it, and AGENTS.md points agents at PROTOCOL.md)
+        for f in T.runtime_files(HERE):
+            (GATE / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(HERE / f, GATE / f)
+    if not (GATE / "config.json").exists():
+        wj(GATE / "config.json", DEFAULT_CONFIG)
+    removed = T.remove_project_hooks(ROOT, HOOK_FILES)
+    for f in ("AGENTS.md", "CLAUDE.md", "GEMINI.md"):
+        put_block(f, py)
+    skill = rd(GATE / "SKILL.md")
+    if skill:  # .agents/skills: Codex, Cursor, Gemini, Devin, Muse.  .claude/skills: Claude Code, Cursor, Grok, Muse
+        for d in (".agents/skills/story-gate", ".claude/skills/story-gate"):
+            (ROOT / d).mkdir(parents=True, exist_ok=True)
+            (ROOT / d / "SKILL.md").write_text(skill, encoding="utf-8")
+    if ci == "reusable":  # three short files that call story-gate's own workflows at a pinned release commit
+        import sg_reusable as R
+        wf_notes, sha = R.install(sys.modules[__name__], kv or {}, rest)
+        wf_notes.append("CI calls %s's workflows at %s (v%s). Your branch rules must require the check '%s'; "
+                        "`story-gate setup-repo` sets that." % (kv.get("upstream") or R.UPSTREAM, sha, VERSION, R.CHECK))
+    else:
+        wf_notes = [write_managed(".github/workflows/story-gate.yml", CI_YML), write_managed(".github/workflows/story-gate-audit.yml", AUDIT_YML),
+                    write_managed(".github/workflows/story-gate-dashboard.yml", dash_yml())]
+    gi = rd(ROOT / ".gitignore")
+    add = [x for x in (".story-gate/.active", ".story-gate/outbox.jsonl", ".story-gate/.outbox.sent", ".story-gate/.edits", ".story-gate/.stops", ".story-gate/__pycache__/") if x not in gi]
+    if add:
+        (ROOT / ".gitignore").write_text(gi.rstrip() + ("\n" if gi.strip() else "") + "\n".join(add) + "\n", encoding="utf-8")
+    print("story-gate installed in this repository (mode=%s). Instructions: AGENTS.md, CLAUDE.md, GEMINI.md. CI: .github/workflows/story-gate.yml" % cfg()["mode"])
+    for n in wf_notes:
+        print("  " + n)
+    if removed:
+        print("  Removed story-gate hooks from project hook files (they ran branch code):")
+        print("\n".join(removed))
+    print("Skill: .agents/skills/story-gate + .claude/skills/story-gate.")
+    print("Next: 1) commit and merge this  2) gate.py setup-repo (code owners + branch rules)  3) add your judge key as a repo secret\n"
+          "      4) on each computer that runs AI tools: gate.py install --user  (turns on the hooks, safely)")
+
+
+def dash_yml():
+    base = re.sub(r"^origin/", "", cfg().get("base_branch", "main"))
+    return DASH_YML.replace("{base}", json.dumps(base)).replace("{{", "{").replace("}}", "}")
+
+
+def cmd_user(cmd, kv, rest):
+    """install --user / uninstall --user / enroll / unenroll / upgrade / rollback / release-sign."""
+    dry = "--dry-run" in rest
+    if cmd == "install":
+        py = kv.get("python") or sys.executable
+        clients = [x.strip() for x in kv.get("clients", ",".join(T.default_clients())).split(",") if x.strip()]
+        bad = [x for x in clients if x not in T.USER_CLIENTS]
+        if bad:
+            sys.exit("user-level hooks are supported for %s; %s run in reduced protection (CI still checks every PR)"
+                     % (", ".join(T.USER_CLIENTS), ", ".join(bad)))
+        unsigned = "--unsigned" in rest
+        print("story-gate %s - trusted runtime install%s" % (VERSION, " (dry run: nothing is written)" if dry else ""))
+        print("Release key fingerprint: %s  (it must match the one on the story-gate release page)" % T.key_fingerprint())
+        try:
+            if unsigned:
+                print("WARNING: --unsigned installs a DEVELOPMENT copy that no one signed. Only do this for code you trust.")
+            else:
+                T.verify_release(HERE)
+                print("Signature: valid")
+            if dry:
+                dest = T.runtime_root() / VERSION
+            else:
+                dest = T.install_runtime(HERE, VERSION, unsigned=unsigned)
+        except T.TrustError as e:
+            print("NOT installed: %s" % e); return 1
+        out = T.register_user_hooks(os.path.abspath(py).replace("\\", "/"), str(T.launcher_path()).replace("\\", "/"), clients, dry,
+                                    skill_src=HERE / "SKILL.md")
+        print("Runtime: %s" % dest)
+        if not dry:
+            sd = T.write_shims(os.path.abspath(py))
+            on_path = os.path.normcase(str(sd)) in [os.path.normcase(x.rstrip("/\\")) for x in os.environ.get("PATH", "").split(os.pathsep)]
+            print("story-gate command: %s%s" % (sd, "" if on_path else "  (optional: add this folder to PATH so you and your AI tools "
+                                                                     "can type `story-gate`; the hooks print the full command otherwise)"))
+        print("User-level hooks (%s):" % ", ".join(clients))
+        print("\n".join(out) or "  nothing to change")
+        top, ident = T.repo_identity(os.getcwd())
+        if top and (Path(top) / ".story-gate").is_dir():
+            if not dry:
+                try:
+                    e = T.enroll(top, kv.get("policy-ref"), "--allow-local-policy" in rest)
+                    accept_policy(top, e["policy_ref"])
+                    print("Enrolled this repository. Policy comes from %s; branches can only make it stricter." % e["policy_ref"])
+                    if e.get("allow_local_policy"):
+                        print("WARNING: %s." % T.LOCAL_POLICY_RISK)
+                except T.TrustError as ex:
+                    print("NOT enrolled: %s" % ex)
+            rm = T.remove_project_hooks(top, HOOK_FILES, dry)
+            if rm:
+                print("Project hook files that ran branch code (story-gate entries removed):")
+                print("\n".join(rm))
+            turn_filter_on(top, py, dry)
+        print("Recommended, optional and OFF unless you say yes: gate.py lockdown  (explains Claude Code's hard switch for "
+              "repository hooks; nothing changes without your permission)")
+        print("Notes:\n  - Codex asks you to trust new hooks once: run /hooks in Codex and trust the story-gate entries."
+              "\n  - Hermes: story-gate approved its own hook commands for you; restart Hermes so it loads them. Live checks cover"
+              " edits and commands, and the end of each turn that edited code; warnings in warn mode arrive at the end of that turn."
+              "\n  - VS Code: agent hooks are a Preview feature; keep chat.useHooks on (the default). Codex or Claude running"
+              " inside VS Code use their own hooks (set up above), not VS Code's."
+              "\n  - Grok: reduced protection (its hook merging isn't documented); run gate.py status yourself. See docs/client-security.md."
+              "\n  - Cowork, Cursor Cloud and Codex cloud have no hooks: run gate.py status yourself; CI is the backstop."
+              "\n  - In each other repository with story-gate, run: gate.py enroll")
+        return 0
+    if cmd == "uninstall":
+        import sg_guard as SG
+        st = SG.lockdown_status()
+        if st["ours"]:
+            print("NOT uninstalled: lockdown is still on, and Claude Code's managed hooks point at the runtime.\n"
+                  "Turn it off first (needs admin), then run this again:\n  %s" % lockdown_off_command(st))
+            return 1
+        print("Checkout filters (one per covered repository):")
+        out = []
+        for key, rec in sorted(T.read_json(T.manifest_path()).get("repos", {}).items()):
+            top = (rec or {}).get("toplevel") or key  # the working folder recorded at enable time (the key is the .git folder)
+            if Path(top).is_dir() and T.git_in(top, "rev-parse", "--is-inside-work-tree") == "true":
+                out += ["  %s" % top] + SG.disable_filter(top, dry)
+            elif Path(key).is_dir():  # working folder moved or gone: settings can still be restored in the .git folder
+                out += ["  %s (working folder not found; hook files weren't re-checked)" % key] + SG.disable_filter(key, dry)
+            else:
+                out.append("  %s: not found. If it moved, run there: git config --local --remove-section filter.%s" % (top, SG.FILTER))
+                if not dry:
+                    T.forget("repos", key)
+        print("\n".join(out) or "  none")
+        print("User-level hooks:")
+        out = T.unregister_user_hooks(dry)
+        print("\n".join(out) or "  no story-gate hooks in your user settings")
+        kf = J.key_file()  # resolved before the runtime goes: STORY_GATE_ENV_FILE may point inside it
+        if not dry and kf and os.path.isfile(kf) and Path(os.path.realpath(kf)).is_relative_to(Path(os.path.realpath(T.runtime_root()))):
+            import sg_github as G
+            dest = G.config_dir() / "judge.env"
+            n = 1
+            while os.path.lexists(dest):  # never overwrite a key that's already there
+                dest = dest.with_name("judge.env.from-runtime" + ("" if n == 1 else f"-{n}"))
+                n += 1
+            G.write_private(dest, Path(kf).read_text(encoding="utf-8"))  # your key is never removed with the runtime
+            print(f"Moved your local judge key out of the runtime to {dest}; point STORY_GATE_ENV_FILE there.")
+            kf = str(dest)
+        if not dry and T.runtime_root().exists():
+            shutil_rmtree(T.runtime_root())
+            print("Removed the runtime: %s (enrollment and agent key are kept)" % T.runtime_root())
+        if kf and os.path.isfile(kf):  # never deleted for you (you may still use it), but never left behind unsaid
+            print(f"Kept your local judge key: {kf}. Delete that file to remove the key from this computer "
+                  "(the copy in your GitHub secrets is separate).")
+        if not dry and not any(T.read_json(T.manifest_path()).get(k) for k in ("files", "repos")):
+            try:
+                T.manifest_path().unlink()
+            except OSError:
+                pass
+        return 0
+    if cmd == "enroll":
+        if dry:
+            top = T.repo_identity(os.getcwd())[0]
+            print("Would enroll %s." % top)
+            return 0 if not top else (0 if turn_filter_on(top, kv.get("python") or sys.executable, True) or True else 1)
+        try:
+            e = T.enroll(os.getcwd(), kv.get("policy-ref"), "--allow-local-policy" in rest)
+        except T.TrustError as ex:
+            print("NOT enrolled: %s" % ex); return 1
+        top = T.repo_identity(os.getcwd())[0]
+        accept_policy(top, e["policy_ref"])
+        print("Enrolled %s. Policy comes from %s." % (top, e["policy_ref"]))
+        if e.get("allow_local_policy"):
+            print("WARNING: %s." % T.LOCAL_POLICY_RISK)
+        turn_filter_on(top, kv.get("python") or sys.executable, dry)
+        return 0
+    if cmd == "unenroll":
+        import sg_guard as SG
+        top = T.repo_identity(os.getcwd())[0]
+        if top and (SG.filter_active(top) or SG.tampered(top) or dry):
+            print("Checkout filter off:\n" + "\n".join(SG.disable_filter(top, dry)))
+        if dry:
+            print("Would unenroll %s." % top); return 0
+        print("Unenrolled." if T.unenroll(os.getcwd()) else "This repository was not enrolled.")
+        return 0
+    if cmd in ("upgrade", "rollback"):
+        if not RUNTIME:
+            print("Run this with the installed runtime (the one your hooks use), so the new version is checked with the key you "
+                  "already trust: python %s %s" % (Path(read_active_dir()) / "gate.py" if read_active_dir() else "<runtime>/gate.py", cmd))
+            return 1
+        if cmd == "rollback":
+            act = T.read_json(T.active_path())
+            prev = act.get("previous")
+            if not prev or not Path(prev).is_dir():
+                print("No previous runtime to roll back to."); return 1
+            bad = T.runtime_problems(prev, act.get("previous_manifest_sha256"))  # checked against ITS OWN recorded manifest hash
+            if bad:
+                print("The previous runtime failed its integrity check; not rolling back (%s). Install that version again instead."
+                      % bad[0]); return 1
+            m = T.read_json(Path(prev) / "manifest.json")
+            T.launcher_path().write_text(T.LAUNCHER, encoding="utf-8")
+            T.write_json_atomic(T.active_path(), {"version": m.get("version"), "dir": prev, "previous": str(HERE),
+                                                  "previous_manifest_sha256": act.get("manifest_sha256"), "signed": m.get("signed"),
+                                                  "manifest_sha256": T.sha256(Path(prev) / "manifest.json"),
+                                                  "launcher_sha256": T.sha256(T.launcher_path()), "shim_python": act.get("shim_python")})
+            print("Rolled back to %s." % m.get("version")); return 0
+        import tempfile as _tf
+        with _tf.TemporaryDirectory() as td:
+            if kv.get("url"):
+                try:
+                    src = T.fetch_release(kv["url"], td)
+                except (T.TrustError, OSError) as ex:
+                    print("NOT upgraded: %s" % ex); return 1
+            elif kv.get("from"):
+                src = Path(kv["from"])
+            else:
+                e = T.enrollment(os.getcwd()) or {}
+                ref = kv.get("ref") or e.get("policy_ref") or T.default_policy_ref(os.getcwd())
+                if not ref:
+                    print("Say where the new version is: --from <folder> or --ref <branch or tag>"); return 1
+                names = [n for n in git("ls-tree", "-r", "--name-only", ref, ".story-gate").splitlines()]
+                for n in names:
+                    rel_ = n.split("/", 1)[1]
+                    if rel_.startswith("stories/"):
+                        continue
+                    dst = Path(td) / rel_
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.write_bytes(subprocess.run(["git", "show", "%s:%s" % (ref, n)], cwd=ROOT, capture_output=True).stdout)
+                src = Path(td)
+            try:
+                man = T.verify_release(src)  # checked with the key in THIS (already trusted) runtime
+                dest = T.install_runtime(src, man.get("version") or "unknown")
+            except T.TrustError as ex:
+                print("NOT upgraded: %s" % ex); return 1
+        print("Upgraded to %s. Roll back with: gate.py rollback" % man.get("version")); return 0
+    if cmd == "release-sign":
+        if not kv.get("key"):
+            sys.exit("release-sign --key <private signing key>   (maintainers only)")
+        try:
+            m = T.sign_release(HERE, kv["key"], VERSION)
+        except T.TrustError as ex:
+            print("NOT signed: %s" % ex); return 1
+        print("Signed %d files for story-gate %s: .story-gate/release.json + release.json.sig" % (len(m["files"]), VERSION)); return 0
+    return 2
+
+
+def turn_filter_on(top, py, dry=False):
+    """Checkout filter for one enrolled repository (sg_guard): a branch's AI-tool hook changes never reach disk here."""
+    import sg_guard as SG
+    if not T.launcher_ok():
+        print("Checkout filter: needs the trusted runtime first (gate.py install --user)")
+        return False
+    ok, lines = SG.enable_filter(top, os.path.abspath(py), T.launcher_path(), dry)
+    print(("Checkout filter %s:" % ("would be turned on" if dry else "on")) if ok else "Checkout filter:")
+    print("\n".join(lines))
+    if ok and not dry:
+        print("  Prove it any time: gate.py doctor --prove")
+    return ok
+
+
+def lockdown_off_command(st):
+    """Return instructions for removing story-gate's Claude Code lockdown.
+
+    ``st`` is a lockdown status mapping whose ``file`` is the managed settings
+    file to remove. Instructions use administrator PowerShell on Windows or
+    sudo elsewhere, with manual deletion as an alternative; no command is run.
+    Creates the user config directory if needed, propagating OSError on failure.
+    Raises KeyError if ``st`` lacks ``file``.
+    """
+    b = G_config_dir() / "lockdown"
+    if os.name == "nt":
+        return 'PowerShell as Administrator: powershell -ExecutionPolicy Bypass -File "%s"   (or delete %s)' % (b / "uninstall.ps1", st["file"])
+    return 'sudo sh "%s"   (or: sudo rm "%s")' % (b / "uninstall.sh", st["file"])
+
+
+def G_config_dir():
+    import sg_github as G
+    return G.config_dir()
+
+
+def consent(kv, question):
+    """Explicit permission: an interactive YES, or --consent yes typed by the person on the command line."""
+    if str(kv.get("consent", "")).strip().lower() == "yes":
+        return True
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(question + " Type YES to continue: ").strip() == "YES"
+    except EOFError:
+        return False
+
+
+def cmd_lockdown(kv, rest):
+    """Optional, OFF by default: Claude Code's allowManagedHooksOnly switch, only with explicit permission."""
+    import sg_guard as SG
+    user_text = rd(T.user_hook_files()["claude"])
+    st = SG.lockdown_status(user_text)
+    keep = []
+    for cmd_ in [k for k in (kv.get("keep-project-hook") or "").split("\n") if k]:
+        try:
+            keep.append(SG.find_project_hook(SG.approved_for(str(ROOT), ".claude/settings.json")[0], cmd_))
+        except T.TrustError as ex:
+            print("NOT changed: %s" % ex); return 1
+    py = os.path.abspath(kv.get("python") or sys.executable)
+    if "--on" not in rest and "--off" not in rest and not kv.get("bundle"):
+        print(SG.explain(st))
+        print("Protection on this computer against hooks shipped inside branches:")
+        for tool, level, nxt in SG.client_matrix(str(ROOT)):
+            print("  %-8s %s%s" % (tool, level, ("  (" + nxt + ")") if nxt else ""))
+        print("\nTurn on: gate.py lockdown --on    Files for IT: gate.py lockdown --bundle <folder>    Undo: gate.py lockdown --off")
+        return 0
+    if "--off" in rest:
+        if not st["ours"]:
+            print("Lockdown is already off (no story-gate file at %s)." % st["file"]); return 0
+        try:
+            Path(st["file"]).unlink()
+            print("Lockdown is OFF. Removed %s." % st["file"])
+            T.forget("lockdown", "claude")
+            return 0
+        except OSError:
+            print("Lockdown stays on until you run this one command (it needs admin rights):\n  %s" % lockdown_off_command(st))
+            return 1
+    if not T.launcher_ok():
+        print("Lockdown needs the trusted runtime first: gate.py install --user"); return 1
+    if kv.get("bundle"):
+        try:
+            dest, _ = SG.build_bundle(kv["bundle"], py, T.launcher_path(), user_text, keep)
+        except T.TrustError as ex:
+            print("NOT built: %s" % ex); return 1
+        print("Lockdown files for IT are in %s (nothing on this computer changed):" % dest)
+        print(rd(Path(dest) / "SHA256SUMS").rstrip())
+        print("Give IT README-IT.md; it says where each file goes on macOS, Linux and Windows.")
+        return 0
+    print(SG.explain(st))
+    if not consent(kv, "Turn on lockdown for Claude Code on this computer?"):
+        print("Nothing changed. Lockdown stays OFF. (To say yes from a script you typed yourself: gate.py lockdown --on --consent yes)")
+        return 1
+    bundle = G_config_dir() / "lockdown"
+    try:
+        _, body = SG.build_bundle(bundle, py, T.launcher_path(), user_text, keep)
+    except T.TrustError as ex:
+        print("NOT turned on: %s" % ex); return 1
+    T.record("lockdown", "claude", consent_at=now(), file=st["file"], bundle=str(bundle))
+    target = Path(st["file"])
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(target.name + ".tmp-%d" % os.getpid())
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(tmp, target)
+        print("Lockdown is ON for Claude Code: %s\nRestart Claude Code, then check: gate.py doctor --prove" % target)
+        return 0
+    except OSError:
+        cmd = ('PowerShell as Administrator: powershell -ExecutionPolicy Bypass -File "%s"' % (bundle / "install.ps1")) if os.name == "nt" \
+            else 'sudo sh "%s"' % (bundle / "install.sh")
+        print("You said yes. Writing %s needs admin rights, so run this one command yourself:\n  %s\n"
+              "Then restart Claude Code and check: gate.py doctor --prove" % (target, cmd))
+        return 0
+
+
+def cmd_filter(rest):
+    """Audited escape hatch: turn the checkout filter off (or back on) for this repository only."""
+    import sg_guard as SG
+    top = T.repo_identity(os.getcwd())[0]
+    if not top:
+        print("Not inside a git repository."); return 1
+    what = rest[0] if rest else "status"
+    if what == "off":
+        if not SG.filter_active(top) and not SG.tampered(top):
+            print("The checkout filter is already off here."); return 0
+        print("\n".join(SG.disable_filter(top)))
+        SG.log(top, "checkout filter turned OFF by %s" % (os.environ.get("USER") or os.environ.get("USERNAME") or "?"))
+        print("Checkout filter OFF for %s (logged). A branch's hook changes now reach disk here. Turn back on: gate.py filter on" % top)
+        return 0
+    if what == "on":
+        if not (T.enrollment(top) or {}).get("enrolled"):
+            print("This repository isn't covered by story-gate. Run gate.py enroll first."); return 1
+        return 0 if turn_filter_on(top, sys.executable) else 1
+    print("Checkout filter here: %s" % ("ON" if SG.filter_active(top) else "OFF"))
+    return 0
+
+
+def cmd_hook_trust(rest):
+    """Human-only escape hatch: let MY edited copy of a pinned hook's files run, for exactly this content. Logged."""
+    import sg_pin as PIN, sg_guard as SG
+    revoke = "--revoke" in rest
+    cmds = [r for r in rest if r != "--revoke"]
+    top = T.repo_identity(os.getcwd())[0]
+    if not cmds or not top:
+        print('usage (inside the repository): gate.py hook-trust "<exact hook command>" [--revoke]'); return 2
+    if not revoke and not consent({}, "Let your edited copy of the files behind '%s' run as that hook?" % cmds[0]):
+        print("Nothing changed. hook-trust needs a person at a terminal to type YES (AI agents can't grant it)."); return 1
+    try:
+        pins = PIN.trust_local(top, cmds[0], revoke)
+    except T.TrustError as ex:
+        print("NOT changed: %s" % ex); return 1
+    SG.log(top, "hook-trust %s by %s: %s" % ("revoked" if revoke else "granted", os.environ.get("USER") or os.environ.get("USERNAME") or "?", cmds[0]))
+    print(("Revoked." if revoke else "Trusted for exactly the current content of: %s. Any further change to them needs this "
+           "again; the default branch's copy is used again once they match it.") % ", ".join(pins) if not revoke else "Revoked.")
+    return 0
+
+
+def cmd_hook_selftest():
+    """Run each registered user-level hook command exactly as the AI tool would, with a sample edit, and time it."""
+    act = T.read_json(T.active_path())
+    if not act:
+        print("No trusted runtime installed. Run: gate.py install --user"); return 1
+    gate = T.launcher_path()
+    payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(ROOT / "story_gate_selftest.py")}, "cwd": str(ROOT)})
+    limits = {"claude": 15, "codex": 15, "cursor": 15, "gemini": 15, "windsurf": 15, "vscode": 15, "hermes": 15}
+    rc = 0
+    for cl in T.registered_clients(gate):
+        e = dict(os.environ); e.pop("STORY_GATE_ROOT", None)
+        t0 = time.time()
+        r = subprocess.run([sys.executable, "-I", str(gate), "hook", "--client", cl, "--event", "pre"], cwd=ROOT, input=payload,
+                           capture_output=True, text=True, env=e, timeout=60)
+        ms = (time.time() - t0) * 1000
+        verdict = "blocks" if r.returncode == 2 else ("allows" if r.returncode == 0 else "ERROR exit %d" % r.returncode)
+        ok = r.returncode in (0, 2) and ms < limits.get(cl, 15) * 1000 * 0.5
+        rc |= 0 if ok else 1
+        print("  %-8s %s an edit with no READY story here (%d ms)%s" % (cl, verdict, ms, "" if ok else "  <- PROBLEM"))
+    print("Expected: 'blocks' in enforce mode, 'allows' (with a warning) in warn mode. Then try a real edit in each tool once.")
+    return rc
+
+
+def read_active_dir():
+    return T.read_json(T.active_path()).get("dir")
+
+
+def shutil_rmtree(p):
+    import shutil
+    shutil.rmtree(p, ignore_errors=True)
+
+
+def tracker_hint(c):
+    """A one-line suggestion when branch names look like a tracker's but none is set up; else ''."""
+    if c.get("trackers"):
+        return ""
+    names = git("for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes").split()
+    linear = [n for n in names if re.search(r"(?:^|/)[a-z][a-z0-9]{0,9}-[0-9]{1,9}-[a-z0-9]", n)]
+    if len(linear) < 2:
+        return ""
+    return ("branch names like %s look like Linear's. To check stories against Linear tickets, set \"trackers\": "
+            "{\"linear\": {\"workspace\": \"...\"}} in .story-gate/config.json (guide: 'Specs in Linear')" % linear[0][:60])
+
+
+def cmd_doctor(repo=None, strict=False, prove=False):
+    """Plain-English health check. With --repo it also checks GitHub protection and agent identity."""
+    import sg_github as G
+    fails = []
+    try:
+        c = cfg()
+    except ConfigError as e:
+        print("  FAIL  " + str(e)); return 1
+    print("story-gate %s  root=%s  mode=%s  enforce_points=%s" % (VERSION, ROOT, c["mode"], c.get("enforce_points")))
+    hint = tracker_hint(c)
+    if hint:
+        print("  note: " + hint)
+    try:
+        import sg_settings as SET
+        raw = json.loads(rd(GATE / "config.json") or "{}")
+        for k in SET.unknown_keys(raw, DEFAULT_CONFIG):
+            print("  note: unknown setting %r in .story-gate/config.json: story-gate ignores it (a typo? `story-gate settings` lists them all)" % k)
+    except ValueError:
+        pass
+    act = T.read_json(T.active_path())
+    if act:
+        rt = Path(act.get("dir", ""))
+        probs = T.verify_self(rt) if rt.is_dir() else ["missing"]
+        print("  trusted runtime: %s (%s, %s)" % (act.get("version"), "signed" if act.get("signed") else "UNSIGNED development copy",
+                                                 "intact" if not probs else "PROBLEM: " + "; ".join(probs[:2])))
+        regd = T.registered_clients(T.launcher_path())
+        for cl in T.USER_CLIENTS:
+            print("  %-8s user hooks %s" % (cl, "on" if cl in regd else "off"))
+        if "hermes" in regd:
+            hp = T.hermes_problems()
+            for x in hp:
+                print("  FAIL  hermes: " + x)
+            fails.extend("hermes" for _ in hp[:1])
+            for name in T.hermes_profiles():
+                print("  hermes   profile '%s': not protected (it has its own settings)" % name)
+        for cl in T.DEGRADED_CLIENTS:
+            print("  %-8s reduced protection (no verified user-level hooks; CI still checks every PR)" % cl)
+        if probs:
+            fails.append("runtime")
+        sprobs = T.shim_problems()
+        import shutil
+        print("  story-gate command: %s" % ("PROBLEM: " + "; ".join(sprobs) if sprobs else
+                                           "%s (%s)" % (T.shim_dir(), "on PATH" if shutil.which("story-gate") else
+                                                        "not on PATH - optional; hooks print the full command")))
+        if sprobs:
+            fails.append("story-gate command")
+    else:
+        print("  trusted runtime: NOT installed on this computer - hooks are off. Run: gate.py install --user")
+        fails.append("runtime")
+    e = T.enrollment(ROOT) or {}
+    print("  this repository: %s" % ("enrolled, policy from %s" % e.get("policy_ref") if e.get("enrolled") else "NOT enrolled (gate.py enroll)"))
+    if e.get("enrolled") and e.get("allow_local_policy"):
+        print("  WARN  policy comes from a local branch (allowed with --allow-local-policy): %s. Add a remote and re-enroll "
+              "with --policy-ref <remote>/<branch> when you can." % T.LOCAL_POLICY_RISK)
+    elif e.get("enrolled") and T.policy_source_problem(e):
+        print("  FAIL  " + T.policy_source_problem(e)); fails.append("policy source")
+    if e.get("enrolled") and not T.policy_source_problem(e):
+        changes, sha = policy_weakened(e)
+        if changes:
+            print("  WARN  the rules on %s got weaker since this computer last accepted them: %s. If that was intended, "
+                  "a human accepts it with: gate.py enroll" % (e["policy_ref"], "; ".join(changes)))
+        elif sha and (e.get("policy_seen") or {}).get("sha") != sha:
+            accept_policy(e["toplevel"], e["policy_ref"])  # same or stricter: move the baseline forward
+    import sg_guard as SG
+    filt = SG.filter_active(str(ROOT))
+    print("  checkout filter: %s" % ("ON - a branch's hook changes can't reach disk here" if filt else
+                                     ("OFF - turn on: gate.py filter on" if e.get("enrolled") else "OFF (only enrolled repositories are covered)")))
+    if e.get("enrolled") and not filt:
+        fails.append("filter")
+    st = SG.lockdown_status(rd(T.user_hook_files()["claude"]))
+    print("  lockdown (optional): %s" % ("ON (%s)%s" % (st["file"], " - your own Claude hooks changed since; run gate.py lockdown --on again" if st["stale"] else "")
+                                         if st["on"] else "off - recommended; gate.py lockdown explains it"))
+    for tool, level, nxt in SG.client_matrix(str(ROOT)):
+        print("  %-8s repository hooks: %s%s" % (tool, level, ("  (" + nxt + ")") if nxt else ""))
+    import sg_pin as PIN
+    rows = PIN.report(str(ROOT), SG.default_hook_commands(str(ROOT)))
+    if rows:
+        label = {"plain": "runs nothing from the repository", "pinned": "PINNED - runs only the default branch's copy",
+                 "accepted": "ACCEPTED - runs repository code unverified", "blocked": "BLOCKED - runs repository code, not pinned"}
+        print("  project hooks approved on the default branch:")
+        for cmd_, tier, hint in rows:
+            print("    %-58s %s%s" % (cmd_[:58], label[tier], ("\n      -> " + hint) if hint else ""))
+    age = PIN.policy_age_days(str(ROOT))
+    if age is not None and age > 7:
+        print("  WARNING: last git fetch was %d days ago; hooks use approvals from your local copy of the default branch" % age)
+    links = SG.symlinked_hook_paths(str(ROOT))
+    if links:
+        print("  PROBLEM: AI-tool settings stored as symlinks (the filter can't check them): %s" % ", ".join(links[:5]))
+        fails.append("symlinks")
+    if prove:
+        ok, lines = SG.prove(str(ROOT))
+        print("  proof (canary hook on a throwaway commit):")
+        print("\n".join(lines))
+        ok = ok and not links
+        print("  proof: %s" % ("PASSED - nothing from the canary reached disk" if ok else "FAILED"))
+        if not ok:
+            fails.append("prove")
+    found = T.project_hook_findings(ROOT, HOOK_FILES)
+    if found:
+        print("  WARNING: project hook files run story-gate code from the branch: %s (gate.py install --user removes them)" % ", ".join(found))
+        fails.append("project-hooks")
+    import sg_reusable as R
+    reusable = G.ci_check_name(ROOT) == R.CHECK
+    for f, st in (R.check_callers(sys.modules[__name__]) if reusable else []):
+        print("  %-42s %s" % (f, st))
+        if st != "ok" and not st.startswith("ok "):
+            fails.append(f)
+    for f, body in (() if reusable else ((".github/workflows/story-gate.yml", CI_YML), (".github/workflows/story-gate-audit.yml", AUDIT_YML),
+                    (".github/workflows/story-gate-dashboard.yml", dash_yml()))):
+        cur = rd(ROOT / f)
+        st = "ok" if cur == with_user_steps(cur, body) else ("OUTDATED - re-run install" if cur.startswith("# managed by story-gate") else ("missing" if not cur else "NOT MANAGED by story-gate"))
+        print("  %-42s %s" % (f, st))
+        a_, b_ = USER_STEPS
+        if a_ in cur and cur.split(a_, 1)[1].split(b_, 1)[0].strip():
+            print("  %-42s has your own steps between the 'your steps' markers: review them like any workflow change "
+                  "(they run with this job's secrets)" % f)
+        if st != "ok":
+            fails.append(f)
+    owners = rd(ROOT / ".github/CODEOWNERS") or rd(ROOT / "CODEOWNERS")
+    users, teams = G.codeowners(owners)
+    print("  %-42s %s" % ("CODEOWNERS ('*' rule)", ", ".join(users + teams) or "MISSING - run gate.py setup-repo"))
+    if not users:
+        fails.append("codeowners")
+    s_ = J.settings(c)
+    if objective(c):
+        print("  judge: objective mode - no AI judge (the owner chose this). Not checked: " + "; ".join(OBJECTIVE_LIMITS))
+        if not c.get("junit_path"):
+            print("  junit_path: NOT SET - in objective mode no story can finish until the test command writes a JUnit XML "
+                  "report and junit_path points to it")
+    else:
+        print("  judge: provider=%s model=%s key=%s" % (s_["provider"], s_.get("model"), "set" if J.env_key(s_.get("key_env", "")) else "NOT SET (%s)" % s_.get("key_env")))
+    if objective(c):
+        pass
+    elif J.available(c):
+        t0 = time.time()
+        r = J.ask(c, {"ping": "story-gate doctor"}, {"ok": {"type": "noul", "instructions": "This is a connectivity test; answer yes."}})
+        tier = r.get("tier")
+        print("  judge answered: %s" % ("%s (%d ms)%s" % (tier, (time.time() - t0) * 1000, " - capped at CONCERNS unless calibrated" if tier == "emulated" else "") if tier != "none" else "NO - %s" % r.get("error")))
+    else:
+        print("  judge: unavailable locally - CI still judges if the repo secret is set; local verdicts can never PASS")
+    dash_shown = False
+    if repo:
+        tok = G.human_token()
+        if tok:
+            enforced, missing = G.protection(repo, c["base_branch"], tok, G.ci_check_name(ROOT))
+            print("  branch rules: %s" % ("ENFORCED" if enforced else "NOT ENFORCED - " + "; ".join(missing)))
+            if not enforced:
+                fails.append("rules")
+            st_, info, _ = G.call("GET", "/repos/%s" % repo, tok)
+            if st_ == 200 and isinstance(info, dict) and info.get("has_issues") is False:
+                print("  WARNING: Issues are turned off, so the dashboard can't be pinned as an issue. It still appears in each run's summary and report.")
+                dash_shown = True  # no issue link: the warning says where the dashboard is
+            elif st_ == 200:
+                dash_shown = True
+                show_dashboard(repo)
+            if c.get("spec_repos"):  # issues from other repositories: can CI read them?
+                st_s, _, _ = G.call("GET", "/repos/%s/actions/secrets/STORY_GATE_SPECS_TOKEN" % repo, tok)
+                print("  spec_repos: %s - CI token: %s" % (", ".join(c["spec_repos"]), {
+                    200: "STORY_GATE_SPECS_TOKEN secret is set (or your own step makes one)",
+                    404: "no STORY_GATE_SPECS_TOKEN secret. Fine if your own workflow step makes the token (the GitHub App way); "
+                         "otherwise copies from those repositories show 'not checked'. See the guide, 'Specs in another repository'"}.get(
+                    st_s, "could not check (HTTP %s; listing secrets needs admin rights)" % st_s)))
+                print("             fork pull requests get no secrets, so their copies from those repositories always show 'not checked'")
+            for kind, settings in sorted((c.get("trackers") or {}).items()):  # tickets from a tracker: can CI read them?
+                import sg_trackers as TR
+                for name in (TR.secrets_for(kind, settings) if kind in TR.CI_SECRETS else ()):
+                    st_t, _, _ = G.call("GET", "/repos/%s/actions/secrets/%s" % (repo, name), tok)
+                    print("  trackers.%s (%s) - CI: %s" % (kind, TR.site_of(kind, settings), {
+                        200: "%s secret is set" % name,
+                        404: "no %s secret, so its tickets show 'not checked'; see the guide, 'Specs in %s'" % (name, TR.LABEL[kind])}.get(
+                        st_t, "could not check %s (HTTP %s; listing secrets needs admin rights)" % (name, st_t))))
+            me = G.whoami(tok)
+            if me and me.lower() in [u.lower() for u in users]:
+                print("  WARNING: this shell holds the GitHub login of code owner '%s'. AI agents must not run with it - use gate.py agent-env." % me)
+                fails.append("human-token-in-agent-env")
+        else:
+            print("  branch rules: could not check (no GitHub token in this shell)")
+    saved = G.config_dir() / "trackers.env"
+    if saved.is_file():  # tracker-setup's opt-in copy for spec-pull on this computer
+        private, detail = G.key_access(saved)
+        print("  tracker keys on this computer: %s (%s)" % (saved, "owner-only" if private else "TOO OPEN (%s): delete it, "
+              "or run tracker-setup again" % detail))
+        if not private:
+            fails.append("tracker-keys-file-open")
+    try:
+        rec = G.agent_record()
+        print("  agent App: %s (key %s)" % (rec["slug"], "private" if G.key_is_private(rec["key"]) else "TOO OPEN - chmod 600"))
+    except Exception:
+        print("  agent App: none (only needed when AI tools run on this computer: gate.py setup-agent)")
+    if not dash_shown and (repo or origin_repo()):  # no --repo or no token: still say where the dashboard is
+        show_dashboard(repo or origin_repo(), checked=False)
+    return 1 if ((strict or prove) and (fails if strict else "prove" in fails)) else 0
+
+
+# ------------------------------------------------------------------ main
+def show_dashboard(repo, checked=True):
+    """checked=False: no GitHub token, so whether the repository has Issues on wasn't checked; say where else to look."""
+    import sg_dashboard as D, sg_github as G
+    print("  dashboard: %s  (the pinned 'Story-gate dashboard' issue; on this computer: %s)%s"
+          % (D.issue_url(repo, G.WEB), gate_cmd("dashboard --open"),
+             "" if checked else "\n             If Issues are turned off in this repository, it's in each story-gate-dashboard run's summary on GitHub (Actions)."))
+
+
+def origin_repo():
+    u = git("remote", "get-url", "origin").strip()
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", u)
+    return m.group(1) if m else None
+
+
+def cmd_setup(cmd, kv, rest):
+    """`setup-repo` / `setup-agent`: one-time GitHub setup, run by you with your own login (never the AI)."""
+    import sg_github as G
+    repo = kv.get("repo") or origin_repo()
+    if cmd == "setup-repo":
+        tok = G.human_token()
+        if not tok:
+            sys.exit("Sign in first: run `gh auth login` (or set GH_TOKEN to your own token). This one-time step must run as you, not as the AI.")
+        me = G.whoami(tok)
+        owners = [o.strip() for o in (kv.get("owners") or me or "").split(",") if o.strip()]
+        if not repo or not owners:
+            sys.exit("usage: gate.py setup-repo [--repo owner/name] [--owners you,teammate]")
+        for line in G.setup_repo(ROOT, repo, owners, tok, dry_run="--dry-run" in rest, login=me):
+            print("  " + line)
+        if "--dry-run" not in rest:
+            wj(ROOT / "docs" / "story-gate-ruleset.json", G.ruleset_json(G.ci_check_name(ROOT)))
+            print("  Ruleset JSON for manual import: docs/story-gate-ruleset.json")
+        return 0
+    if cmd == "setup-agent":
+        rec = G.setup_agent(owner=kv.get("org"), org=bool(kv.get("org")), code=kv.get("code"), open_browser="--no-browser" not in rest)
+        print("Agent App created: %s. Install it on your repos: %s" % (rec["slug"], rec["install_url"]))
+        print("Key saved privately at %s. Then run: gate.py agent-env --repo %s" % (rec["key"], repo or "owner/name"))
+        return 0
+    if not repo:
+        sys.exit("pass --repo owner/name")
+    if cmd == "agent-token":
+        if "--git-credential" in rest:  # git credential helper protocol: answer only for github.com
+            req = dict(l.split("=", 1) for l in sys.stdin.read().splitlines() if "=" in l)
+            if req.get("host") not in ("github.com", None) or "get" not in rest:
+                return 0  # git also calls helpers with store/erase: never mint a token for those
+            tok, _, _ = G.agent_token(repo)
+            print("username=x-access-token\npassword=%s" % tok)
+            return 0
+        tok, exp, _ = G.agent_token(repo)
+        print(tok)
+        return 0
+    if cmd == "agent-env":
+        tok, exp, rec = G.agent_token(repo)
+        name, email = G.bot_identity(rec)
+        sh = os.name != "nt"
+        print(("export GH_TOKEN=%s\nexport GITHUB_TOKEN=%s" if sh else "$env:GH_TOKEN='%s'\n$env:GITHUB_TOKEN='%s'") % (tok, tok))
+        print('git config user.name "%s"\ngit config user.email "%s"\ngit config commit.gpgsign false' % (name, email))
+        push = git("remote", "get-url", "--push", "origin").strip()
+        if push and not push.startswith("https://"):  # SSH would push with YOUR key; credential helpers only cover HTTPS
+            print("git remote set-url --push origin https://github.com/%s.git" % repo)
+        print("git config --local --replace-all credential.helper ''")  # drop inherited helpers (e.g. a keychain holding YOUR login)
+        home = os.environ.get("STORY_GATE_HOME")  # remembered so later git sessions find the same agent key
+        helper = '!%s"%s" "%s" agent-token --repo %s --git-credential' % (
+            ('STORY_GATE_HOME="%s" ' % home.replace("\\", "/")) if home else "", sys.executable.replace("\\", "/"), str(GATE / "gate.py").replace("\\", "/"), repo)
+        print("git config --local --add credential.helper '%s'" % helper)  # this Python, absolute path: works on Windows too
+        print("# token expires %s; git refreshes it through the helper above" % exp)
+        return 0
+    return 2
+
+
+# Flags that take no value. Every flag a command looks for in `rest` must be listed here (a test checks), or flags()
+# would read the next argument as its value.
+BOOL_FLAGS = ("--strict", "--dry-run", "--no-browser", "--git-credential", "--user", "--unsigned", "--offline", "--open", "--serve", "--publish",
+              "--report-failure", "--prove", "--on", "--off", "--explain", "--allow-local-policy", "--remove", "--force", "--revoke", "--scan")
+
+
+def flags(argv):
+    """Split argv into (--key value / --flag) pairs and the remaining positional arguments. A --key with no value after
+    it, or followed by another option (anything starting with --), stops with a usage message instead of being quietly
+    ignored or swallowing that option. No value story-gate takes starts with --; commands that pass on arguments split
+    them off at a bare -- first."""
+    kv, rest, i = {}, [], 0
+    while i < len(argv):
+        if argv[i] in BOOL_FLAGS:
+            rest.append(argv[i]); i += 1
+        elif argv[i].startswith("--") and len(argv[i]) > 2:
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                sys.exit("story-gate: %s needs a value (e.g. %s VALUE)" % (argv[i], argv[i]))
+            k = argv[i][2:]
+            kv[k] = (kv[k] + "\n" + argv[i + 1]) if k == "keep-project-hook" and k in kv else argv[i + 1]  # repeatable
+            i += 2
+        else:
+            rest.append(argv[i]); i += 1
+    return kv, rest
+
+
+def main(argv):
+    """CLI entry point: dispatch argv[0] to the matching command, printing usage when there's none."""
+    if not argv:
+        print(__doc__); return 0
+    cmd, args = argv[0], argv[1:]
+    if cmd == "hook-filter":  # git checkout filter (sg_guard), called through the launcher: stdin -> stdout
+        import sg_guard as SG
+        return SG.filter_main(args[0], args[1])
+    if cmd == "run-approved":  # a pinned project hook, called by the AI tool through the launcher (sg_pin)
+        import sg_pin as PIN
+        return PIN.run_approved(args[0] if args else "")
+    if cmd == "record-tests":
+        if not args:
+            sys.exit("usage: record-tests <ID> [-- <cmd...>]")
+        return cmd_record_tests(args[0], args[args.index("--") + 1:] if "--" in args else [])
+    if cmd == "scenario":
+        head, argv_ = (args[:args.index("--")], args[args.index("--") + 1:]) if "--" in args else (args, [])
+        kv_, rest_ = flags(head)
+        if not rest_ or not kv_.get("name"):
+            sys.exit("usage: scenario <ID> --name NAME --ac AC-1[,AC-2] --expect REGEX [--exit N] [--timeout S] "
+                     "[--local-only REASON] -- <command...>   |   scenario <ID> --name NAME --remove")
+        return cmd_scenario(rest_[0], kv_, "--remove" in rest_, argv_)
+    if cmd == "measure":
+        head, argv_ = (args[:args.index("--")], args[args.index("--") + 1:]) if "--" in args else (args, [])
+        kv_, rest_ = flags(head)
+        if not rest_:
+            sys.exit("usage: measure <ID> [--budget NAME | --check AREA/NAME]   |   measure <ID> --budget NAME --unit U --limit N --source WHY "
+                     "[--direction max|min] [--tolerance N] [--measure number|junit] [--report PATH] [--pins A,B] "
+                     "[--paths GLOB,GLOB] [--timeout S] [--exit N] -- <command...>   |   measure <ID> --budget NAME --remove")
+        if kv_.get("check") and (kv_.get("budget") or argv_ or "--remove" in rest_):
+            sys.exit("story-gate: --check runs one guardrail check; it doesn't go with --budget, --remove or a command")
+        return cmd_measure(rest_[0], kv_, rest_[1:], argv_)
+    if cmd == "jira-setup":
+        import sg_trackers as TR
+        return TR.jira_setup(args)
+    if cmd == "tracker-setup":
+        if [a for a in args if a != "--no-browser"]:
+            sys.exit("usage: tracker-setup [--no-browser]   (everything else is typed into the page, never on the command line)")
+        top = T.repo_identity(os.getcwd())[0]
+        if not top:
+            sys.exit("story-gate tracker-setup: run this inside your project folder (a git repository connected to GitHub).")
+        import sg_trackersetup as TS
+        return TS.run(sys.modules[__name__], top, open_browser="--no-browser" not in args)
+    if cmd == "settings":
+        import sg_settings as SET
+        return SET.cli(sys.modules[__name__], args)
+    if cmd == "spec-pull":
+        import sg_specpull as SP
+        return SP.cli(sys.modules[__name__], args)
+    if cmd == "spec-scenarios":
+        if not args:
+            sys.exit("usage: spec-scenarios <spec, ticket file or folder>[#US1]   (lists the requirement names to put in "
+                     "`covers`: scenarios, checkbox criteria and user stories)")
+        found, problem = linked_scenarios(args[0])
+        if problem:
+            sys.exit("story-gate: " + problem)
+        for ref, line in found.items():
+            print("%s\n    %s" % (ref, line))
+        return 0
+    if cmd == "scenarios":
+        if not args:
+            sys.exit("usage: scenarios <ID>   (runs every recorded scenario again on the current code)")
+        return cmd_scenarios(args[0])
+    kv, rest = flags(args)
+    if cmd == "install" and "--user" in rest:
+        return cmd_user("install", kv, rest)
+    if cmd == "install":
+        import sg_github as G_
+        now_ci = "reusable" if G_.ci_check_name(ROOT) == "story-gate / story-gate" else "copy"
+        ci = kv.get("ci", now_ci)  # a plain re-install keeps the mode this repository uses
+        if now_ci == "reusable" and ci == "copy" and "--force" not in rest:
+            sys.exit("this repository calls story-gate's reusable workflow. --ci copy switches back to copied workflows, and "
+                     "the check's name changes to 'story-gate': run `story-gate setup-repo` afterwards so your branch rules "
+                     "require it. Run again with --force to switch.")
+        if ci not in ("copy", "reusable"):
+            sys.exit("--ci must be copy (story-gate's code and workflows copied into this repository) or reusable "
+                     "(short workflows that call story-gate's own, pinned to a release)")
+        return cmd_install(kv.get("python", "python" if os.name == "nt" else "python3"), ci, kv, rest) or 0
+    if cmd == "runtime-prepare":
+        import sg_reusable as R
+        return R.prepare(sys.modules[__name__], kv, rest)
+    if cmd == "uninstall" and "--user" in rest:
+        return cmd_user("uninstall", kv, rest)
+    if cmd == "init":
+        top = T.repo_identity(os.getcwd())[0]
+        if not top:
+            print("story-gate init: run this inside your project folder (a git repository connected to GitHub).")
+            return 1
+        import sg_setup
+        return sg_setup.run(top, os.path.abspath(kv.get("python") or sys.executable), open_browser="--no-browser" not in rest,
+                            test_command=kv.get("test-command", ""), junit_path=kv.get("junit-path", ""))
+    if cmd == "try":
+        return cmd_try(open_="--no-browser" not in rest)
+    if cmd == "runtime-path":
+        print(HERE if RUNTIME else "not-runtime")
+        return 0
+    if cmd == "hook-selftest":
+        return cmd_hook_selftest()
+    if cmd in ("enroll", "unenroll", "upgrade", "rollback", "release-sign"):
+        return cmd_user(cmd, kv, rest)
+    if cmd == "lockdown":
+        return cmd_lockdown(kv, rest)
+    if cmd == "filter":
+        return cmd_filter(rest)
+    if cmd == "hook-trust":
+        return cmd_hook_trust(rest)
+    if cmd == "plan":
+        if not rest:
+            sys.exit("usage: gate.py plan <ID> --title T [--feature F]")
+        return cmd_plan(rest[0], kv.get("title", ""), kv.get("feature")) or 0
+    if cmd == "feature":
+        return cmd_feature(rest[0] if rest else "", kv.get("title", ""), kv.get("description", "")) or 0
+    if cmd == "report":
+        if not rest:
+            sys.exit("usage: report <ID> [--out FILE] [--open]")
+        return cmd_report(rest[0], kv.get("out"), "--open" in rest)
+    if cmd == "evidence":
+        if len(rest) < 2 or not kv.get("scenario"):
+            sys.exit("usage: evidence <ID> <image file> --scenario NAME [--caption TEXT]")
+        return cmd_evidence(rest[0], rest[1], kv)
+    if cmd == "dashboard":
+        import sg_dashboard as D
+        return D.cli(sys.modules[__name__], kv, rest)
+    if cmd == "start":
+        return cmd_start(rest[0], kv.get("client"), kv.get("model")) or 0
+    if cmd == "source":
+        return cmd_source(rest[0]) or 0
+    if cmd == "score":
+        return cmd_score(rest[0], rest[1], kv.get("base"))
+    if cmd == "decide":
+        if kv.get("drift") not in ("story", "spec", "none") or not kv.get("by"):
+            sys.exit("decide <ID> --drift story|spec|none --by WHO --note TEXT")
+        esc = [(load_v(rest[0], x) or {}).get("at", "") + "|" + x for x in ("ready", "done")
+               if (load_v(rest[0], x) or {}).get("overall") == "ESCALATED"]
+        ph = kv.get("phase") or (max(esc).split("|")[1] if esc else "ready")
+        return append_decision(rest[0], {"kind": "drift", "phase": ph, "drift": kv["drift"], "by": kv["by"], "note": kv.get("note", "")}) or 0
+    if cmd == "waive":
+        if len(rest) < 2 or not kv.get("by") or not kv.get("reason"):
+            sys.exit("waive <ID> <check> --by WHO --reason TEXT")
+        if rest[1] not in READY_Q.keys() | DONE_Q.keys():
+            sys.exit("only semantic checks can be waived (%s); structural facts must be fixed" % ", ".join(sorted(READY_Q.keys() | DONE_Q.keys())))
+        ph = kv.get("phase") or ("ready" if rest[1] in READY_Q else "done")
+        return append_decision(rest[0], {"kind": "waiver", "phase": ph, "check": rest[1], "by": kv["by"], "reason": kv["reason"]}) or 0
+    if cmd == "checkpoint":
+        r = cmd_checkpoint(rest[0])
+        return 0 if r.get("status") == "ON_TRACK" else 1
+    if cmd == "learn":
+        return cmd_learn(rest[0], kv) or 0
+    if cmd == "pitfalls":
+        if not rest:
+            sys.exit("usage: pitfalls <ID> [--scan] [--base REF]")
+        return cmd_pitfalls(rest[0], "--scan" in rest, kv.get("base"))
+    if cmd == "deps":
+        if not rest:
+            sys.exit("usage: deps <ID>")
+        return cmd_deps(rest[0])
+    if cmd == "learnings":
+        return cmd_learnings(rest) or 0
+    if cmd == "status":
+        return cmd_status(rest[0] if rest else None)
+    if cmd == "next":
+        return cmd_next(rest[0] if rest else None)
+    if cmd == "hook":
+        return cmd_hook(kv.get("client", ""), kv.get("event", "pre"))
+    if cmd == "ci":
+        return cmd_ci(kv.get("tests"), kv.get("measures"))
+    if cmd == "ci-measure":
+        return cmd_ci_measure(rest[0] if rest else "sg-measures")
+    if cmd == "ci-tests":
+        return cmd_ci_tests(rest[0] if rest else "sg-tests")
+    if cmd == "audit":
+        return cmd_audit()
+    if cmd == "label":
+        return cmd_label(rest[0], rest[1], rest[2] if len(rest) > 2 else "", kv.get("note", "")) or 0
+    if cmd == "judge-calibrate":
+        ok, details = J.calibrate(cfg())
+        print("\n".join(details))
+        wj(GATE / "judge-calibration.json", {"ok": ok, "identity": J.identity(cfg()), "at": now(), "details": details})
+        print("story-gate judge calibration: %s" % ("PASSED - set judge.emulated_allow_pass to let this judge PASS stories" if ok else "FAILED - this judge stays capped at CONCERNS"))
+        return 0 if ok else 1
+    if cmd in ("setup-repo", "setup-agent", "agent-token", "agent-env"):
+        return cmd_setup(cmd, kv, rest)
+    if cmd == "publish":
+        return cmd_publish()
+    if cmd == "doctor":
+        return cmd_doctor(kv.get("repo"), strict="--strict" in args, prove="--prove" in args)
+    print(__doc__); return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

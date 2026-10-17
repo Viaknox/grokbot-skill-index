@@ -6,3 +6,9 @@ Thumbs.db
 .venv/
 dist/
 *.zip
+.story-gate/.active
+.story-gate/outbox.jsonl
+.story-gate/.outbox.sent
+.story-gate/.edits
+.story-gate/.stops
+.story-gate/__pycache__/
