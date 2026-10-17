@@ -610,3 +610,18 @@ test('PR #32 review: a manual npm publish defaults to the next channel, never la
   const pkg = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.publishConfig, { tag: 'next' });
 });
+
+test('PR #32 review: object-valued message content makes the chat unreadable; text parts of multimodal content are read', () => {
+  const ok = { role: 'assistant', content: 'We open at 9am.' };
+  const c = parseTranscripts(JSON.stringify([[{ role: 'user', content: { a: 1 } }, ok], [{ role: 'user', content: [{ type: 'image_url', image_url: 'x' }] }, ok], [{ role: 'user', content: [{ type: 'text', text: 'When do you open?' }] }, ok]]));
+  assert.deepEqual(c.rejected, [1, 2]); assert.deepEqual(c.positions, [3]);
+  assert.equal(c[0][0].content, 'When do you open?');
+  const d = tmp(), f = join(d, 'obj.json'); writeFileSync(f, JSON.stringify([{ role: 'user', content: { a: 1 } }, ok]));
+  assert.equal(cli(['check', f, '--gate', '--out', join(d, 'o')]).status, EXIT.UNDETERMINED, '[object Object] must never pass the gate');
+});
+
+test('PR #32 review: every npx command in the README pins the exact package version', () => {
+  const md = readFileSync(join(ENGINE, 'README.md'), 'utf8'), v = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8')).version;
+  const uses = [...md.matchAll(/npx agenttuneup(@[\w.-]+)?/g)];
+  assert.ok(uses.length >= 5); for (const m of uses) assert.equal(m[1], '@' + v, m[0]);
+});
