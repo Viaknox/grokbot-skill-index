@@ -119,3 +119,14 @@ test('PR #33 review: a re-run never moves a channel back, and the token-holding 
   assert.match(t, /name: agenttuneup-release-notes/);
   assert.match(job('prepare'), /node scripts\/release-notes\.mjs "\$VERSION" > \.\.\/notes\/notes\.md/);
 });
+
+test('PR #33 review: the release-notes script runs from engine/ with a relative path, as the workflow calls it', () => {
+  const engine = fileURLToPath(new URL('..', import.meta.url));
+  const v = pkg.version;
+  const notes = spawnSync(process.execPath, ['scripts/release-notes.mjs', v], { cwd: engine, encoding: 'utf8' });
+  assert.equal(notes.status, 0, notes.stderr); assert.match(notes.stdout, /Compatibility:/);
+  const compat = spawnSync(process.execPath, ['scripts/release-notes.mjs', v, '--compatibility'], { cwd: engine, encoding: 'utf8' });
+  assert.equal(compat.status, 0); assert.equal(compat.stdout.trim(), compatibility(section(read('../CHANGELOG.md'), v)));
+  const missing = spawnSync(process.execPath, ['scripts/release-notes.mjs', '9.9.9'], { cwd: engine, encoding: 'utf8' });
+  assert.equal(missing.status, 1, 'a version without a CHANGELOG section stops the release');
+});
