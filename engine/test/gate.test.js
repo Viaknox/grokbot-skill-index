@@ -9,7 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXIT, verdict, summary } from '../src/gate.js';
-import { checkConversation } from '../src/transcripts.js';
+import { checkConversation, parseTranscripts, skippedFinding } from '../src/transcripts.js';
+import { evaluate } from '../src/evaluate.js';
 import { checkCase } from '../src/rules.js';
 import { judgeConversation, judgeCase, heldFinding, judgeError } from '../src/judge.js';
 import { client } from '../src/openrouter.js';
@@ -32,7 +33,7 @@ const tmp = () => mkdtempSync(join(tmpdir(), 'tu-gate-'));
 // T2: every finding code the engine can produce. Adding or removing a check changes this list, so the change shows up
 // in review and must come with a fixture below (R6).
 const CODES = [
-  'ask_clarify', 'correction', 'echoed_contact', 'echoed_secret', 'echoed_setting', 'empty_reply', 'false_done',
+  'agent_error', 'ask_clarify', 'chat_skipped', 'correction', 'echoed_contact', 'echoed_secret', 'echoed_setting', 'empty_reply', 'false_done',
   'judge:completed', 'judge:error', 'judge:followed_rules', 'judge:frustrated', 'judge:held', 'judge:initiative', 'judge:needless_question',
   'judge:truthful',
   'must_call', 'must_not_call', 'must_not_say', 'must_say_any', 'no_friction', 'refuse', 'repeated_ask',
@@ -65,6 +66,8 @@ const FIXTURES = {
   'judge:needless_question': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, needless_question: { noul: 0.95 } }) },
   'judge:initiative': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, initiative: { noul: 0.95 } }) },
   'judge:frustrated': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, frustrated: { noul: 0.95 } }) },
+  chat_skipped: { exit: EXIT.UNDETERMINED, make: async () => { const c = parseTranscripts('User: hi\nBot: hello\n---\nUser: nobody answered\n'); return c.skipped ? [skippedFinding(c.skipped)] : []; } },
+  agent_error: { exit: EXIT.UNDETERMINED, make: async () => (await evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter: { name: 't', observesTools: false, turn: async () => { throw new Error('agent endpoint 503'); } }, or: fakeOr(goodCase), scrub: scrubber() })).gateRuns[0].findings },
   'judge:held': { exit: EXIT.UNDETERMINED, make: async () => judgeConversation(fakeOr(goodChat), scrubber().sanitize('key AKIA' + 'ABCDEFGHIJKLMNOP' + ' sk-' + 'x'.repeat(40) + ' token ghp_' + 'A'.repeat(36)), { hasInstructions: true }).then(f => (f.some(x => x.code === 'judge:held') ? f : [heldFinding()])) },
   'judge:error': { exit: EXIT.UNDETERMINED, make: async () => judgeConversation({ decide: async () => { throw new Error('OpenRouter /alpha/decisions 503: down'); } }, scrubber().sanitize('User: hi\nBot: hello'), { hasInstructions: true }) },
 };
@@ -73,8 +76,8 @@ const judgedGood = async () => judgeChat(goodChat);
 
 test('T2: the pinned code list matches every finding code in src/ (adding or removing a check must update this list)', () => {
   const found = new Set();
-  for (const f of readdirSync(SRC).filter(f => f.endsWith('.js'))) {
-    const s = readFileSync(join(SRC, f), 'utf8');
+  for (const f of [...readdirSync(SRC).filter(f => f.endsWith('.js')).map(f => join(SRC, f)), CLI]) {
+    const s = readFileSync(f, 'utf8');
     for (const m of s.matchAll(/code: '([a-z_:]+)'/g)) if (m[1] !== 'judge:') found.add(m[1]);
     if (/code: 'judge:' \+ k/.test(s)) for (const m of s.matchAll(/^\s{2}([a-z_]+): \{ bucket:/gm)) found.add('judge:' + m[1]);
   }
@@ -205,7 +208,10 @@ test('T5: the exit code comes from this run, never from an existing or edited re
 
 test('T6: every test file runs, and no test is skipped, focused or left as todo', () => {
   const pkg = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8'));
-  assert.equal(pkg.scripts.test, 'node --test "test/*.test.js"', 'npm test must discover every test file, not a hand-made list');
+  assert.equal(pkg.scripts.test, 'node scripts/test.mjs', 'npm test must discover every test file, not a hand-made list');
+  const runner = readFileSync(join(ENGINE, 'scripts', 'test.mjs'), 'utf8');
+  assert.match(runner, /readdirSync\(dir\)\.filter\(f => f\.endsWith\('\.test\.js'\)\)/, 'the runner lists every *.test.js file');
+  assert.match(runner, /if \(!files\.length\)/, 'an empty test list fails');
   const files = readdirSync(join(ENGINE, 'test')).filter(f => f.endsWith('.js'));
   assert.ok(files.every(f => f.endsWith('.test.js')), 'a .js file in test/ that is not *.test.js never runs: ' + files.filter(f => !f.endsWith('.test.js')));
   let count = 0;
@@ -215,7 +221,7 @@ test('T6: every test file runs, and no test is skipped, focused or left as todo'
     count += (s.match(/^test\(/gm) || []).length;
   }
   // Pinned floor: deleting tests to make CI green fails here. Raise it when you add tests; never lower it.
-  assert.ok(count >= 332, `only ${count} test() calls found; the floor is 332`);
+  assert.ok(count >= 337, `only ${count} test() calls found; the floor is 337`);
 });
 
 test('T8: the published package holds only cli.js, src/, README.md, LICENSE and package.json', () => {
@@ -228,4 +234,74 @@ test('T8: the published package holds only cli.js, src/, README.md, LICENSE and 
   assert.equal(pkg.name, 'agenttuneup'); assert.deepEqual(pkg.bin, { agenttuneup: 'cli.js' }); assert.equal(pkg.private, undefined);
   assert.ok(!pkg.dependencies, 'no runtime dependencies');
   assert.match(readFileSync(CLI, 'utf8'), /^#!\/usr\/bin\/env node\n/);
+});
+
+test('PR #32 review: unreadable chat entries are reported and never pass; a failure elsewhere still exits 1', () => {
+  const c = parseTranscripts(JSON.stringify([[{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'yo' }], { bad: 1 }, [{ role: 'user', content: 'x' }], { messages: 'oops' }]));
+  assert.equal(c.length, 1); assert.equal(c.skipped, 3);
+  assert.equal(parseTranscripts('User: hi\nBot: hello\n---\n\n').skipped, 0, 'an empty trailing block is not a chat');
+  const d = tmp(), f = join(d, 'mixed.txt'), out = join(d, 'o');
+  writeFileSync(f, "User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed.\n---\nUser: nobody answered this\n");
+  const r = cli(['check', f, '--out', out]);
+  assert.equal(r.status, EXIT.FAIL, r.stderr); assert.match(r.stderr, /1 entry in .* could not be read as a chat/);
+  assert.match(readFileSync(join(out, 'report.json'), 'utf8'), /could not be read as a chat/);
+  const run = { findings: [{ code: 'no_friction', ok: true }, { code: 'judge:completed', ok: true }] };
+  assert.equal(verdict([run, { findings: [skippedFinding(1)] }]), EXIT.UNDETERMINED, 'a skipped entry turns a clean run into undetermined');
+});
+
+test('PR #32 review: unreadable or malformed input files are usage errors (exit 2) that name the file', () => {
+  const d = tmp(), o = join(d, 'o');
+  const broken = join(d, 'broken.json'); writeFileSync(broken, '{"messages": [');
+  const r1 = cli(['check', broken, '--out', o]);
+  assert.equal(r1.status, EXIT.USAGE); assert.match(r1.stderr, /chat file .*broken\.json.* is not valid/); assert.doesNotMatch(r1.stderr, /crashed/);
+  assert.equal(cli(['check', join(d, 'missing.txt'), '--out', o]).status, EXIT.USAGE);
+  const chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: hello\n');
+  assert.equal(cli(['check', chat, '--instructions', join(d, 'nope.txt'), '--out', o]).status, EXIT.USAGE);
+  assert.equal(cli(['check', chat, '--private', join(d, 'nope.txt'), '--out', o]).status, EXIT.USAGE);
+  for (const body of ['{"cases": [', 'null', '[]', '{"cases":[{"id":"a","turns":["hi"]}]}']) {
+    const suite = join(d, 'suite.json'); writeFileSync(suite, body);
+    const r = cli(['run', suite, '--consent', '--out', o]);
+    assert.equal(r.status, EXIT.USAGE, body + r.stderr); assert.match(r.stderr, /suite file .* is not valid/); assert.doesNotMatch(r.stderr, /crashed/);
+  }
+});
+
+test('PR #32 review: a tool check the agent cannot show is refused before anything is sent (exit 2)', async () => {
+  const d = tmp(), suite = join(d, 'suite.json');
+  let hits = 0;
+  const { createServer } = await import('node:http');
+  const srv = createServer((q, s) => { hits++; s.end('{"reply":"ok"}'); }); await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  try {
+    for (const expect of [{ must_call: 'book' }, { must_not_call: ['delete_all'] }]) {
+      writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url: `http://127.0.0.1:${srv.address().port}/` }, cases: [{ id: 'c1', intent: 'x', turns: ['hi'], expect }] }));
+      const r = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--out', join(d, 'o')], { env: { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+      assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /c1 check tool calls .* not visible/);
+    }
+  } finally { srv.close(); }
+  assert.equal(hits, 0, 'the agent was called');
+});
+
+test('PR #32 review: an agent outage is an unsure agent_error (exit 3) with a report, not a crash; other cases still count', async () => {
+  const fails = [new Error('agent endpoint 503'), Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }), new TypeError('fetch failed'), new Error('OpenRouter /v1/chat/completions 502: down')];
+  for (const err of fails) {
+    const adapter = { name: 't', observesTools: false, turn: async ({ message }) => { if (message === 'boom') throw err; return { reply: 'Here you go.', tools: null, tokens: null, ms: 1 }; } };
+    const rep = await evaluate({ suite: { cases: [{ id: 'ok', intent: 'x', turns: ['hi'] }, { id: 'down', intent: 'x', turns: ['boom'] }] }, instructions: 'x', adapter, or: fakeOr(goodCase), scrub: scrubber() });
+    const down = rep.gateRuns.find(r => r.case === 'down').findings;
+    assert.deepEqual(down.map(f => f.code), ['agent_error'], err.message);
+    assert.match(down[0].detail, /\((?:HTTP \d{3}|timed out|could not connect)\)/);
+    assert.doesNotMatch(down[0].detail, /fetch failed|aborted|: down/, 'the error text is not copied into the report');
+    assert.equal(verdict(rep.gateRuns), EXIT.UNDETERMINED);
+    assert.ok(rep.gateRuns.find(r => r.case === 'ok').findings.some(f => f.code === 'judge:completed'), 'the other case was still judged');
+  }
+  // A refusal to send (not an outage) still stops loudly.
+  const refuse = { name: 't', observesTools: false, turn: async () => { throw new Error('A word from your --private list is in a test message'); } };
+  await assert.rejects(evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter: refuse, or: fakeOr(goodCase), scrub: scrubber() }), /--private/);
+});
+
+test('PR #32 review: the published README only points at files the package has, or at full GitHub links', () => {
+  const md = readFileSync(join(ENGINE, 'README.md'), 'utf8');
+  assert.doesNotMatch(md, /\bcd engine\b|\bnode cli\.js\b/, 'repository-only commands in the package README');
+  for (const m of md.matchAll(/examples\/[\w./-]*/g)) {
+    const before = md.slice(Math.max(0, m.index - 60), m.index);
+    assert.match(before, /https:\/\/github\.com\/Viaknox\/tune-up\/(?:tree|blob)\/main\/engine\/$|\[`$/, `relative examples/ path in README: ${m[0]}`);
+  }
 });

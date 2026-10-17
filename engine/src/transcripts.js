@@ -19,13 +19,15 @@ export function parseTranscripts(raw, { agentName } = {}) {
   if (txt.startsWith('[') || txt.startsWith('{')) {
     const j = JSON.parse(txt);
     const list = Array.isArray(j) ? (Array.isArray(j[0]) || (j[0] && j[0].messages) ? j : [j]) : (j.conversations || [j]);
-    return list.map(c => (Array.isArray(c) ? c : c.messages || []).map(norm).filter(m => m.role && m.content)).filter(twoSided);
+    return counted(list.map(c => (Array.isArray(c) ? c : c && Array.isArray(c.messages) ? c.messages : []).map(norm).filter(m => m.role && m.content)), list.length);
   }
   const named = agentName ? new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i') : null;
   // Linear split on separator lines (a regex with \s* around ^/$ was quadratic on long runs of blank lines).
   const blocks = [[]];
   for (const line of txt.split(/\r?\n/)) { if (/^[ \t]*(?:-{3,}|={3,})[ \t]*$/.test(line)) blocks.push([]); else blocks[blocks.length - 1].push(line); }
-  return blocks.map(b => b.join('\n')).map(block => {
+  // A block with any text in it is a chat someone meant to check; empty blocks (a trailing ---) are not.
+  const meant = blocks.map(b => b.join('\n')).filter(b => b.trim());
+  return counted(meant.map(block => {
     const msgs = [];
     for (const line of block.split(/\r?\n/)) {
       let m;
@@ -34,8 +36,18 @@ export function parseTranscripts(raw, { agentName } = {}) {
       else if (msgs.length && line.trim()) msgs[msgs.length - 1].content += '\n' + line;
     }
     return msgs.map(m => ({ ...m, content: m.content.trim() })).filter(m => m.content);
-  }).filter(twoSided);
+  }), meant.length);
 }
+
+// The finding for entries that could not be read as a chat: unsure, so the gate never passes a file it did not fully check.
+export const skippedFinding = (n) => ({ bucket: 'rules', code: 'chat_skipped', ok: false, unsure: true, detail: `unsure: ${n} entr${n === 1 ? 'y' : 'ies'} in the file could not be read as a chat and ${n === 1 ? 'was' : 'were'} not checked` });
+
+// Keeps the two-sided chats and records how many entries could not be read as a chat (one-sided, malformed, empty), so a
+// caller can report them instead of silently checking only the rest (agenttuneup CLI: a skipped chat is never a pass).
+const counted = (convos, candidates) => {
+  const ok = convos.filter(twoSided);
+  return Object.defineProperty(ok, 'skipped', { value: Math.max(0, candidates - ok.length), enumerable: false });
+};
 
 // Rule checks that only make sense on real conversations: friction the user felt.
 const CORRECTION = /^(no\b|nope|wait\b|that'?s (wrong|not (it|right|what i))|i said|i already (said|told)|again[,!?.]|still (wrong|not)|you('re| are) (wrong|not listening)|wrong\b|not what i asked)|\b(why did you (say|tell)|you said\b|can you even|i (still )?(haven'?t|didn'?t) (get|got|receive))/i;
