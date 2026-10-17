@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url';
 
 const ENGINE = fileURLToPath(new URL('..', import.meta.url));
 
-test('PR #32 review: the CI keeps one stable "engine" check that fails unless every matrix cell passed', () => {
+test('PR #32 review: the CI keeps one stable "engine" check that fails unless every test and pack-smoke cell passed', () => {
   const yml = readFileSync(fileURLToPath(new URL('../../.github/workflows/test.yml', import.meta.url)), 'utf8');
-  assert.match(yml, /\n  engine:\n    if: always\(\)\n    needs: engine-matrix\n/);
-  assert.match(yml, /RESULT: \$\{\{ needs\.engine-matrix\.result \}\}\n\s+run: '\[ "\$RESULT" = "success" \]/);
+  assert.match(yml, /\n  engine:\n    if: always\(\)\n    needs: \[engine-matrix, pack-smoke\]\n/);
+  assert.match(yml, /TESTS: \$\{\{ needs\.engine-matrix\.result \}\}\n\s+SMOKE: \$\{\{ needs\.pack-smoke\.result \}\}\n\s+run: '\[ "\$TESTS" = "success" \] && \[ "\$SMOKE" = "success" \]/);
 });
 
 test('PR #32 review: the mutation check runs the unmutated baseline first and fails if it does not pass', () => {
