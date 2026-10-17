@@ -82,6 +82,8 @@ jobs:
           tar -tzf "$file" | grep -q '^package/LICENSE$' || { echo "::error::LICENSE missing from the package"; exit 1; }
           integrity="sha512-$(openssl dgst -sha512 -binary "$file" | base64 -w0)"
           compat="$(node scripts/release-notes.mjs "$VERSION" --compatibility)"
+          # Release notes are made here, without any token, so the tag job never runs repository code (PR #33 review).
+          mkdir -p ../notes && node scripts/release-notes.mjs "$VERSION" > ../notes/notes.md
           { echo "tarball=$tgz"; echo "integrity=$integrity"; } >> "$GITHUB_OUTPUT"
           {
             echo "## agenttuneup $VERSION"
@@ -98,6 +100,11 @@ jobs:
         with:
           name: agenttuneup-tarball
           path: dist/${{ steps.pack.outputs.tarball }}
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4.6.2
+        with:
+          name: agenttuneup-release-notes
+          path: notes/notes.md
           if-no-files-found: error
 
   # The exact tarball, installed and run on every supported OS and Node (docs/CLI-PLAN.md P6, PT8).
@@ -159,9 +166,20 @@ jobs:
           TARBALL: ${{ needs.prepare.outputs.tarball }}
         run: |
           set -euo pipefail
-          file="dist/$TARBALL"
+          file="./dist/$TARBALL"   # npm reads dist/x.tgz as a GitHub shorthand; a local tarball needs ./ (PR #33 review)
           got="sha512-$(openssl dgst -sha512 -binary "$file" | base64 -w0)"
           [ "$got" = "$INTEGRITY" ] || { echo "::error::downloaded tarball differs from the tested one"; exit 1; }
+          # A re-run of an older release must never move the channel back past a newer one (PR #33 review).
+          current="$(npm view agenttuneup "dist-tags.$CHANNEL" 2>/dev/null || true)"
+          if [ -n "$current" ] && [ "$current" != "$VERSION" ]; then
+            newer="$(CUR="$current" NEW="$VERSION" node -e '
+              const p = (v) => { const m = /^(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?$/.exec(v); if (!m) throw new Error("bad version " + v); return m; };
+              const a = p(process.env.CUR), b = p(process.env.NEW);
+              let c = 0; for (const i of [1, 2, 3]) if (!c) c = Number(a[i]) - Number(b[i]);
+              if (!c) c = a[4] === undefined ? (b[4] === undefined ? 0 : 1) : b[4] === undefined ? -1 : a[4] < b[4] ? -1 : a[4] > b[4] ? 1 : Number(a[5]) - Number(b[5]);
+              console.log(c > 0 ? "yes" : "no");')"
+            [ "$newer" = no ] || { echo "::error::$CHANNEL already points at $current, newer than $VERSION; refusing to move it back"; exit 1; }
+          fi
           if onnpm="$(npm view "agenttuneup@$VERSION" dist.integrity 2>/dev/null)" && [ -n "$onnpm" ]; then
             [ "$onnpm" = "$INTEGRITY" ] || { echo "::error::agenttuneup@$VERSION is already on npm with a different tarball; never reuse a version"; exit 1; }
             echo "agenttuneup@$VERSION is already on npm with this exact tarball: resuming at verification."
@@ -201,10 +219,11 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
+      # No checkout here: this job holds a contents-write token, so it runs no repository code (PR #33 review).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093   # v4.3.0
         with:
-          persist-credentials: false
-          sparse-checkout: engine
+          name: agenttuneup-release-notes
+          path: notes
       - name: Create (or verify) the tag and the pre-release
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -229,7 +248,7 @@ jobs:
             [ "$rel" = "$pre" ] || { echo "::error::release $tag exists with prerelease=$rel, expected $pre"; exit 1; }
             echo "Release $tag already exists: kept."
           else
-            node engine/scripts/release-notes.mjs "$VERSION" > notes.md
+            cp notes/notes.md notes.md
             printf '\nnpm: `npm install agenttuneup@%s` (channel `%s`)\n' "$VERSION" "$CHANNEL" >> notes.md
             # make_latest false: the repo's Latest release stays the plugin's.
             gh api -X POST "repos/$REPO/releases" -f tag_name="$tag" -f name="agenttuneup $VERSION" -F prerelease="$pre" -f make_latest=false -F body=@notes.md > /dev/null

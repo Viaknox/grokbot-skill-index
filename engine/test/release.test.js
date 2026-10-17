@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { section, compatibility } from '../scripts/release-notes.mjs';
 
@@ -34,6 +35,7 @@ test('PT4/PT16: only the publish job waits for the release environment and holds
 
 test('PT10/PT17: npm always gets an explicit --tag from engine/RELEASE_CHANNEL; no stored token', () => {
   assert.match(job('publish'), /npm publish "\$file" --tag "\$CHANNEL" --access public --provenance\n/);
+  assert.match(job('publish'), /file="\.\/dist\/\$TARBALL"/, 'a local tarball path must start with ./ or npm treats it as a GitHub spec');
   assert.match(job('prepare'), /channel="\$\(tr -d '\[:space:\]' < engine\/RELEASE_CHANNEL\)"/);
   assert.match(job('prepare'), /case "\$channel" in next\|latest\) ;; \*\) echo "::error::/);
   assert.match(job('prepare'), /if \[ "\$prerelease" = true \] && \[ "\$channel" = latest \]; then echo "::error::/);
@@ -81,7 +83,7 @@ test('PT3/S6: the tag job uses the release App, targets the approved commit, nev
 test('PT11: every action is pinned to a full SHA, checkouts keep no credentials, run scripts take inputs via env only', () => {
   for (const m of yml.matchAll(/uses: (\S+)/g)) assert.match(m[1], /@[0-9a-f]{40}$/, `action not pinned to a commit: ${m[1]}`);
   const checkouts = yml.split('uses: actions/checkout@').slice(1);
-  assert.ok(checkouts.length >= 3); for (const c of checkouts) assert.match(c.slice(0, 200), /persist-credentials: false/);
+  assert.ok(checkouts.length >= 2); for (const c of checkouts) assert.match(c.slice(0, 200), /persist-credentials: false/);
   // A ${{ }} inside a run: script is a template-injection risk (zizmor); values go through env: instead.
   for (const m of yml.matchAll(/\n(\s+)run: \|\n((?:\1  .*\n|\s*\n)+)/g)) assert.doesNotMatch(m[2], /\$\{\{/, 'expression inside a run script');
   for (const m of yml.matchAll(/\n\s+run: (?!\|)(.*)/g)) assert.doesNotMatch(m[1], /\$\{\{/, 'expression inside a run line');
@@ -102,4 +104,18 @@ test('S6 release PR: CHANGELOG section with Compatibility, a valid channel, and 
   assert.equal(section('## 1.0.0\n\nx\n\nCompatibility: none\n## 0.9.0\ny', '1.0.0'), 'x\n\nCompatibility: none');
   assert.equal(section('## 1.0.0-rc.1\nx', '1.0.0'), null, 'a version prefix is not a match');
   assert.equal(compatibility('no line here'), null);
+});
+
+test('PR #33 review: a re-run never moves a channel back, and the token-holding tag job runs no repository code', () => {
+  const p = job('publish');
+  const guard = p.indexOf('refusing to move it back'), pub = p.indexOf('npm publish "$file"');
+  assert.ok(guard > 0 && guard < pub, 'the channel check runs before publish');
+  // The inline comparison, run here on real version pairs.
+  const src = /node -e '\n([\s\S]*?)'\)"/.exec(p)[1].replace(/\\\\/g, '\\');
+  const cmp = (cur, nw) => spawnSync(process.execPath, ['-e', src], { env: { ...process.env, CUR: cur, NEW: nw }, encoding: 'utf8' }).stdout.trim();
+  for (const [cur, nw, want] of [['0.1.0-rc.2', '0.1.0-rc.1', 'yes'], ['0.1.0', '0.1.0-rc.9', 'yes'], ['0.2.0-rc.0', '0.1.9', 'yes'], ['0.1.0-rc.1', '0.1.0-rc.2', 'no'], ['0.1.0-rc.9', '0.1.0', 'no'], ['0.1.0-rc.10', '0.1.0-rc.9', 'yes'], ['0.1.0-beta.3', '0.1.0-rc.1', 'no']]) assert.equal(cmp(cur, nw), want, `${cur} vs ${nw}`);
+  const t = job('tag');
+  assert.doesNotMatch(t, /actions\/checkout|node /, 'no checkout and no node in the job with the App token');
+  assert.match(t, /name: agenttuneup-release-notes/);
+  assert.match(job('prepare'), /node scripts\/release-notes\.mjs "\$VERSION" > \.\.\/notes\/notes\.md/);
 });
