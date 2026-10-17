@@ -6,6 +6,10 @@ on:
   push:
   pull_request:
 
+# Read-only: no job here pushes, comments or publishes (zizmor excessive-permissions).
+permissions:
+  contents: read
+
 jobs:
   engine-matrix:
     name: engine (node ${{ matrix.node }})
@@ -14,10 +18,10 @@ jobs:
       matrix:
         node: ['20.12', '22']   # the oldest supported Node runs the full suite too (PR #32 review)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
         with:
           persist-credentials: false   # the job never pushes (PR #16 review)
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4.4.0
         with:
           node-version: ${{ matrix.node }}
       - run: cd engine && npm test
@@ -50,10 +54,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         node: ['20.12', '22']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683   # v4.2.2
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020   # v4.4.0
         with:
           node-version: ${{ matrix.node }}
       - working-directory: engine
