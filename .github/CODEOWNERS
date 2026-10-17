@@ -1,0 +1,15 @@
+# Paul must approve any change to the files below (CLI plan S0, PG1/PT1).
+# These are the files that decide whether a build goes green: CI, tests,
+# the gate and its evidence code, the policy contract, and release config.
+# A PR cannot loosen tests or edit its own CI without Paul's review.
+
+.github/**                  @pjpoulose
+engine/test/**              @pjpoulose
+engine/scripts/**           @pjpoulose
+engine/cli.js               @pjpoulose
+engine/src/**               @pjpoulose
+engine/package.json         @pjpoulose
+engine/LICENSE              @pjpoulose
+engine/RELEASE_CHANNEL      @pjpoulose
+docs/CLI-PLAN.md            @pjpoulose
+.sast-check.toml            @pjpoulose
