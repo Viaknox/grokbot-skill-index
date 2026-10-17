@@ -726,9 +726,12 @@ test('PR #32 review: header syntax, tool definitions and primitive cases are con
   assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /headers\.authorization is not a single line/); assert.doesNotMatch(r.stderr, /TOKENTAIL|crashed/);
 });
 
-test('PR #32 review: the README CI example keeps fork pull requests usable without exposing the key', () => {
+test('PR #32 review: the README CI example never gives the key to a job that runs pull-request code', () => {
   const md = readFileSync(join(ENGINE, 'README.md'), 'utf8');
-  assert.doesNotMatch(md, /^on:[^#\n]*pull_request_target/m);
-  assert.match(md, /if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository && github\.actor != 'dependabot\[bot\]'\n\s+run: .*--consent/);
-  assert.match(md, /if: github\.event\.pull_request\.head\.repo\.full_name != github\.repository \|\| github\.actor == 'dependabot\[bot\]'\n\s+run: (?:(?!--consent).)*--gate/);
+  const yml = md.slice(md.indexOf('# .github/workflows/agent-check.yml'), md.indexOf('```', md.indexOf('# .github/workflows/agent-check.yml')));
+  assert.doesNotMatch(yml, /pull_request_target/);
+  assert.match(yml, /- if: github\.event_name == 'pull_request'\n\s+run: (?:(?!--consent).)*--gate/, 'pull requests run rules only');
+  assert.match(yml, /- if: github\.event_name == 'push'\n\s+run: .*--consent.*\n\s+env:\n\s+TUNEUP_OPENROUTER_KEY/, 'the key only on the post-merge step');
+  assert.equal((yml.match(/TUNEUP_OPENROUTER_KEY:/g) || []).length, 1, 'the key is set in exactly one place');
+  assert.match(yml, /environment: \$\{\{ github\.event_name == 'push' && 'agent-check' \|\| '' \}\}/);
 });
