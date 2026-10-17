@@ -650,6 +650,11 @@ test('PR #32 review: an http url with a user name or password is refused before 
 test('PR #32 review: an export whose entries are all malformed counts every entry', () => {
   assert.deepEqual(parseTranscripts(JSON.stringify([{}, {}])).rejected, [1, 2]);
   assert.deepEqual(parseTranscripts(JSON.stringify([{}, null, 3])).rejected, [1, 2, 3]);
+  const flat = [{ role: 'user', content: 'Hi, what time do you open?' }, { role: 'assistant', content: 'We open at 9am.' }];
+  for (const extra of [null, {}, { meta: 'export v2' }]) {
+    const c = parseTranscripts(JSON.stringify([...flat, extra]));
+    assert.equal(c.length, 1, `a flat chat with a stray ${JSON.stringify(extra)} entry is still one chat`); assert.deepEqual(c.rejected, []);
+  }
   const pair = [{ role: 'user', content: 'Hi, what time do you open?' }, { role: 'assistant', content: 'We open at 9am.' }];
   assert.equal(parseTranscripts(JSON.stringify(pair)).length, 1, 'a flat message list is still one chat');
 });
