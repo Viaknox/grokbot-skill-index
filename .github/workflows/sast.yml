@@ -26,4 +26,4 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Pin to a full commit SHA of sast-check, never a branch or tag.
-      - uses: SathiaAI/sast-check@184b6c97db98f8c42b6ff9020bc3476d445b736d # main 2026-10-16 (PR #23)
+      - uses: Viaknox/sast-check@890048d102e5eaa16cc7f7cac0bf7a06442d0a74 # main 2026-10-17 (PR #32)
