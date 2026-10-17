@@ -27,9 +27,17 @@ const NESTED = /\)\s*(?:[+*?]|\{\d)/;
 export function validateSuite(suite) {
   const errs = [];
   if (!Array.isArray(suite.cases) || !suite.cases.length) return ['The suite has no test cases. Add at least one case to "cases".'];
+  const seen = new Set();
   suite.cases.forEach((c, i) => {
     const at = `case ${i + 1}${c && c.id ? ` (${c.id})` : ''}`;
     if (!c || typeof c.id !== 'string' || !c.id) errs.push(`${at}: needs an "id"`);
+    // Case ids name the runs in the report and the gate; two cases with one id would merge into one (PR #32 review).
+    else if (seen.has(c.id)) errs.push(`${at}: the id "${c.id}" is used by another case; every case needs its own id`);
+    else seen.add(c.id);
+    // Tool expectations must have the documented shape: a string would be read letter by letter (PR #32 review).
+    const e = (c && c.expect) || {};
+    if ('must_call' in e && (typeof e.must_call !== 'string' || !e.must_call)) errs.push(`${at}: "must_call" must be one tool name`);
+    if ('must_not_call' in e && (!Array.isArray(e.must_not_call) || !e.must_not_call.length || !e.must_not_call.every(t => typeof t === 'string' && t))) errs.push(`${at}: "must_not_call" must be a list of tool names`);
     if (!c || !Array.isArray(c.turns) || !c.turns.length || !c.turns.every(t => typeof t === 'string')) errs.push(`${at}: "turns" must be a list of user messages`);
     for (const p of (c && c.expect && c.expect.must_say_any) || []) {
       try { new RegExp(p, 'i'); } catch { errs.push(`${at}: must_say_any pattern ${JSON.stringify(p)} is not a valid regex`); continue; }

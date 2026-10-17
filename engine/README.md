@@ -33,7 +33,7 @@ npx agenttuneup check chats.txt --instructions instructions.txt --consent --out 
 
 When results are mixed, `1` beats `3` beats `0`. The exit code comes from the run itself, never from an old or edited `report.json`.
 
-**Strict CI needs `--consent` and a key.** Without them only the local rule checks run, so the result is always `3`. Store the key as a CI secret, never in the repo. There is no option or setting that skips a check or turns a failure into a pass; unknown options and unknown `TUNEUP_*` settings stop the run with `2`.
+**Strict CI needs `--consent` and a key.** Without them only the local rule checks run: a rule that fails still exits `1`, but if every rule passes the result is `3`, because the judge's checks did not run. Store the key as a CI secret, never in the repo. There is no option or setting that skips a check or turns a failure into a pass; unknown options and unknown `TUNEUP_*` settings stop the run with `2`.
 
 ```yaml
 # .github/workflows/agent-check.yml
@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npx agenttuneup@0.1 check chats.txt --instructions instructions.txt --consent --out tune-up-report
+      - run: npx agenttuneup@0.1.0 check chats.txt --instructions instructions.txt --consent --out tune-up-report
         env:
           TUNEUP_OPENROUTER_KEY: ${{ secrets.TUNEUP_OPENROUTER_KEY }}
 ```

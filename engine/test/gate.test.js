@@ -221,7 +221,7 @@ test('T6: every test file runs, and no test is skipped, focused or left as todo'
     count += (s.match(/^test\(/gm) || []).length;
   }
   // Pinned floor: deleting tests to make CI green fails here. Raise it when you add tests; never lower it.
-  assert.ok(count >= 337, `only ${count} test() calls found; the floor is 337`);
+  assert.ok(count >= 341, `only ${count} test() calls found; the floor is 341`);
 });
 
 test('T8: the published package holds only cli.js, src/, README.md, LICENSE and package.json', () => {
@@ -305,3 +305,25 @@ test('PR #32 review: the published README only points at files the package has, 
     assert.match(before, /https:\/\/github\.com\/Viaknox\/tune-up\/(?:tree|blob)\/main\/engine\/$|\[`$/, `relative examples/ path in README: ${m[0]}`);
   }
 });
+
+test('PR #32 review: duplicate case ids and wrongly shaped tool expectations are config errors before anything runs', async () => {
+  const { validateSuite } = await import('../src/rules.js');
+  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['x'] }, { id: 'a', turns: ['y'] }] }).join(), /"a" is used by another case/);
+  for (const expect of [{ must_not_call: 'delete_all' }, { must_not_call: [] }, { must_not_call: [''] }, { must_call: ['book'] }, { must_call: '' }]) {
+    assert.ok(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect }] }).length, JSON.stringify(expect));
+  }
+  assert.deepEqual(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect: { must_call: 'book', must_not_call: ['delete_all'] } }] }), []);
+  const d = tmp(), suite = join(d, 'suite.json');
+  writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url: 'http://127.0.0.1:9/' }, cases: [{ id: 'a', turns: ['x'] }, { id: 'a', turns: ['y'] }] }));
+  const r = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--out', join(d, 'o')], { env: { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+  assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /used by another case/);
+});
+
+test('PR #32 review: a blank TUNEUP_OPENROUTER_KEY is a config error (exit 2), never an empty bearer token', async () => {
+  const d = tmp(), chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: hello there\n');
+  for (const key of ['', '   ', '\n\t']) {
+    const r = cli(['check', chat, '--consent', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: key });
+    assert.equal(r.status, EXIT.USAGE, JSON.stringify(key) + r.stderr); assert.match(r.stderr, /TUNEUP_OPENROUTER_KEY/);
+  }
+});
+
