@@ -139,11 +139,19 @@ if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote model
 const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new InputError('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object' || Array.isArray(j.agent_config)) throw new InputError('it needs an "agent_config" object');
   // The adapter is checked before any client exists, so a half-written config never reaches a paid call (PR #32 review).
   const ac = j.agent_config, nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
+  const intIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+  if (typeof j.instructions !== 'string') throw new InputError('it needs "instructions" (the agent\'s instructions, as text)');
+  if ('sacred' in j && (!Array.isArray(j.sacred) || !j.sacred.every(x => typeof x === 'string'))) throw new InputError('"sacred" must be a list of sentences');
   if (ac.type === 'http') { let u = null; try { u = new URL(ac.url); } catch {} if (!nonEmpty(ac.url) || !u || !/^https?:$/.test(u.protocol)) throw new InputError('agent_config.url must be an http(s) address for an "http" agent');
     // A user:password in the URL would be refused by fetch with the whole URL in the error; put it in a TUNEUP_AGENT_* header instead.
     if (u.username || u.password) throw new InputError('agent_config.url must not contain a user name or password; send credentials in a header from a TUNEUP_AGENT_* variable');
-    if (ac.reply_path !== undefined && !nonEmpty(ac.reply_path)) throw new InputError('agent_config.reply_path must be a non-empty string such as "data.0.text"'); }
-  else if (ac.type === 'model') { if (!nonEmpty(ac.model)) throw new InputError('agent_config.model must name a model for a "model" agent'); }
+    if (ac.reply_path !== undefined && !nonEmpty(ac.reply_path)) throw new InputError('agent_config.reply_path must be a non-empty string such as "data.0.text"');
+    if (ac.timeout_ms !== undefined && !intIn(ac.timeout_ms, 1, 600_000)) throw new InputError('agent_config.timeout_ms must be a whole number of milliseconds from 1 to 600000');
+    if (ac.headers !== undefined && (!ac.headers || typeof ac.headers !== 'object' || Array.isArray(ac.headers) || !Object.values(ac.headers).every(v => typeof v === 'string'))) throw new InputError('agent_config.headers must map header names to text values'); }
+  else if (ac.type === 'model') { if (!nonEmpty(ac.model)) throw new InputError('agent_config.model must name a model for a "model" agent');
+    if (ac.max_tokens !== undefined && !intIn(ac.max_tokens, 1, 200_000)) throw new InputError('agent_config.max_tokens must be a whole number from 1 to 200000');
+    if (ac.temperature !== undefined && !(typeof ac.temperature === 'number' && ac.temperature >= 0 && ac.temperature <= 2)) throw new InputError('agent_config.temperature must be a number from 0 to 2');
+    if (ac.tools !== undefined && (!ac.tools || typeof ac.tools !== 'object' || Array.isArray(ac.tools))) throw new InputError('agent_config.tools must map tool names to tool definitions'); }
   else throw new InputError('agent_config.type must be "http" or "model"');
   return j; });
 { const errs = validateSuite(suite); if (errs.length) { console.error('Fix the suite before running (nothing was sent):\n- ' + errs.join('\n- ')); process.exit(2); } }
