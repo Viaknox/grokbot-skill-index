@@ -393,6 +393,7 @@ test('T6: every test file runs; none is skipped, focused or todo; the test count
   const runner = readFileSync(join(ENGINE, 'scripts', 'test.mjs'), 'utf8');
   assert.match(runner, /readdirSync\(dir\)\.filter\(f => f\.endsWith\('\.test\.js'\)\)/, 'the runner lists every *.test.js file');
   assert.match(runner, /if \(!files\.length\)/, 'an empty test list fails');
+  assert.match(runner, /const a = run\(rest\), b = run\(timed\);\nprocess\.exit\(a \|\| b\);/, 'both groups run and either failing fails npm test');
   const files = readdirSync(join(ENGINE, 'test')).filter(f => f.endsWith('.js'));
   assert.ok(files.every(f => f.endsWith('.test.js')), 'a .js file in test/ that is not *.test.js never runs: ' + files.filter(f => !f.endsWith('.test.js')));
   let count = 0;
