@@ -567,3 +567,46 @@ test('PR #32 review: an --out that cannot be a folder is a usage error (exit 2),
     assert.equal(r.status, EXIT.USAGE, o + r.stderr); assert.match(r.stderr, /Cannot use --out/); assert.doesNotMatch(r.stderr, /crashed/);
   }
 });
+
+test('PR #32 review: a malformed replay-model message (non-text content, bad tool calls) is an errored agent_error', async () => {
+  const { modelAdapter } = await import('../src/adapters.js');
+  const bad = [{ content: { oops: true } }, { content: 7 }, { content: '', tool_calls: 'x' }, { content: '', tool_calls: [null] }, { content: '', tool_calls: [{ function: { name: 3 } }] }, { content: '', tool_calls: [{ function: { name: 'f', arguments: {} } }] }];
+  for (const message of bad) {
+    const or = { chat: async () => ({ choices: [{ message }] }) };
+    const rep = await evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter: modelAdapter({ model: 'm' }, or, { scrub: scrubber() }), or: fakeOr(goodCase), scrub: scrubber() });
+    assert.deepEqual(rep.gateRuns[0].findings.map(f => f.code), ['agent_error'], JSON.stringify(message));
+  }
+  const ok = { chat: async () => ({ choices: [{ message: { content: null, tool_calls: undefined } }] }) };
+  const t = await modelAdapter({ model: 'm' }, ok, { scrub: scrubber() }).turn({ history: [], message: 'hi', instructions: 'x' });
+  assert.equal(t.reply, '', 'a null content with no tool calls is still a (empty) reply');
+});
+
+test('PR #32 review: a malformed first entry does not hide the other chats in a JSON export', () => {
+  const pair = [{ role: 'user', content: 'Hi, what time do you open?' }, { role: 'assistant', content: 'We open at 9am.' }];
+  const c = parseTranscripts(JSON.stringify([{}, { messages: pair }, pair]));
+  assert.equal(c.length, 2); assert.deepEqual(c.positions, [2, 3]); assert.deepEqual(c.rejected, [1]);
+  assert.equal(parseTranscripts(JSON.stringify(pair)).length, 1, 'a flat message list is still one chat');
+});
+
+test('PR #32 review: a non-string or empty reply_path is a config error before the agent is called', () => {
+  const d = tmp(), suite = join(d, 'suite.json');
+  for (const reply_path of [7, '', ['a'], null]) {
+    writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url: 'http://127.0.0.1:9/', reply_path }, cases: [{ id: 'c1', intent: 'x', turns: ['hi'] }] }));
+    const r = cli(['run', suite, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' });
+    assert.equal(r.status, EXIT.USAGE, JSON.stringify(reply_path) + r.stderr); assert.match(r.stderr, /reply_path/);
+  }
+});
+
+test('PR #32 review: when every entry is unreadable, --gate still writes report.json and report.md listing them', () => {
+  const d = tmp(), f = join(d, 'in.json'), o = join(d, 'o');
+  writeFileSync(f, JSON.stringify([[{ role: 'user', content: 'nobody answered' }], { messages: [] }]));
+  const r = cli(['check', f, '--gate', '--out', o]);
+  assert.equal(r.status, EXIT.UNDETERMINED, r.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(join(o, 'report.json'), 'utf8')).unreadable_entries, [1, 2]);
+  assert.match(readFileSync(join(o, 'report.md'), 'utf8'), /entries 1, 2 of the file could not be read as a chat/);
+});
+
+test('PR #32 review: a manual npm publish defaults to the next channel, never latest', () => {
+  const pkg = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8'));
+  assert.deepEqual(pkg.publishConfig, { tag: 'next' });
+});
