@@ -44,9 +44,13 @@ export function httpAdapter(cfg, { fetchImpl = fetch, privateTerms = [] } = {}) 
       if (privateTerms.length && hasPrivate(body)) throw new Error('A word from your --private list is in a test message or the instructions; it was not sent to the agent. Remove it from the suite.');
       // redirect: 'error' so headers and the test message never follow a redirect to another host.
       const r = await fetchImpl(cfg.url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body, redirect: 'error', signal: AbortSignal.timeout(cfg.timeout_ms || 60_000) });
-      const j = await r.json().catch(() => ({}));
+      const j = await r.json().catch(() => undefined);
       if (!r.ok) throw new Error(`agent endpoint ${r.status}`);
-      return { reply: String(pick(j, cfg.reply_path || 'reply') ?? ''), tools: null, tokens: null, ms: Date.now() - t };
+      // A 200 that is not JSON, or has no text at the reply path, is no answer at all: an unsure agent_error like an
+      // outage, never a confident "empty reply" failure (PR #32 review). An empty string at the path is a real empty reply.
+      const reply = j === undefined ? undefined : pick(j, cfg.reply_path || 'reply');
+      if (typeof reply !== 'string' && typeof reply !== 'number') throw new AgentReplyError();
+      return { reply: String(reply), tools: null, tokens: null, ms: Date.now() - t };
     },
   };
 }

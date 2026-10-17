@@ -14,6 +14,15 @@ test('PR #32 review: the CI keeps one stable "engine" check that fails unless ev
   assert.match(yml, /TESTS: \$\{\{ needs\.engine-matrix\.result \}\}\n\s+SMOKE: \$\{\{ needs\.pack-smoke\.result \}\}\n\s+run: '\[ "\$TESTS" = "success" \] && \[ "\$SMOKE" = "success" \]/);
 });
 
+test('P6: the packed CLI is tested on Linux, Windows and macOS, on Node 20.12 and 22', () => {
+  const yml = readFileSync(fileURLToPath(new URL('../../.github/workflows/test.yml', import.meta.url)), 'utf8');
+  const job = yml.slice(yml.indexOf('\n  pack-smoke:'));
+  assert.match(job, /os: \[ubuntu-latest, windows-latest, macos-latest\]/);
+  assert.match(job, /node: \['20\.12', '22'\]/);
+  assert.match(job, /fail-fast: false/);
+  assert.match(job, /run: node --test test\/cli-package\.test\.js/);
+});
+
 test('PR #32 review: the mutation check runs the unmutated baseline first and fails if it does not pass', () => {
   const src = readFileSync(join(ENGINE, 'scripts', 'mutate.mjs'), 'utf8');
   assert.match(src, /const base = run\(src, files, opt\.timeout\);\n\s+if \(base !== 'survived'\)/);
