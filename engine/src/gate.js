@@ -17,7 +17,8 @@ export function verdict(runs) {
   if (all.some(f => f.ok !== true && f.unsure !== true)) return EXIT.FAIL;
   if (runs.some(r => !r || !Array.isArray(r.findings) || r.findings.length === 0)) return EXIT.UNDETERMINED;
   if (runs.some(r => !r.findings.some(f => JUDGE.test(String(f.code))))) return EXIT.UNDETERMINED;
-  if (all.some(f => f.ok !== true)) return EXIT.UNDETERMINED;
+  // An unsure judge answer can lean either way (ok true or false); leaning pass is still not a pass (PR #32 review).
+  if (all.some(f => f.ok !== true || f.unsure === true)) return EXIT.UNDETERMINED;
   return EXIT.PASS;
 }
 
