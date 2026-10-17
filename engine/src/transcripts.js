@@ -9,8 +9,20 @@ const AGENT = /^(assistant|bot|ai|agent|grok|chatgpt|claude|gemini|copilot|suppo
 // Only user and agent turns count; system, developer and tool messages are not part of the conversation.
 const roleOf = (r) => /^(user|human|customer)$/i.test(r) ? 'user' : /^(assistant|bot|ai|agent|model)$/i.test(r) ? 'assistant' : null;
 // A message that is not an object (null, a number, a string) has no role, so it is dropped like a system message.
-const norm = (m) => (m && typeof m === 'object' ? { role: roleOf(String(m.role || m.author || m.sender || '')),
-  content: String(m.content ?? m.text ?? m.message ?? '').trim() } : { role: null, content: '' });
+// Content is text: a string, a number, or a list of parts whose text parts are joined (multimodal exports). Anything
+// else (an object, a list with non-text parts only) cannot be read, and `bad` makes the whole chat unreadable rather than
+// "[object Object]" passing the rule checks (PR #32 review).
+const textOf = (v) => {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number') return String(v);
+  if (Array.isArray(v)) { const parts = v.map(p => (typeof p === 'string' ? p : p && typeof p === 'object' && typeof p.text === 'string' ? p.text : null)); return parts.some(x => x !== null) ? parts.filter(x => x !== null).join('\n') : null; }
+  return null;
+};
+const norm = (m) => {
+  if (!m || typeof m !== 'object') return { role: null, content: '' };
+  const t = textOf(m.content ?? m.text ?? m.message);
+  return { role: roleOf(String(m.role || m.author || m.sender || '')), content: (t ?? '').trim(), ...(t === null ? { bad: true } : {}) };
+};
 
 const twoSided = (c) => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant');
 
@@ -23,7 +35,8 @@ export function parseTranscripts(raw, { agentName } = {}) {
     // first entry does not hide the rest (PR #32 review); otherwise it is one chat's flat message list.
     const isChat = (e) => Array.isArray(e) || (!!e && typeof e === 'object' && 'messages' in e);
     const list = Array.isArray(j) ? (j.some(isChat) ? j : [j]) : (j.conversations || [j]);
-    return counted(list.map(c => (Array.isArray(c) ? c : c && Array.isArray(c.messages) ? c.messages : []).map(norm).filter(m => m.role && m.content)));
+    return counted(list.map(c => { const ms = (Array.isArray(c) ? c : c && Array.isArray(c.messages) ? c.messages : []).map(norm);
+      return ms.some(m => m.bad) ? [] : ms.filter(m => m.role && m.content); }));
   }
   const named = agentName ? new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i') : null;
   // Linear split on separator lines (a regex with \s* around ^/$ was quadratic on long runs of blank lines).
