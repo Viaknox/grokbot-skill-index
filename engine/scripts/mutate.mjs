@@ -182,8 +182,8 @@ function snippet(src, at) {
 // Reads the files that `npm test` runs from package.json, so the mutation check judges the same suite CI does.
 function testFiles() {
   const script = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8')).scripts.test;
-  // `node --test "test/*.test.js"` discovers files itself; list the same files here.
-  const files = /test\/\*\.test\.js/.test(script) ? readdirSync(join(ENGINE, 'test')).filter(f => f.endsWith('.test.js')).map(f => join('test', f))
+  // `npm test` (scripts/test.mjs) runs every test/*.test.js; list the same files here.
+  const files = /test\/\*\.test\.js|scripts\/test\.mjs/.test(script) ? readdirSync(join(ENGINE, 'test')).filter(f => f.endsWith('.test.js')).map(f => join('test', f))
     : script.split(/\s+/).filter(w => /\.[cm]?js$/.test(w));
   if (!files.length) throw new Error('no test files found in the "test" script: ' + script);
   return files;

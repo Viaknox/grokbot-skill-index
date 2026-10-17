@@ -20,7 +20,7 @@ import { validateSuite } from './src/rules.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
 import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
 import { scrubber, ScrubError } from './src/redact.js';
-import { parseTranscripts, checkConversation } from './src/transcripts.js';
+import { parseTranscripts, checkConversation, skippedFinding } from './src/transcripts.js';
 import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judge.js';
 import { EXIT, verdict, summary } from './src/gate.js';
 
@@ -52,16 +52,19 @@ if (process.env.TUNEUP_CONSENT !== undefined && process.env.TUNEUP_CONSENT !== '
 const opt = (name, dflt) => (Object.hasOwn(flags, name) ? flags[name] : dflt);
 // --consent with no key is a config error (2), named here before anything runs.
 const keyOrStop = () => { try { return loadKey(opt('keyfile')); } catch (e) { console.error(`${e.message}. Strict CI needs a key: set TUNEUP_OPENROUTER_KEY as a CI secret, or pass --keyfile.`); process.exit(EXIT.USAGE); } };
+// Input files: unreadable or malformed input is a usage error (2) naming the file, never a "check failed" crash.
+const readInput = (path, what) => { try { return readFileSync(path, 'utf8'); } catch (e) { usage(`Cannot read ${what} ${JSON.stringify(path)}: ${e.code || e.message}.`); } };
+const parseInput = (path, what, parse) => { const raw = readInput(path, what); try { return parse(raw); } catch (e) { usage(`${what} ${JSON.stringify(path)} is not valid: ${(e && e.message ? e.message : String(e)).slice(0, 200)}.`); } };
 const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
 const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
 const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
 // --private <file>: one never-send word or name per line (# starts a comment). Scrubbed before anything leaves.
-const terms = opt('private') ? readFileSync(opt('private'), 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+const terms = opt('private') ? readInput(opt('private'), 'private words file').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
 
 if (cmd === 'check') {
   const scrub = scrubber({ terms });
-  const instructions = opt('instructions') ? readFileSync(opt('instructions'), 'utf8').trim() : '';
-  const convos = parseTranscripts(readFileSync(file, 'utf8'), { agentName: opt('agent') });
+  const instructions = opt('instructions') ? readInput(opt('instructions'), 'instructions file').trim() : '';
+  const convos = parseInput(file, 'chat file', (raw) => parseTranscripts(raw, { agentName: opt('agent') }));
   if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(EXIT.USAGE); }
   const or = consent ? client(keyOrStop()) : null;
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
@@ -76,6 +79,11 @@ if (cmd === 'check') {
     return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: shown(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });
+  // Entries that could not be read as a chat were not checked: they count as undetermined, never as passed (PR #32 review).
+  if (convos.skipped) {
+    console.error(`${convos.skipped} entr${convos.skipped === 1 ? 'y' : 'ies'} in ${file} could not be read as a chat (needs both a user and a bot turn) and ${convos.skipped === 1 ? 'was' : 'were'} not checked.`);
+    runs.push({ case: 'unreadable-entries', rep: 1, passed: false, findings: [skippedFinding(convos.skipped)], turns: [], ms: 0, tokens: 0, toolCalls: 0 });
+  }
   const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
   rep.scrubbed = scrub.counts();
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
@@ -86,7 +94,7 @@ if (cmd === 'check') {
 } else {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
-const suite = JSON.parse(readFileSync(file, 'utf8'));
+const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object') throw new Error('it needs an "agent_config" object'); return j; });
 { const errs = validateSuite(suite); if (errs.length) { console.error('Fix the suite before running (nothing was sent):\n- ' + errs.join('\n- ')); process.exit(2); } }
 const repeats = Number(opt('repeats', suite.repeats ?? 1));
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) { console.error('--repeats (or the suite\'s "repeats") must be a whole number from 1 to 20.'); process.exit(2); }
@@ -99,6 +107,10 @@ const scrub = scrubber({ terms });
 let adapter;
 try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub, privateTerms: terms }); }
 catch (e) { console.error(e.message); process.exit(2); }
+// A tool check on an agent whose tool calls can't be seen would never run and so could never fail: refuse the suite
+// before anything is sent, rather than letting the gate pass without it (PR #32 review).
+{ const blind = adapter.observesTools ? [] : suite.cases.filter(c => c.expect && (c.expect.must_call || (Array.isArray(c.expect.must_not_call) && c.expect.must_not_call.length))).map(c => c.id);
+  if (blind.length) usage(`Case(s) ${blind.join(', ')} check tool calls (must_call / must_not_call), but this agent's tool calls are not visible (${suite.agent_config.type} adapter). Remove those checks or use an adapter that shows tool calls. Nothing was sent.`); }
 if (suite.agent_config.type === 'http') {
   const vars = headerVars(suite.agent_config);
   console.error('Use a test copy of your agent: every case is sent ' + repeats + ' time(s), and again after each tune-up, so real actions (bookings, emails) would repeat.');

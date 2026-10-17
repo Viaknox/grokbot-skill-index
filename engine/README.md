@@ -4,19 +4,19 @@ Evaluates an AI agent against a test suite and writes a six-part report card. It
 
 ## Run it
 
-Needs Node 20+ and an OpenRouter key in `TUNEUP_OPENROUTER_KEY` or in a file passed with `--keyfile` (a line like `OPENROUTER=sk-or-...`). The key is never printed or logged.
+Needs Node 20.12+ and, for anything beyond the local rule checks, an OpenRouter key in `TUNEUP_OPENROUTER_KEY` or in a file passed with `--keyfile` (a line like `OPENROUTER=sk-or-...`). The key is never printed or logged.
 
 ```bash
-cd engine
-npm test                                                     # offline unit tests
 # Check real chats you pasted or exported (Level 1). Without --consent nothing leaves your machine.
-node cli.js check examples/sample-chats.txt --instructions examples/sample-instructions.txt --agent SupportBot
-node cli.js check examples/sample-chats.txt --instructions examples/sample-instructions.txt --agent SupportBot --consent
+npx agenttuneup check chats.txt --instructions instructions.txt --agent SupportBot
+npx agenttuneup check chats.txt --instructions instructions.txt --agent SupportBot --consent
 
 # Test an agent by re-running cases against it (Level 2), then try a verified tune-up
-node cli.js run  examples/bookbot.suite.json --out my-run --consent    # my-run/report.md + report.json
-node cli.js tune examples/bookbot.suite.json --out my-run --consent    # one verified attempt; run again to retry
+npx agenttuneup run  my-agent.suite.json --out my-run --consent    # my-run/report.md + report.json
+npx agenttuneup tune my-agent.suite.json --out my-run --consent    # one verified attempt; run again to retry
 ```
+
+Sample files to start from (sample chats, instructions and a full suite) are in the repository: [engine/examples](https://github.com/Viaknox/tune-up/tree/main/engine/examples). To work on the engine itself, clone the repository and run `npm test` in `engine/`.
 
 ## Use it in CI (strict gate)
 
@@ -82,7 +82,7 @@ Every report states how much it could see. **Level 1** is chats only. **Level 2*
 
 ## Suites and adapters
 
-A suite (see `examples/bookbot.suite.json`) holds the agent's instructions, the sentences that must never change (`sacred`), how to reach the agent (`agent_config`), and the test cases. Each case has an intent, the user turns, and what to expect.
+A suite (see [`examples/bookbot.suite.json`](https://github.com/Viaknox/tune-up/blob/main/engine/examples/bookbot.suite.json)) holds the agent's instructions, the sentences that must never change (`sacred`), how to reach the agent (`agent_config`), and the test cases. Each case has an intent, the user turns, and what to expect.
 
 | Adapter | Use | Tool calls visible? |
 | --- | --- | --- |

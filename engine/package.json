@@ -10,8 +10,8 @@
   "files": ["cli.js", "src/", "README.md", "LICENSE"],
   "engines": { "node": ">=20.12" },
   "scripts": {
-    "test:promised": "node --test --test-name-pattern=promised \"test/*.test.js\"",
-    "test": "node --test \"test/*.test.js\"",
+    "test:promised": "node scripts/test.mjs --test-name-pattern=promised",
+    "test": "node scripts/test.mjs",
     "mutate:gate": "node scripts/mutate.mjs --target src/gate.js --tests test/gate.test.js --fail-on-survivors"
   }
 }
