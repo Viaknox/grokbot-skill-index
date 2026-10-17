@@ -696,3 +696,39 @@ test('PR #32 review: every documented suite field is shape-checked before anythi
     assert.equal(r.status, EXIT.USAGE, JSON.stringify(body) + r.stderr); assert.match(r.stderr, why); assert.doesNotMatch(r.stderr, /crashed|Evaluating/);
   }
 });
+
+test('PR #32 review: a crash never prints the error message (which can carry a URL, header value or input)', () => {
+  const src = readFileSync(CLI, 'utf8');
+  const handler = src.slice(src.indexOf('const crashed ='), src.indexOf("process.on('unhandledRejection'"));
+  assert.doesNotMatch(handler, /\.message/, 'the crash handler must not print e.message');
+  assert.match(src, /process\.on\('uncaughtException', crashed\);\nprocess\.on\('unhandledRejection', crashed\);/);
+});
+
+test('PR #32 review: header syntax, tool definitions and primitive cases are config errors, and header values are never echoed', async () => {
+  const { validateSuite } = await import('../src/rules.js');
+  for (const c of ['oops', 3, true, []]) assert.match(validateSuite({ cases: [c] }).join(), /must be an object/, JSON.stringify(c));
+  const d = tmp(), suite = join(d, 'suite.json'), cases = [{ id: 'c1', intent: 'x', turns: ['hi'] }];
+  const http = { type: 'http', url: 'http://127.0.0.1:9/' }, model = { type: 'model', model: 'm' };
+  const shapes = [
+    [{ ...http, headers: { 'bad name': 'x' } }, /header name/], [{ ...http, headers: { a: 'line1\nSECRETLINE2' } }, /single line/],
+    [{ ...model, tools: { lookup: null } }, /tools\.lookup/], [{ ...model, tools: { lookup: { cases: 'x' } } }, /cases/],
+    [{ ...model, tools: { lookup: { cases: [{ when: 3 }] } } }, /cases/], [{ ...model, tools: { lookup: { description: 5 } } }, /description/],
+    [{ ...model, tools: { lookup: { parameters: 'x' } } }, /parameters/], [{ ...model, tools: { lookup: { read_only: 'yes' } } }, /read_only/],
+  ];
+  for (const [agent_config, why] of shapes) {
+    writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config, cases }));
+    const r = cli(['run', suite, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' });
+    assert.equal(r.status, EXIT.USAGE, JSON.stringify(agent_config) + r.stderr); assert.match(r.stderr, why); assert.doesNotMatch(r.stderr, /crashed|Evaluating|SECRETLINE2/);
+  }
+  // A ${TUNEUP_AGENT_*} variable that expands to more than one line: refused, naming only the header.
+  writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { ...http, headers: { authorization: 'Bearer ${TUNEUP_AGENT_TOKEN}' } }, cases }));
+  const r = cli(['run', suite, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test', TUNEUP_AGENT_URL: 'http://127.0.0.1:9', TUNEUP_AGENT_TOKEN: 'abc\nTOKENTAIL' });
+  assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /headers\.authorization is not a single line/); assert.doesNotMatch(r.stderr, /TOKENTAIL|crashed/);
+});
+
+test('PR #32 review: the README CI example keeps fork pull requests usable without exposing the key', () => {
+  const md = readFileSync(join(ENGINE, 'README.md'), 'utf8');
+  assert.doesNotMatch(md, /^on:[^#\n]*pull_request_target/m);
+  assert.match(md, /if: github\.event\.pull_request\.head\.repo\.full_name == github\.repository && github\.actor != 'dependabot\[bot\]'\n\s+run: .*--consent/);
+  assert.match(md, /if: github\.event\.pull_request\.head\.repo\.full_name != github\.repository \|\| github\.actor == 'dependabot\[bot\]'\n\s+run: (?:(?!--consent).)*--gate/);
+});

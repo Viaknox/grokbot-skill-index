@@ -28,8 +28,12 @@ import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judg
 import { EXIT, gate, line, gateJson } from './src/gate.js';
 
 // Exit codes (src/gate.js), with --gate: 0 pass, 1 fail, 3 undetermined, 2 usage or config error. A crash is never 0.
-process.on('uncaughtException', (e) => { console.error('agenttuneup: crashed: ' + (e && e.message ? e.message : String(e)).slice(0, 300)); process.exit(EXIT.FAIL); });
-process.on('unhandledRejection', (e) => { console.error('agenttuneup: crashed: ' + (e && e.message ? e.message : String(e)).slice(0, 300)); process.exit(EXIT.FAIL); });
+// A crash prints only the error's type and where it happened, never its message: messages from fetch, Headers or JSON
+// can carry a URL, a header value or input text, which would then sit in CI logs (PR #32 review).
+const crashed = (e) => { const where = (String(e && e.stack || '').split('\n').find(l => /^\s+at /.test(l)) || '').trim();
+  console.error(`agenttuneup: crashed (${(e && e.name) || 'Error'}${where ? ', ' + where.replace(/\(?file:\/\/[^)]*?([\w.-]+\.js:\d+):\d+\)?/, '$1') : ''}). Please report this.`); process.exit(EXIT.FAIL); };
+process.on('uncaughtException', crashed);
+process.on('unhandledRejection', crashed);
 const USAGE = 'usage: agenttuneup check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir] [gate options]\n       agenttuneup run <suite.json> --consent [--keyfile path] [--out dir] [--repeats N] [--private words.txt] [gate options]\n       agenttuneup tune <suite.json> --consent [--keyfile path] [--out dir] [--repeats N] [--private words.txt]\n       agenttuneup --version | --help\nGate options: --gate (CI gate on; without it the exit code is always 0)  --json (write gate.json)\n  Loosen the strict defaults (printed in the verdict and gate.json): --min <0-100> (default 100)  --max-undetermined <0-100> (default 0)  --allow-rules-fail\nExit codes with --gate: 0 PASS (judged) or PASS: local rules only, 1 FAIL, 3 UNDETERMINED (fails CI too), 2 usage or config error.';
 const usage = (msg) => { console.error((msg ? msg + '\n' : '') + USAGE); process.exit(EXIT.USAGE); };
 const argv = process.argv.slice(2);
@@ -147,11 +151,22 @@ const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw
     if (u.username || u.password) throw new InputError('agent_config.url must not contain a user name or password; send credentials in a header from a TUNEUP_AGENT_* variable');
     if (ac.reply_path !== undefined && !nonEmpty(ac.reply_path)) throw new InputError('agent_config.reply_path must be a non-empty string such as "data.0.text"');
     if (ac.timeout_ms !== undefined && !intIn(ac.timeout_ms, 1, 600_000)) throw new InputError('agent_config.timeout_ms must be a whole number of milliseconds from 1 to 600000');
-    if (ac.headers !== undefined && (!ac.headers || typeof ac.headers !== 'object' || Array.isArray(ac.headers) || !Object.values(ac.headers).every(v => typeof v === 'string'))) throw new InputError('agent_config.headers must map header names to text values'); }
+    if (ac.headers !== undefined && (!ac.headers || typeof ac.headers !== 'object' || Array.isArray(ac.headers) || !Object.values(ac.headers).every(v => typeof v === 'string'))) throw new InputError('agent_config.headers must map header names to text values');
+    // Header names must be valid tokens and values single-line (checked again after ${TUNEUP_AGENT_*} expansion in the adapter).
+    for (const [k, v] of Object.entries(ac.headers || {})) { if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k)) throw new InputError('agent_config.headers has a header name that is not valid'); if (/[\r\n\0]/.test(v)) throw new InputError(`agent_config.headers.${k} must be a single line`); } }
   else if (ac.type === 'model') { if (!nonEmpty(ac.model)) throw new InputError('agent_config.model must name a model for a "model" agent');
     if (ac.max_tokens !== undefined && !intIn(ac.max_tokens, 1, 200_000)) throw new InputError('agent_config.max_tokens must be a whole number from 1 to 200000');
     if (ac.temperature !== undefined && !(typeof ac.temperature === 'number' && ac.temperature >= 0 && ac.temperature <= 2)) throw new InputError('agent_config.temperature must be a number from 0 to 2');
-    if (ac.tools !== undefined && (!ac.tools || typeof ac.tools !== 'object' || Array.isArray(ac.tools))) throw new InputError('agent_config.tools must map tool names to tool definitions'); }
+    if (ac.tools !== undefined && (!ac.tools || typeof ac.tools !== 'object' || Array.isArray(ac.tools))) throw new InputError('agent_config.tools must map tool names to tool definitions');
+    const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+    for (const [name, d] of Object.entries(ac.tools || {})) {
+      const t = `agent_config.tools.${name}`;
+      if (!isObj(d)) throw new InputError(`${t} must be a tool definition object`);
+      if ('description' in d && typeof d.description !== 'string') throw new InputError(`${t}.description must be text`);
+      if ('parameters' in d && !isObj(d.parameters)) throw new InputError(`${t}.parameters must be a JSON schema object`);
+      if ('read_only' in d && typeof d.read_only !== 'boolean') throw new InputError(`${t}.read_only must be true or false`);
+      if ('cases' in d && (!Array.isArray(d.cases) || !d.cases.every(c => isObj(c) && (!('when' in c) || isObj(c.when))))) throw new InputError(`${t}.cases must be a list of {when, result} objects`);
+    } }
   else throw new InputError('agent_config.type must be "http" or "model"');
   return j; });
 { const errs = validateSuite(suite); if (errs.length) { console.error('Fix the suite before running (nothing was sent):\n- ' + errs.join('\n- ')); process.exit(2); } }
