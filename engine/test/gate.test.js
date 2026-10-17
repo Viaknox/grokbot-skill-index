@@ -110,6 +110,9 @@ test('T3/R1: undetermined is never a pass, and the order is fail > undetermined 
   assert.equal(verdict([{ findings: good }, {}]), EXIT.UNDETERMINED, 'one run missing its findings');
   assert.equal(verdict([{ findings: [{ code: 'no_friction', ok: true }] }]), EXIT.UNDETERMINED, 'rule checks only, judge not run');
   assert.equal(verdict([{ findings: [...good, judgeError()] }]), EXIT.UNDETERMINED);
+  assert.equal(verdict([{ findings: [...good, { code: 'judge:completed', ok: true, unsure: true }] }]), EXIT.UNDETERMINED, 'unsure that leans pass is not a pass');
+  // The real judge in the unsure band, leaning pass (p 0.55) and leaning fail (p 0.45): both undetermined.
+  for (const p of [0.55, 0.45, 0.36, 0.64]) assert.equal(verdict([{ findings: await judgeChat({ ...goodChat, completed: { noul: p } }) }]), EXIT.UNDETERMINED, `p ${p}`);
   assert.equal(verdict([{ findings: [...good, heldFinding(true)] }]), EXIT.UNDETERMINED);
   assert.equal(verdict([{ findings: [heldFinding()] }]), EXIT.UNDETERMINED, 'held: the judge never answered');
   assert.equal(verdict([{ findings: [...good, { code: 'x', ok: false, unsure: true }, { code: 'y', ok: false }] }]), EXIT.FAIL, 'fail beats unsure');
