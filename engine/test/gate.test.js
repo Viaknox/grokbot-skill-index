@@ -627,3 +627,42 @@ test('PR #32 review: every npx command in the README pins the exact package vers
   const uses = [...md.matchAll(/npx agenttuneup(@[\w.-]+)?/g)];
   assert.ok(uses.length >= 5); for (const m of uses) assert.equal(m[1], '@' + v, m[0]);
 });
+
+test('PR #32 review: a report over zero readable chats shows no NaN', () => {
+  const d = tmp(), f = join(d, 'in.json'), o = join(d, 'o'); writeFileSync(f, JSON.stringify([[{ role: 'user', content: 'nobody answered' }]]));
+  const r = cli(['check', f, '--gate', '--consent', '--out', o], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' });
+  assert.equal(r.status, EXIT.UNDETERMINED, r.stderr);
+  const md = readFileSync(join(o, 'report.md'), 'utf8'), json = readFileSync(join(o, 'report.json'), 'utf8');
+  assert.doesNotMatch(md + r.stdout, /NaN/); assert.match(md, /nothing was checked and there is no score/);
+  assert.equal(JSON.parse(json).cases, 0);
+});
+
+test('PR #32 review: an http url with a user name or password is refused before anything runs, and never echoed', () => {
+  const d = tmp(), suite = join(d, 'suite.json');
+  for (const url of ['https://bob:s3cr3tPW@agent.example/chat', 'https://tokenonly@agent.example/chat']) {
+    writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url }, cases: [{ id: 'c1', intent: 'x', turns: ['hi'] }] }));
+    const r = cli(['run', suite, '--consent', '--gate', '--out', join(d, 'o')], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' });
+    assert.equal(r.status, EXIT.USAGE, url + r.stderr); assert.match(r.stderr, /must not contain a user name or password/);
+    assert.doesNotMatch(r.stderr + r.stdout, /s3cr3tPW|tokenonly/);
+  }
+});
+
+test('PR #32 review: an export whose entries are all malformed counts every entry', () => {
+  assert.deepEqual(parseTranscripts(JSON.stringify([{}, {}])).rejected, [1, 2]);
+  assert.deepEqual(parseTranscripts(JSON.stringify([{}, null, 3])).rejected, [1, 2, 3]);
+  const pair = [{ role: 'user', content: 'Hi, what time do you open?' }, { role: 'assistant', content: 'We open at 9am.' }];
+  assert.equal(parseTranscripts(JSON.stringify(pair)).length, 1, 'a flat message list is still one chat');
+});
+
+test('PR #32 review: an --out folder that cannot take files is exit 2 before anything runs; a failed report write is exit 2', () => {
+  const d = tmp(), chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: We open at 9am.\n');
+  // A folder that exists but takes no files (Linux /proc): the probe write fails before any check runs.
+  if (existsSync('/proc/self')) {
+    const r = cli(['check', chat, '--gate', '--out', '/proc/self']);
+    assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /Cannot use --out/); assert.doesNotMatch(r.stderr, /crashed|Checking/);
+  }
+  // On every OS: report.json is a folder, so the write fails after the run; that is exit 2 naming the file, not a crash.
+  const o = join(d, 'o'); mkdirSync(join(o, 'report.json'), { recursive: true });
+  const w = cli(['check', chat, '--gate', '--out', o]);
+  assert.equal(w.status, EXIT.USAGE, w.stderr); assert.match(w.stderr, /Cannot write .*report\.json/); assert.doesNotMatch(w.stderr, /crashed/);
+});

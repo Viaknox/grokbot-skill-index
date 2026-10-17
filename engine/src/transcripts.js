@@ -33,10 +33,11 @@ export function parseTranscripts(raw, { agentName } = {}) {
   const txt = String(raw).trim();
   if (txt.startsWith('[') || txt.startsWith('{')) {
     const j = JSON.parse(txt);
-    // An array is a list of chats when any entry is a chat (an array, or an object with "messages"), so a malformed
-    // first entry does not hide the rest (PR #32 review); otherwise it is one chat's flat message list.
-    const isChat = (e) => Array.isArray(e) || (!!e && typeof e === 'object' && 'messages' in e);
-    const list = Array.isArray(j) ? (j.some(isChat) ? j : [j]) : (j.conversations || [j]);
+    // An array is a list of chats unless it is a flat message list, so a malformed first entry does not hide the rest.
+    // It is one chat's flat message list only when every entry looks like a message, so an export whose entries are all
+    // malformed still counts each entry (PR #32 review).
+    const isMessage = (e) => !!e && typeof e === 'object' && !Array.isArray(e) && !('messages' in e) && ['role', 'author', 'sender'].some(k => k in e);
+    const list = Array.isArray(j) ? (j.every(isMessage) ? [j] : j) : (j.conversations || [j]);
     return counted(list.map(c => { const ms = (Array.isArray(c) ? c : c && Array.isArray(c.messages) ? c.messages : []).map(norm);
       return ms.some(m => m.bad) ? [] : ms.filter(m => m.role && m.content); }));
   }
