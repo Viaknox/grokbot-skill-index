@@ -144,6 +144,11 @@ export function modelAdapter(cfg, or, { scrub, privateTerms = [] } = {}) {
         tokens += (r.usage && r.usage.total_tokens) || 0;
         const m = r && Array.isArray(r.choices) && r.choices[0] && r.choices[0].message;
         if (!m || typeof m !== 'object') throw new AgentReplyError();
+        // Content must be text (or absent when tools are called) and tool calls well formed; anything else is no usable
+        // answer, never "[object Object]" judged as a reply (PR #32 review).
+        if (m.content != null && typeof m.content !== 'string') throw new AgentReplyError();
+        if (m.tool_calls != null && (!Array.isArray(m.tool_calls) || !m.tool_calls.every(c => c && typeof c === 'object' && c.function && typeof c.function === 'object'
+          && typeof c.function.name === 'string' && (c.function.arguments == null || typeof c.function.arguments === 'string')))) throw new AgentReplyError();
         if (!m.tool_calls || !m.tool_calls.length) {
           const reply = U(m.content || '').trim();
           messages.push({ role: 'assistant', content: reply });

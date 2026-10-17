@@ -102,12 +102,10 @@ if (cmd === 'check') {
   // Entries that could not be read as a chat are listed by position and count as missing: never as passed (G12b).
   const rejected = convos.rejected;
   if (rejected.length) console.error(`Not checked: entr${rejected.length === 1 ? 'y' : 'ies'} ${rejected.join(', ')} in ${file} could not be read as a chat (each needs a user and a bot turn). ${HOW}`);
-  if (!convos.length) {
-    // Nothing to check: with --gate that is UNDETERMINED (G12); without it, a usage error as before.
-    if (!gating) { console.error('No conversations found. ' + HOW); process.exit(EXIT.USAGE); }
-    console.error('No conversations found. ' + HOW); finish([], { expected: [], judged: consent, unreadable: rejected });
-  } else {
-  console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
+  // Nothing to check: with --gate that is UNDETERMINED (G12), and the report still lists any unreadable entries;
+  // without --gate, a usage error as before.
+  if (!convos.length) { console.error('No conversations found. ' + HOW); if (!gating) process.exit(EXIT.USAGE); }
+  else console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
   // At most CONCURRENCY conversations at once (each asks the judge three times).
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
     // A chat over the scrubber's size or time cap gets the held finding (unsure), like a run in evaluate: never a crash.
@@ -127,14 +125,14 @@ if (cmd === 'check') {
   writeFileSync(join(out, 'report.md'), md); console.log(md);
   // The exit code comes from the findings in memory, never from report.json (T5).
   finish(runs, { expected: convos.positions.map(p => ({ case: `chat-${p}`, rep: 1 })), judged: !!or, unreadable: rejected });
-  }
 } else {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
 const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new InputError('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object' || Array.isArray(j.agent_config)) throw new InputError('it needs an "agent_config" object');
   // The adapter is checked before any client exists, so a half-written config never reaches a paid call (PR #32 review).
   const ac = j.agent_config, nonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
-  if (ac.type === 'http') { let u = null; try { u = new URL(ac.url); } catch {} if (!nonEmpty(ac.url) || !u || !/^https?:$/.test(u.protocol)) throw new InputError('agent_config.url must be an http(s) address for an "http" agent'); }
+  if (ac.type === 'http') { let u = null; try { u = new URL(ac.url); } catch {} if (!nonEmpty(ac.url) || !u || !/^https?:$/.test(u.protocol)) throw new InputError('agent_config.url must be an http(s) address for an "http" agent');
+    if (ac.reply_path !== undefined && !nonEmpty(ac.reply_path)) throw new InputError('agent_config.reply_path must be a non-empty string such as "data.0.text"'); }
   else if (ac.type === 'model') { if (!nonEmpty(ac.model)) throw new InputError('agent_config.model must name a model for a "model" agent'); }
   else throw new InputError('agent_config.type must be "http" or "model"');
   return j; });
