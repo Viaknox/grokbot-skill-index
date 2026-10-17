@@ -1,7 +1,8 @@
 # Publishes the agenttuneup CLI to npm when a version tag (v1.2.3) is pushed. No npm token is stored anywhere:
 # npm trusted publishing lets this exact workflow in Viaknox/tune-up publish via GitHub's OIDC identity, and the
 # package gets a public provenance record of the commit and workflow that built it (agenttuneup CLI plan, R9).
-# One-time setup by the npm owner: publish the package once, then link this repo + release.yml as its trusted publisher.
+# One-time setup by the npm owner: publish the package once, then link this repo + release.yml + environment "release"
+# as its trusted publisher, and allow only the owner to create v* tags (tag ruleset).
 name: release
 
 on:
@@ -18,6 +19,10 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Every release waits for the owner's approval in the protected "release" environment before this job can get the
+    # identity npm trusts, so pushing a tag alone can never publish (PR #33 security review). One-time setup: create
+    # the environment with Paul as required reviewer, limit it to v* tags, and name it in the npm trusted-publisher form.
+    environment: release
     permissions:
       contents: read
       id-token: write   # only this job may ask GitHub for the identity npm trusts
