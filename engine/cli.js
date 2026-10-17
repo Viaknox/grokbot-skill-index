@@ -22,10 +22,36 @@ import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js
 import { scrubber, ScrubError } from './src/redact.js';
 import { parseTranscripts, checkConversation } from './src/transcripts.js';
 import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judge.js';
+import { EXIT, verdict, summary } from './src/gate.js';
 
-const [cmd, file, ...rest] = process.argv.slice(2);
-const opt = (name, dflt) => { const i = rest.indexOf('--' + name); return i < 0 ? dflt : (rest[i + 1] && !rest[i + 1].startsWith('--') ? rest[i + 1] : true); };
-if (!['run', 'tune', 'check'].includes(cmd) || !file) { console.error('usage: node engine/cli.js run|tune <suite.json> | check <chats> [--consent] [--keyfile path] [--out dir]'); process.exit(2); }
+// Exit codes (src/gate.js): 0 pass, 1 a check failed, 3 undetermined, 2 usage or config error. A crash is never 0.
+process.on('uncaughtException', (e) => { console.error('agenttuneup: crashed: ' + (e && e.message ? e.message : String(e)).slice(0, 300)); process.exit(EXIT.FAIL); });
+process.on('unhandledRejection', (e) => { console.error('agenttuneup: crashed: ' + (e && e.message ? e.message : String(e)).slice(0, 300)); process.exit(EXIT.FAIL); });
+const USAGE = 'usage: agenttuneup check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir]\n       agenttuneup run|tune <suite.json> [--consent] [--keyfile path] [--out dir] [--repeats N] [--private words.txt]\n       agenttuneup --version | --help\nExit codes: 0 pass, 1 a check failed, 3 undetermined (fails CI too), 2 usage or config error.';
+const usage = (msg) => { console.error((msg ? msg + '\n' : '') + USAGE); process.exit(EXIT.USAGE); };
+const argv = process.argv.slice(2);
+if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-v')) { console.log(JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version); process.exit(0); }
+if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) { console.log(USAGE); process.exit(0); }
+// Strict flags: an unknown, repeated or empty flag is an error, never ignored. There is no flag or setting that skips a
+// check or turns a failure into a pass (agenttuneup CLI plan, T4).
+const FLAGS = { check: { instructions: 1, agent: 1, private: 1, keyfile: 1, out: 1, consent: 0 }, run: { keyfile: 1, out: 1, repeats: 1, private: 1, consent: 0 }, tune: { keyfile: 1, out: 1, repeats: 1, private: 1, consent: 0 } };
+const [cmd, file, ...rest] = argv;
+if (!Object.hasOwn(FLAGS, cmd) || !file || file.startsWith('-')) usage();
+const flags = {};
+for (let i = 0; i < rest.length; i++) {
+  const m = /^--([a-z]+)$/.exec(rest[i]);
+  if (!m || !Object.hasOwn(FLAGS[cmd], m[1])) usage(`Unknown option ${JSON.stringify(rest[i])} for ${cmd}.`);
+  if (Object.hasOwn(flags, m[1])) usage(`--${m[1]} given twice.`);
+  if (FLAGS[cmd][m[1]]) { const v = rest[i + 1]; if (v === undefined || v === '' || v.startsWith('--')) usage(`--${m[1]} needs a value.`); flags[m[1]] = v; i++; }
+  else flags[m[1]] = true;
+}
+// Only documented TUNEUP_* variables are read; any other one is a mistake or an attempt to change behavior, so stop.
+const strayEnv = Object.keys(process.env).filter(k => /^TUNEUP_/i.test(k) && !/^TUNEUP_(?:CONSENT|OPENROUTER_KEY|AGENT_[A-Z0-9_]+)$/.test(k));
+if (strayEnv.length) usage(`Unknown setting ${strayEnv.join(', ')}. agenttuneup reads only TUNEUP_CONSENT, TUNEUP_OPENROUTER_KEY and TUNEUP_AGENT_*.`);
+if (process.env.TUNEUP_CONSENT !== undefined && process.env.TUNEUP_CONSENT !== '1') usage('TUNEUP_CONSENT must be 1 when set.');
+const opt = (name, dflt) => (Object.hasOwn(flags, name) ? flags[name] : dflt);
+// --consent with no key is a config error (2), named here before anything runs.
+const keyOrStop = () => { try { return loadKey(opt('keyfile')); } catch (e) { console.error(`${e.message}. Strict CI needs a key: set TUNEUP_OPENROUTER_KEY as a CI secret, or pass --keyfile.`); process.exit(EXIT.USAGE); } };
 const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
 const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
 const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
@@ -36,8 +62,8 @@ if (cmd === 'check') {
   const scrub = scrubber({ terms });
   const instructions = opt('instructions') ? readFileSync(opt('instructions'), 'utf8').trim() : '';
   const convos = parseTranscripts(readFileSync(file, 'utf8'), { agentName: opt('agent') });
-  if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(1); }
-  const or = consent ? client(loadKey(opt('keyfile'))) : null;
+  if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(EXIT.USAGE); }
+  const or = consent ? client(keyOrStop()) : null;
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
   // At most CONCURRENCY conversations at once (each asks the judge three times).
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
@@ -55,8 +81,9 @@ if (cmd === 'check') {
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
   const md = toMarkdown(rep, { title: 'Report card' }) + `\nScrubbed before checking: ${Object.entries(rep.scrubbed).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'nothing found'}.` + (or ? ` Model cost: $${or.spent().toFixed(5)}` : '') + '\n';
   writeFileSync(join(out, 'report.md'), md); console.log(md);
-  process.exit(0);
-}
+  // The exit code comes from the findings in memory, never from report.json (T5).
+  process.exitCode = verdict(runs); console.error(summary(process.exitCode, runs));
+} else {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
 const suite = JSON.parse(readFileSync(file, 'utf8'));
@@ -67,7 +94,7 @@ suite.repeats = repeats;
 // Ties reports and tune-up attempts to the exact suite they came from, so stale files are never mixed in.
 // The --private list is part of the identity, so a tune-up can never run with a weaker never-send list than its baseline.
 const suiteId = createHash('sha256').update(JSON.stringify(suite) + '\u0000' + JSON.stringify([...terms].map(t => t.toLowerCase()).sort())).digest('hex').slice(0, 16);
-const or = client(loadKey(opt('keyfile')));
+const or = client(keyOrStop());
 const scrub = scrubber({ terms });
 let adapter;
 try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_config, { privateTerms: terms }) : modelAdapter(suite.agent_config, or, { scrub, privateTerms: terms }); }
@@ -94,6 +121,7 @@ if (cmd === 'run') {
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
   const md = toMarkdown(rep, { title: 'Report card' }) + `\nModel cost for this run: $${or.spent().toFixed(5)}\n`;
   writeFileSync(join(out, 'report.md'), md); console.log(md);
+  process.exitCode = verdict(rep.gateRuns); console.error(summary(process.exitCode, rep.gateRuns));
 } else {
   if (!existsSync(join(out, 'report.json'))) { console.error(`No report in ${out}. Run \`run\` with the same suite and --out first.`); process.exit(2); }
   const before = read('report.json');
@@ -123,4 +151,5 @@ if (cmd === 'run') {
   } else md += `\nNo attempt improved the agent without breaking something else${all.some(a => a.lift > 0) ? ' (attempts with new failures are never proposed)' : ''}, so there is nothing to propose. Run \`tune\` again, or review the failures by hand.\n`;
   md += `\nModel cost for this attempt: $${attempt.cost.toFixed(5)}\n`;
   writeFileSync(join(out, 'tune-up.md'), md); console.log(md);
+}
 }

@@ -17,3 +17,34 @@ jobs:
         with:
           node-version: 22
       - run: cd engine && npm test
+      # The CI gate's own code must have no surviving mutants: tests that pass whatever the code does fail here
+      # (agenttuneup CLI plan T7).
+      - run: cd engine && npm run mutate:gate
+
+  # Installs the packed package in a clean folder and checks the exit codes outside teams will see (CLI plan T8).
+  pack-smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20.12', '22']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Pack, install in a clean folder, check exit codes
+        run: |
+          set -u
+          cd engine && TGZ="$PWD/$(npm pack --silent)" && cd ..
+          APP="$(mktemp -d)" && cd "$APP" && npm init -y >/dev/null && npm install --no-audit --no-fund "$TGZ" >/dev/null
+          printf "User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed, two people.\n" > bad.txt
+          printf 'User: Hi, what time do you open?\nBot: We open at 9am.\n' > clean.txt
+          expect() { want=$1; shift; set +e; npx --no-install agenttuneup "$@" >/dev/null 2>&1; got=$?; set -e; echo "agenttuneup $* -> $got (want $want)"; [ "$got" = "$want" ]; }
+          set -e
+          expect 0 --version
+          expect 1 check bad.txt --out o1
+          expect 3 check clean.txt --out o2
+          expect 2 check clean.txt --skip-rules
+          expect 2 check clean.txt --consent --out o3

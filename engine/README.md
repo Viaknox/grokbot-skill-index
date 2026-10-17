@@ -18,6 +18,38 @@ node cli.js run  examples/bookbot.suite.json --out my-run --consent    # my-run/
 node cli.js tune examples/bookbot.suite.json --out my-run --consent    # one verified attempt; run again to retry
 ```
 
+## Use it in CI (strict gate)
+
+```bash
+npx agenttuneup check chats.txt --instructions instructions.txt --consent --out tune-up-report
+```
+
+| Exit code | Meaning | CI result |
+| --- | --- | --- |
+| `0` | Every check passed, and the judge answered for every chat or case | Pass |
+| `1` | At least one check failed | Fail |
+| `3` | Undetermined: an unsure answer, a held-back chat, the judge was unreachable, or the judge did not run | **Fail** |
+| `2` | Usage or config error (unknown option, `--consent` with no key) | Fail |
+
+When results are mixed, `1` beats `3` beats `0`. The exit code comes from the run itself, never from an old or edited `report.json`.
+
+**Strict CI needs `--consent` and a key.** Without them only the local rule checks run, so the result is always `3`. Store the key as a CI secret, never in the repo. There is no option or setting that skips a check or turns a failure into a pass; unknown options and unknown `TUNEUP_*` settings stop the run with `2`.
+
+```yaml
+# .github/workflows/agent-check.yml
+on: [pull_request]
+jobs:
+  agent-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npx agenttuneup@0.1 check chats.txt --instructions instructions.txt --consent --out tune-up-report
+        env:
+          TUNEUP_OPENROUTER_KEY: ${{ secrets.TUNEUP_OPENROUTER_KEY }}
+```
+
 ## Your data
 
 - **Scrubbing happens on your machine first.** Emails, phone numbers, API keys and tokens, card numbers (checksum-verified), US Social Security numbers and IPv4 addresses become placeholders such as `[EMAIL_1]` before any text goes to a remote model. This catches common patterns, not everything: names, street addresses, other IDs (passport or licence numbers) and IPv6 addresses are not detected, so list names in `--private` or remove them before checking. The same value always gets the same placeholder. Placeholders in a proposed fix are put back locally.

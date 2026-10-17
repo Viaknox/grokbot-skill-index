@@ -44,5 +44,8 @@ export async function evaluate({ suite, instructions, adapter, or, log = () => {
     return runs;
   });
   const runs = perCase.flat();
-  return buildReport({ suite, instructions, adapter, runs, judgeModel: JUDGE_MODEL, evidenceLevel: 2 });
+  const rep = buildReport({ suite, instructions, adapter, runs, judgeModel: JUDGE_MODEL, evidenceLevel: 2 });
+  // The full findings for the CI gate (src/gate.js). Not enumerable, so it never lands in report.json.
+  Object.defineProperty(rep, 'gateRuns', { value: runs, enumerable: false });
+  return rep;
 }

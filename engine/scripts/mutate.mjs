@@ -18,24 +18,28 @@
 //   ret     `return <boolean-looking expression>;` becomes `return !(<expression>);`
 // Not covered: regexes built at run time with new RegExp(...), and loose ==/!=.
 //
-// Exit code is always 0: this is a report, not a gate.
+// Exit code is 0 (a report, not a gate) unless --fail-on-survivors is given; then any survivor exits 1.
+//   --target F  mutate file F instead of src/redact.js     --tests a,b  run only these test files
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ENGINE = fileURLToPath(new URL('..', import.meta.url));
-const TARGET = join('src', 'redact.js');
+let TARGET = join('src', 'redact.js');   // --target picks another file (the CI gate uses src/gate.js)
 
 // Reads the three command-line options, so the rest of the script never touches process.argv.
 function parseArgs(argv) {
-  const opt = { out: null, timeout: 60000, only: 0 };
+  const opt = { out: null, timeout: 60000, only: 0, target: null, tests: null, failOnSurvivors: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--out') opt.out = argv[++i];
     else if (a === '--timeout') opt.timeout = Number(argv[++i]);
     else if (a === '--only') opt.only = Number(argv[++i]);
+    else if (a === '--target') opt.target = argv[++i];
+    else if (a === '--tests') opt.tests = argv[++i].split(',');
+    else if (a === '--fail-on-survivors') opt.failOnSurvivors = true;
     else throw new Error('unknown option ' + a);
   }
   if (!(opt.timeout > 0) || !(opt.only >= 0)) throw new Error('--timeout and --only must be positive numbers');
@@ -178,7 +182,9 @@ function snippet(src, at) {
 // Reads the files that `npm test` runs from package.json, so the mutation check judges the same suite CI does.
 function testFiles() {
   const script = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8')).scripts.test;
-  const files = script.split(/\s+/).filter(w => /\.[cm]?js$/.test(w));
+  // `node --test "test/*.test.js"` discovers files itself; list the same files here.
+  const files = /test\/\*\.test\.js/.test(script) ? readdirSync(join(ENGINE, 'test')).filter(f => f.endsWith('.test.js')).map(f => join('test', f))
+    : script.split(/\s+/).filter(w => /\.[cm]?js$/.test(w));
   if (!files.length) throw new Error('no test files found in the "test" script: ' + script);
   return files;
 }
@@ -209,7 +215,7 @@ function report(results, seconds, total) {
   const count = (s) => results.filter(r => r.status === s).length;
   const surv = results.filter(r => r.status === 'survived');
   const lines = [
-    '# Mutation report: src/redact.js', '',
+    `# Mutation report: ${TARGET.split(sep).join('/')}`, '',
     `- Mutants generated: ${total}${results.length < total ? ` (ran ${results.length}, spread evenly)` : ''}`,
     `- Killed: ${count('killed')}`,
     `- Killed by timeout: ${count('timeout')}`,
@@ -227,14 +233,15 @@ function report(results, seconds, total) {
   return lines.join('\n') + '\n';
 }
 
-// Entry point: generate, run, report. Always exits 0.
+// Entry point: generate, run, report. Exits 1 only with --fail-on-survivors and a survivor.
 function main() {
   const opt = parseArgs(process.argv.slice(2));
+  if (opt.target) TARGET = join(...opt.target.split('/'));
   const src = readFileSync(join(ENGINE, TARGET), 'utf8');
   const all = mutants(src, lex(src)).map(m => ({ ...m, line: src.slice(0, m.at).split('\n').length, snippet: snippet(src, m.at), source: apply(src, m.edits) }))
     .filter(m => m.source !== src);
   const chosen = opt.only && opt.only < all.length ? Array.from({ length: opt.only }, (_, k) => all[Math.floor((k * all.length) / opt.only)]) : all;
-  const files = testFiles();
+  const files = opt.tests || testFiles();
   const t0 = Date.now(); const results = [];
   for (const [k, m] of chosen.entries()) {
     const status = run(m.source, files, opt.timeout);
@@ -244,6 +251,8 @@ function main() {
   const text = report(results, (Date.now() - t0) / 1000, all.length);
   process.stdout.write(text);
   if (opt.out) writeFileSync(opt.out, text);
+  // --fail-on-survivors turns the report into a gate: a mutant the tests did not notice fails CI (agenttuneup CLI plan T7).
+  if (opt.failOnSurvivors && results.some(r => r.status === 'survived')) process.exitCode = 1;
 }
 
 main();
