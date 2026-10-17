@@ -194,7 +194,8 @@ function testFiles() {
 function run(mutatedSource, files, timeout) {
   const dir = mkdtempSync(join(tmpdir(), 'scrub-mutant-'));
   try {
-    cpSync(ENGINE, dir, { recursive: true, filter: (p) => !/^(?:node_modules|scripts|\.git)$/.test(relative(ENGINE, p).split(sep)[0]) });
+    // scripts/ is copied too: tests read scripts/test.mjs, and a copy without it fails every run (PR #32 review).
+    cpSync(ENGINE, dir, { recursive: true, filter: (p) => !/^(?:node_modules|\.git)$/.test(relative(ENGINE, p).split(sep)[0]) });
     writeFileSync(join(dir, TARGET), mutatedSource);
     writeFileSync(join(dir, 'check.mjs'), mutatedSource);
     const syntax = spawnSync(process.execPath, ['--check', join(dir, 'check.mjs')], { encoding: 'utf8' });
@@ -242,6 +243,10 @@ function main() {
     .filter(m => m.source !== src);
   const chosen = opt.only && opt.only < all.length ? Array.from({ length: opt.only }, (_, k) => all[Math.floor((k * all.length) / opt.only)]) : all;
   const files = opt.tests || testFiles();
+  // The unmutated code must pass first; otherwise every mutant would count as killed and the report would mean nothing
+  // (PR #32 review). A failing baseline always exits 1.
+  const base = run(src, files, opt.timeout);
+  if (base !== 'survived') { process.stderr.write(`Baseline failed (${base}): the tests do not pass on the unmutated ${TARGET} in the mutation copy. No mutants were run.\n`); process.exitCode = 1; return; }
   const t0 = Date.now(); const results = [];
   for (const [k, m] of chosen.entries()) {
     const status = run(m.source, files, opt.timeout);

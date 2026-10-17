@@ -109,7 +109,7 @@ try { adapter = suite.agent_config.type === 'http' ? httpAdapter(suite.agent_con
 catch (e) { console.error(e.message); process.exit(2); }
 // A tool check on an agent whose tool calls can't be seen would never run and so could never fail: refuse the suite
 // before anything is sent, rather than letting the gate pass without it (PR #32 review).
-{ const blind = adapter.observesTools ? [] : suite.cases.filter(c => c.expect && (c.expect.must_call || (Array.isArray(c.expect.must_not_call) && c.expect.must_not_call.length))).map(c => c.id);
+{ const blind = adapter.observesTools ? [] : suite.cases.filter(c => c.expect && ('must_call' in c.expect || 'must_not_call' in c.expect)).map(c => c.id);
   if (blind.length) usage(`Case(s) ${blind.join(', ')} check tool calls (must_call / must_not_call), but this agent's tool calls are not visible (${suite.agent_config.type} adapter). Remove those checks or use an adapter that shows tool calls. Nothing was sent.`); }
 if (suite.agent_config.type === 'http') {
   const vars = headerVars(suite.agent_config);

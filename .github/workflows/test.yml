@@ -7,7 +7,8 @@ on:
   pull_request:
 
 jobs:
-  engine:
+  engine-matrix:
+    name: engine (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -24,6 +25,17 @@ jobs:
       # (agenttuneup CLI plan T7).
       - if: matrix.node == '22'
         run: cd engine && npm run mutate:gate
+
+  # One stable check named "engine" for branch protection: passes only when every matrix cell passed. `always()` makes
+  # it run (and fail) even when a cell failed, so a failed or skipped cell can never count as passing (PR #32 review).
+  engine:
+    if: always()
+    needs: engine-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.engine-matrix.result }}
+        run: '[ "$RESULT" = "success" ] || { echo "engine-matrix: $RESULT"; exit 1; }'
 
   # Installs the packed package in a clean folder and checks the exit codes outside teams will see (CLI plan T8).
   pack-smoke:

@@ -5,7 +5,10 @@ import { parseEnv } from 'node:util';
 import { Sanitized } from './redact.js';
 
 export function loadKey(keyfile) {
-  if (process.env.TUNEUP_OPENROUTER_KEY) return process.env.TUNEUP_OPENROUTER_KEY.trim();
+  // A key that is only spaces or newlines is no key: never send an empty bearer token (PR #32 review).
+  const env = (process.env.TUNEUP_OPENROUTER_KEY || '').trim();
+  if (env) return env;
+  if (process.env.TUNEUP_OPENROUTER_KEY !== undefined && !keyfile) throw new Error('TUNEUP_OPENROUTER_KEY is set but empty');
   if (!keyfile) throw new Error('No OpenRouter key: set TUNEUP_OPENROUTER_KEY or pass --keyfile');
   // Node's own dotenv parser: handles quotes, `export`, trailing comments and CRLF, and never runs shell syntax.
   const vars = parseEnv(readFileSync(keyfile, 'utf8').replace(/^\uFEFF/, ''))   // Windows editors may add a BOM;
