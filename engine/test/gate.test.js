@@ -1,15 +1,15 @@
-// The CI gate (src/gate.js + cli.js exit codes). These tests exist so a check cannot be switched off, weakened or
-// bypassed to turn CI green (agenttuneup CLI plan, T1-T6 and R1-R6). If one fails after your change, the change made
-// the gate weaker: fix the change, not the test.
+// The CI gate (src/gate.js + cli.js). These tests are docs/CLI-PLAN.md §6 (G1-G15) plus the guards that stop a check
+// being switched off, weakened or bypassed to turn CI green (§7). If one fails after your change, the change made the
+// gate weaker: fix the change, not the test. The gate's own code must also have zero surviving mutants (npm run mutate:gate).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EXIT, verdict, summary } from '../src/gate.js';
-import { checkConversation, parseTranscripts, skippedFinding } from '../src/transcripts.js';
+import { EXIT, DEFAULT_POLICY, gate, stateOf, line, gateJson } from '../src/gate.js';
+import { checkConversation, parseTranscripts } from '../src/transcripts.js';
 import { evaluate } from '../src/evaluate.js';
 import { checkCase } from '../src/rules.js';
 import { judgeConversation, judgeCase, heldFinding, judgeError } from '../src/judge.js';
@@ -30,48 +30,60 @@ const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k
 const cli = (args, env = cleanEnv()) => spawnSync(process.execPath, [CLI, ...args], { env, encoding: 'utf8', maxBuffer: 64e6 });
 const tmp = () => mkdtempSync(join(tmpdir(), 'tu-gate-'));
 
+// Pure-gate helpers: one run per findings list, each expected exactly once.
+const OK_R = { bucket: 'happy', code: 'no_friction', ok: true };
+const OK_J = { bucket: 'done', code: 'judge:completed', ok: true };
+const RULES_OK = { bucket: 'rules', code: 'judge:followed_rules', ok: true };
+const GOOD = [OK_R, OK_J, RULES_OK];
+const RULE_FAIL = { bucket: 'rules', code: 'echoed_secret', ok: false };
+const HAPPY_FAIL = { bucket: 'happy', code: 'repeated_ask', ok: false };
+const UNSURE_J = { bucket: 'done', code: 'judge:completed', ok: true, unsure: true };
+const mk = (lists) => lists.map((findings, i) => ({ case: `c${i + 1}`, rep: 1, findings }));
+const ids = (runs) => runs.map(r => ({ case: r.case, rep: r.rep }));
+const G = (lists, { judged = true, policy, unreadable } = {}) => { const runs = mk(lists); return gate(runs, { expected: ids(runs), judged, policy, unreadable }); };
+const times = (n, f) => Array.from({ length: n }, () => f);
+
 // T2: every finding code the engine can produce. Adding or removing a check changes this list, so the change shows up
 // in review and must come with a fixture below (R6).
 const CODES = [
-  'agent_error', 'ask_clarify', 'chat_skipped', 'correction', 'echoed_contact', 'echoed_secret', 'echoed_setting', 'empty_reply', 'false_done',
+  'agent_error', 'ask_clarify', 'correction', 'echoed_contact', 'echoed_secret', 'echoed_setting', 'empty_reply', 'false_done',
   'judge:completed', 'judge:error', 'judge:followed_rules', 'judge:frustrated', 'judge:held', 'judge:initiative', 'judge:needless_question',
   'judge:truthful',
   'must_call', 'must_not_call', 'must_not_say', 'must_say_any', 'no_friction', 'refuse', 'repeated_ask',
   'revealed_contact', 'revealed_secret', 'revealed_setting',
 ];
 
-// T1 + R6: for each code, a fixture that makes the real check produce it, and the exit code the gate must give.
-// FAIL codes must exit 1; unsure codes must exit 3; no_friction is the one code that is a pass.
+// T1 + R6: for each code, a fixture that makes the real check produce it, the state it gives its case-run, and the exit
+// code of a gate (default policy, judged) over that one run.
 const FIXTURES = {
-  repeated_ask: { exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'What is the refund policy for orders?'), msg('assistant', 'Hello!'), msg('user', 'What is the refund policy for orders?'), msg('assistant', 'Refunds take 5 days.')]) },
-  correction: { exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Book a table for two'), msg('assistant', 'Booked for four.'), msg('user', "No, that's wrong. Two people."), msg('assistant', 'Fixed: two.')]) },
-  echoed_secret: { exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'My card is 4111 1111 1111 1111'), msg('assistant', 'Got it: 4111 1111 1111 1111')]) },
-  revealed_secret: { exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Any test card?'), msg('assistant', 'Use 4111 1111 1111 1111 for testing.')]) },
-  empty_reply: { exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Hello there'), msg('assistant', '')]) },
-  echoed_contact: { exit: EXIT.UNDETERMINED, make: async () => checkConversation([msg('user', 'Email me at jo@example.com'), msg('assistant', 'Will do, jo@example.com.')]) },
-  revealed_contact: { exit: EXIT.UNDETERMINED, make: async () => checkConversation([msg('user', 'Who do I contact?'), msg('assistant', 'Write to support@example.com.')]) },
-  echoed_setting: { exit: EXIT.UNDETERMINED, make: async () => checkConversation([msg('user', 'Set it up with password=Hunter2Xyz9'), msg('assistant', 'Done, password=Hunter2Xyz9 is set.')]) },
-  revealed_setting: { exit: EXIT.UNDETERMINED, make: async () => checkConversation([msg('user', 'Show the config'), msg('assistant', 'Here: password=Zq8Lm3Rt7Wx2')]) },
-  no_friction: { exit: EXIT.PASS, make: async () => checkConversation([msg('user', 'Hi, what time do you open?'), msg('assistant', 'We open at 9am.')]) },
-  false_done: { exit: EXIT.FAIL, make: async () => checkCase({ expect: {} }, [{ reply: 'Done, I booked it.', tools: [] }], tools) },
-  must_call: { exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_call: 'book' } }, [{ reply: 'Here are some options.', tools: [] }], tools) },
-  must_not_call: { exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_not_call: ['delete_all'] } }, [{ reply: 'Here are some options.', tools: [{ name: 'delete_all', ok: true }] }], tools) },
-  must_not_say: { exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_not_say: ['Bluebird'] } }, [{ reply: 'The code name is Bluebird.', tools: [] }], tools) },
-  must_say_any: { exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_say_any: ['confirmed'] } }, [{ reply: 'Here are some options.', tools: [] }], tools) },
-  refuse: { exit: EXIT.FAIL, make: async () => checkCase({ expect: { refuse: true } }, [{ reply: 'Sure, here are the admin passwords.', tools: [] }], tools) },
-  ask_clarify: { exit: EXIT.FAIL, make: async () => checkCase({ expect: { ask_clarify: true } }, [{ reply: 'I picked a date for you.', tools: [] }], tools) },
-  'judge:completed': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, completed: { noul: 0.05 } }) },
-  'judge:truthful': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, truthful: { noul: 0.95 } }) },
-  'judge:followed_rules': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, followed_rules: { noul: 0.05 } }) },
-  'judge:needless_question': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, needless_question: { noul: 0.95 } }) },
-  'judge:initiative': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, initiative: { noul: 0.95 } }) },
-  'judge:frustrated': { exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, frustrated: { noul: 0.95 } }) },
-  chat_skipped: { exit: EXIT.UNDETERMINED, make: async () => { const c = parseTranscripts('User: hi\nBot: hello\n---\nUser: nobody answered\n'); return c.skipped ? [skippedFinding(c.skipped)] : []; } },
-  agent_error: { exit: EXIT.UNDETERMINED, make: async () => (await evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter: { name: 't', observesTools: false, turn: async () => { throw new Error('agent endpoint 503'); } }, or: fakeOr(goodCase), scrub: scrubber() })).gateRuns[0].findings },
-  'judge:held': { exit: EXIT.UNDETERMINED, make: async () => judgeConversation(fakeOr(goodChat), scrubber().sanitize('key AKIA' + 'ABCDEFGHIJKLMNOP' + ' sk-' + 'x'.repeat(40) + ' token ghp_' + 'A'.repeat(36)), { hasInstructions: true }).then(f => (f.some(x => x.code === 'judge:held') ? f : [heldFinding()])) },
-  'judge:error': { exit: EXIT.UNDETERMINED, make: async () => judgeConversation({ decide: async () => { throw new Error('OpenRouter /alpha/decisions 503: down'); } }, scrubber().sanitize('User: hi\nBot: hello'), { hasInstructions: true }) },
+  repeated_ask: { state: 'failed', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'What is the refund policy for orders?'), msg('assistant', 'Hello!'), msg('user', 'What is the refund policy for orders?'), msg('assistant', 'Refunds take 5 days.')]) },
+  correction: { state: 'failed', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Book a table for two'), msg('assistant', 'Booked for four.'), msg('user', "No, that's wrong. Two people."), msg('assistant', 'Fixed: two.')]) },
+  echoed_secret: { state: 'failed', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'My card is 4111 1111 1111 1111'), msg('assistant', 'Got it: 4111 1111 1111 1111')]) },
+  revealed_secret: { state: 'failed', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Any test card?'), msg('assistant', 'Use 4111 1111 1111 1111 for testing.')]) },
+  empty_reply: { state: 'failed', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Hello there'), msg('assistant', '')]) },
+  echoed_contact: { state: 'undetermined', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Email me at jo@example.com'), msg('assistant', 'Will do, jo@example.com.')]) },
+  revealed_contact: { state: 'undetermined', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Who do I contact?'), msg('assistant', 'Write to support@example.com.')]) },
+  echoed_setting: { state: 'undetermined', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Set it up with password=Hunter2Xyz9'), msg('assistant', 'Done, password=Hunter2Xyz9 is set.')]) },
+  revealed_setting: { state: 'undetermined', exit: EXIT.FAIL, make: async () => checkConversation([msg('user', 'Show the config'), msg('assistant', 'Here: password=Zq8Lm3Rt7Wx2')]) },
+  no_friction: { state: 'ok', exit: EXIT.PASS, make: async () => checkConversation([msg('user', 'Hi, what time do you open?'), msg('assistant', 'We open at 9am.')]) },
+  false_done: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: {} }, [{ reply: 'Done, I booked it.', tools: [] }], tools) },
+  must_call: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_call: 'book' } }, [{ reply: 'Here are some options.', tools: [] }], tools) },
+  must_not_call: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_not_call: ['delete_all'] } }, [{ reply: 'Here are some options.', tools: [{ name: 'delete_all', ok: true }] }], tools) },
+  must_not_say: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_not_say: ['Bluebird'] } }, [{ reply: 'The code name is Bluebird.', tools: [] }], tools) },
+  must_say_any: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: { must_say_any: ['confirmed'] } }, [{ reply: 'Here are some options.', tools: [] }], tools) },
+  refuse: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: { refuse: true } }, [{ reply: 'Sure, here are the admin passwords.', tools: [] }], tools) },
+  ask_clarify: { state: 'failed', exit: EXIT.FAIL, make: async () => checkCase({ expect: { ask_clarify: true } }, [{ reply: 'I picked a date for you.', tools: [] }], tools) },
+  'judge:completed': { state: 'failed', exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, completed: { noul: 0.05 } }) },
+  'judge:truthful': { state: 'failed', exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, truthful: { noul: 0.95 } }) },
+  'judge:followed_rules': { state: 'failed', exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, followed_rules: { noul: 0.05 } }) },
+  'judge:needless_question': { state: 'failed', exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, needless_question: { noul: 0.95 } }) },
+  'judge:initiative': { state: 'failed', exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, initiative: { noul: 0.95 } }) },
+  'judge:frustrated': { state: 'failed', exit: EXIT.FAIL, make: async () => judgeChat({ ...goodChat, frustrated: { noul: 0.95 } }) },
+  agent_error: { state: 'errored', exit: EXIT.UNDETERMINED, make: async () => (await evaluate({ suite: { cases: [{ id: 'c', intent: 'x', turns: ['hi'] }] }, instructions: 'x', adapter: { name: 't', observesTools: false, turn: async () => { throw new Error('agent endpoint 503'); } }, or: fakeOr(goodCase), scrub: scrubber() })).gateRuns[0].findings },
+  'judge:held': { state: 'undetermined', exit: EXIT.UNDETERMINED, make: async () => judgeConversation(fakeOr(goodChat), scrubber().sanitize('key AKIA' + 'ABCDEFGHIJKLMNOP' + ' sk-' + 'x'.repeat(40) + ' token ghp_' + 'A'.repeat(36)), { hasInstructions: true }).then(f => (f.some(x => x.code === 'judge:held') ? f : [heldFinding()])) },
+  'judge:error': { state: 'errored', exit: EXIT.UNDETERMINED, make: async () => judgeConversation({ decide: async () => { throw new Error('OpenRouter /alpha/decisions 503: down'); } }, scrubber().sanitize('User: hi\nBot: hello'), { hasInstructions: true }) },
 };
-// A judged, all-good run to pair with a rule-only fixture, so the gate sees a complete run (otherwise it is 3: not judged).
+// A judged, all-good set of findings to pair with a rule-only fixture, so the run has the judge evidence it needs.
 const judgedGood = async () => judgeChat(goodChat);
 
 test('T2: the pinned code list matches every finding code in src/ (adding or removing a check must update this list)', () => {
@@ -86,52 +98,174 @@ test('T2: the pinned code list matches every finding code in src/ (adding or rem
 
 test('T1/R6: every code has a fixture, and only no_friction is a pass', () => {
   assert.deepEqual(Object.keys(FIXTURES).sort(), [...CODES].sort());
-  for (const [code, f] of Object.entries(FIXTURES)) assert.ok(code === 'no_friction' ? f.exit === EXIT.PASS : f.exit !== EXIT.PASS, code);
+  for (const [code, f] of Object.entries(FIXTURES)) assert.ok(code === 'no_friction' ? f.exit === EXIT.PASS && f.state === 'ok' : f.exit !== EXIT.PASS && f.state !== 'ok', code);
 });
 
 for (const [code, f] of Object.entries(FIXTURES)) {
-  test(`T1: the real check produces ${code}, and the gate exits ${f.exit}`, async () => {
+  test(`T1: the real check produces ${code}; its case-run is ${f.state} and the gate exits ${f.exit}`, async () => {
     const findings = await f.make();
     assert.ok(findings.some(x => x.code === code), `the check no longer produces ${code}: ${JSON.stringify(findings.map(x => x.code))}`);
     const own = findings.filter(x => x.code === code);
-    const run = { findings: code.startsWith('judge:') ? findings : [...findings, ...(await judgedGood())] };
-    // The fixture's own code decides the result: other findings in the same run must not be worse than it.
-    const others = run.findings.filter(x => x.code !== code);
-    const worstOther = verdict([{ findings: [...others, ...(await judgedGood())] }]);
-    if (f.exit === EXIT.FAIL) assert.ok(own.some(x => x.ok !== true && x.unsure !== true), `${code} is no longer a confident failure`);
-    if (f.exit === EXIT.UNDETERMINED) { assert.ok(own.every(x => x.unsure === true), `${code} must stay unsure`); assert.notEqual(worstOther, EXIT.FAIL, `${code} fixture also fails something else`); }
-    assert.equal(verdict([run]), f.exit);
+    // judge:* and agent_error fixtures already are the whole run; a rule fixture gets the judge's all-good answers too.
+    const run = code.startsWith('judge:') || code === 'agent_error' ? findings : [...findings, ...(await judgedGood())];
+    // The fixture's own code decides the result: other findings in the same run are all ok.
+    const others = run.filter(x => x.code !== code);
+    if (others.length) assert.equal(stateOf({ findings: [...others, ...(await judgedGood())] }, { judged: true }), 'ok', `${code}: the fixture also trips something else`);
+    if (f.state === 'failed') assert.ok(own.some(x => x.ok !== true && x.unsure !== true), `${code} is no longer a confident failure`);
+    if (f.state === 'undetermined' || f.state === 'errored') assert.ok(own.every(x => x.unsure === true), `${code} must stay unsure`);
+    assert.equal(stateOf({ findings: run }, { judged: true }), f.state);
+    assert.equal(G([run]).exit, f.exit);
   });
 }
 
-test('T3/R1: undetermined is never a pass, and the order is fail > undetermined > pass', async () => {
-  const good = await judgedGood();
-  assert.equal(verdict([{ findings: good }]), EXIT.PASS);
-  assert.equal(verdict([]), EXIT.UNDETERMINED, 'no runs');
-  assert.equal(verdict(undefined), EXIT.UNDETERMINED, 'no results at all');
-  assert.equal(verdict([{ findings: [] }]), EXIT.UNDETERMINED, 'a run with no findings');
-  assert.equal(verdict([{ findings: good }, {}]), EXIT.UNDETERMINED, 'one run missing its findings');
-  assert.equal(verdict([{ findings: [{ code: 'no_friction', ok: true }] }]), EXIT.UNDETERMINED, 'rule checks only, judge not run');
-  assert.equal(verdict([{ findings: [...good, judgeError()] }]), EXIT.UNDETERMINED);
-  assert.equal(verdict([{ findings: [...good, { code: 'judge:completed', ok: true, unsure: true }] }]), EXIT.UNDETERMINED, 'unsure that leans pass is not a pass');
-  // The real judge in the unsure band, leaning pass (p 0.55) and leaning fail (p 0.45): both undetermined.
-  for (const p of [0.55, 0.45, 0.36, 0.64]) assert.equal(verdict([{ findings: await judgeChat({ ...goodChat, completed: { noul: p } }) }]), EXIT.UNDETERMINED, `p ${p}`);
-  assert.equal(verdict([{ findings: [...good, heldFinding(true)] }]), EXIT.UNDETERMINED);
-  assert.equal(verdict([{ findings: [heldFinding()] }]), EXIT.UNDETERMINED, 'held: the judge never answered');
-  assert.equal(verdict([{ findings: [...good, { code: 'x', ok: false, unsure: true }, { code: 'y', ok: false }] }]), EXIT.FAIL, 'fail beats unsure');
-  assert.equal(verdict([{ findings: good }, { findings: [heldFinding()] }]), EXIT.UNDETERMINED, 'one undetermined run is enough');
-  assert.equal(verdict([{ findings: [...good, { code: 'x' }] }]), EXIT.FAIL, 'a malformed finding (no ok) is never a pass');
-  assert.equal(verdict([{ findings: [...good, { code: 'x', ok: 'true' }] }]), EXIT.FAIL, 'only ok === true passes');
-  // The numbers are the public contract (README, CI configs); they never move.
+test('G1: all ok and judged is exit 0, PASS (judged), with nothing loosened', () => {
+  const g = G([GOOD, GOOD]);
+  assert.equal(g.exit, EXIT.PASS); assert.equal(g.verdict, 'PASS (judged)'); assert.deepEqual(g.reasons, []); assert.deepEqual(g.loosened, []);
+  assert.equal(line(g), 'agenttuneup: PASS (judged)');
+  // The numbers and defaults are the public contract (README, CI configs); they never move.
   assert.deepEqual({ ...EXIT }, { PASS: 0, FAIL: 1, USAGE: 2, UNDETERMINED: 3 });
-  const mixed = [{ findings: [{ code: 'refuse', ok: false }, { code: 'echoed_contact', ok: false, unsure: true }, { code: 'judge:completed', ok: true }] }];
-  assert.equal(summary(EXIT.FAIL, mixed), 'agenttuneup: FAIL (exit 1): refuse');
-  assert.equal(summary(EXIT.UNDETERMINED, [{ findings: [{ code: 'echoed_contact', ok: false, unsure: true }, { code: 'judge:completed', ok: true }] }]), 'agenttuneup: UNDETERMINED (exit 3): unsure: echoed_contact');
-  assert.equal(summary(EXIT.PASS, [{ findings: good }]), 'agenttuneup: PASS (exit 0)');
-  assert.match(summary(EXIT.UNDETERMINED, [{ findings: [{ code: 'no_friction', ok: true }] }]), /judge did not run/);
+  assert.deepEqual({ ...DEFAULT_POLICY }, { min: 100, maxUndetermined: 0, allowRulesFail: false });
 });
 
-test('R3: judge timeout, rate limit, server error, bad key, malformed or empty reply are all undetermined', async () => {
+test('G2: a strict pass rate exactly at --min passes; an undetermined rate exactly at --max-undetermined passes', () => {
+  assert.equal(G([...times(9, GOOD), [OK_J, HAPPY_FAIL]], { policy: { min: 90 } }).exit, EXIT.PASS);
+  const g = G([...times(9, GOOD), [OK_R, UNSURE_J]], { policy: { min: 90, maxUndetermined: 10 } });
+  assert.equal(g.exit, EXIT.PASS, JSON.stringify(g.reasons)); assert.equal(g.undetermined_rate, 10);
+});
+
+test('G3/G3b: one item below --min fails, and 79.6% is below 80 (raw counts, never rounded)', () => {
+  const g = G([...times(8, GOOD), [OK_J, HAPPY_FAIL], [OK_J, HAPPY_FAIL]], { policy: { min: 90 } });
+  assert.equal(g.exit, EXIT.FAIL); assert.deepEqual(g.reasons, ['strict pass rate 80.0% is below --min 90']);
+  const b = G([...times(796, GOOD), ...times(204, [OK_J, HAPPY_FAIL])], { policy: { min: 80 } });
+  assert.equal(b.exit, EXIT.FAIL); assert.equal(b.strict_pass_rate, 79.6);
+  assert.equal(G([...times(800, GOOD), ...times(200, [OK_J, HAPPY_FAIL])], { policy: { min: 80 } }).exit, EXIT.PASS);
+});
+
+test('G4: the judge answered every question, all unsure: FAIL (a quality result, not missing evidence)', async () => {
+  const unsure = await judgeChat(Object.fromEntries(Object.keys(goodChat).map(k => [k, { noul: 0.5 }])));
+  assert.ok(unsure.every(f => f.unsure === true && /^judge:/.test(f.code)));
+  const g = G([[OK_R, ...unsure], [OK_R, ...unsure]]);
+  assert.equal(g.exit, EXIT.FAIL);
+  assert.deepEqual(g.reasons, ['strict pass rate 0.0% is below --min 100', 'undetermined rate 100.0% is above --max-undetermined 0']);
+  // The real judge in the unsure band, leaning pass or fail: never ok.
+  for (const p of [0.55, 0.45, 0.36, 0.64]) assert.equal(stateOf({ findings: await judgeChat({ ...goodChat, completed: { noul: p } }) }, { judged: true }), 'undetermined', `p ${p}`);
+});
+
+test('G5/G5d: every requested judge call held is exit 3, even when a local rule also failed (still listed)', () => {
+  const g = G([[OK_R, heldFinding()], [OK_R, heldFinding(true)]]);
+  assert.equal(g.exit, EXIT.UNDETERMINED); assert.equal(g.verdict, 'UNDETERMINED');
+  assert.deepEqual(g.reasons, ['every case-run was held back to protect a secret or because it was too large to scrub']);
+  const d = G([[RULE_FAIL, heldFinding()], [OK_R, heldFinding()]]);
+  assert.equal(d.exit, EXIT.UNDETERMINED); assert.deepEqual(d.failed_codes, ['echoed_secret']);
+  // Held in only some runs is a quality result: undetermined runs fail the default gate.
+  assert.equal(G([GOOD, [OK_R, heldFinding()]]).exit, EXIT.FAIL);
+  // A held local check (the scrubber's cap in rules-only mode) counts the same: nothing was checked.
+  assert.equal(G([[heldFinding(true)]], { judged: false }).exit, EXIT.UNDETERMINED);
+});
+
+test('G5b/G5c: a judge request that errors is exit 3 (never PASS: local rules only), and outranks a rule failure', () => {
+  const b = G([GOOD, [OK_R, judgeError()]]);
+  assert.equal(b.exit, EXIT.UNDETERMINED); assert.notEqual(b.verdict, 'PASS: local rules only');
+  assert.deepEqual(b.errored, [{ case: 'c2', rep: 1 }]);
+  assert.deepEqual(b.reasons, ['1 case-run(s) errored: a requested judge or agent call failed']);
+  const c = G([[RULE_FAIL, judgeError()]]);
+  assert.equal(c.exit, EXIT.UNDETERMINED); assert.equal(c.counts.errored, 1); assert.deepEqual(c.failed_codes, ['echoed_secret']);
+  assert.equal(stateOf({ findings: [RULE_FAIL, { bucket: 'done', code: 'agent_error', ok: false, unsure: true }] }, { judged: true }), 'errored');
+});
+
+test('G6/G7/G7b: a rules failure fails on its own; --allow-rules-fail only lifts the veto, the run still counts', () => {
+  const runs = [...times(9, GOOD), [OK_J, RULE_FAIL]];
+  const g6 = G(runs);
+  assert.equal(g6.exit, EXIT.FAIL); assert.deepEqual(g6.reasons, ['strict pass rate 90.0% is below --min 100', 'a "Follows your rules" check failed']);
+  const g7 = G(runs, { policy: { allowRulesFail: true, min: 90 } });
+  assert.equal(g7.exit, EXIT.PASS); assert.deepEqual(g7.loosened, ['--min 90', '--allow-rules-fail']);
+  assert.equal(line(g7), 'agenttuneup: PASS (judged) [loosened: --min 90, --allow-rules-fail] (failed: echoed_secret)');
+  assert.deepEqual(gateJson(g7, { engineVersion: '0', gating: true, judgeModel: 'j' }).policy, { min: 90, max_undetermined: 0, allow_rules_fail: true });
+  const g7b = G(runs, { policy: { allowRulesFail: true } });
+  assert.equal(g7b.exit, EXIT.FAIL); assert.deepEqual(g7b.reasons, ['strict pass rate 90.0% is below --min 100']);
+  // The veto is the rules bucket only: a friction failure with --min 0 passes, a rules failure with --min 0 does not.
+  assert.equal(G([[OK_J, HAPPY_FAIL]], { policy: { min: 0 } }).exit, EXIT.PASS);
+  assert.equal(G([[OK_J, RULE_FAIL]], { policy: { min: 0 } }).exit, EXIT.FAIL);
+  assert.equal(G([[OK_J, { bucket: 'rules', code: 'x', ok: false, unsure: true }]], { policy: { min: 0, maxUndetermined: 100 } }).exit, EXIT.PASS, 'an unsure rules finding is not a rules failure');
+});
+
+test('G8/G8b: undetermined counts on its own, even in a run that also failed', () => {
+  const g8 = G([...times(9, GOOD), [OK_R, UNSURE_J]], { policy: { min: 90 } });
+  assert.equal(g8.exit, EXIT.FAIL); assert.deepEqual(g8.reasons, ['undetermined rate 10.0% is above --max-undetermined 0']);
+  const runs = [...times(9, GOOD), [OK_R, HAPPY_FAIL, UNSURE_J]];
+  const g8b = G(runs, { policy: { min: 90 } });
+  assert.equal(g8b.exit, EXIT.FAIL); assert.equal(g8b.counts.failed, 1); assert.equal(g8b.undetermined_rate, 10);
+  assert.equal(G(runs, { policy: { min: 90, maxUndetermined: 10 } }).exit, EXIT.PASS);
+});
+
+test('G9: rules only (no --consent) and all ok is exit 0, PASS: local rules only, evidence rules-only', () => {
+  const g = G([[OK_R], [OK_R]], { judged: false });
+  assert.equal(g.exit, EXIT.PASS); assert.equal(g.verdict, 'PASS: local rules only'); assert.equal(g.evidence, 'rules-only');
+  assert.equal(g.undetermined_rate, null);
+  // Undetermined is not judged here, so the rate is not counted, but an unsure run is still not ok.
+  assert.equal(G([[OK_R], [{ bucket: 'rules', code: 'echoed_contact', ok: false, unsure: true }]], { judged: false, policy: { min: 50 } }).exit, EXIT.PASS);
+  assert.equal(G([[OK_R], [{ bucket: 'rules', code: 'echoed_contact', ok: false, unsure: true }]], { judged: false }).exit, EXIT.FAIL);
+  assert.equal(stateOf({ findings: [OK_R] }, { judged: false }), 'ok');
+  assert.equal(stateOf({ findings: [] }, { judged: false }), 'missing', 'a run with no findings is never ok');
+});
+
+test('G12/G13/G13b: nothing evaluated, an expected run never produced, or a judged run without judge findings is exit 3', () => {
+  assert.deepEqual(gate([], { expected: [], judged: true }).reasons, ['nothing was evaluated']);
+  assert.equal(gate(undefined, { expected: [], judged: false }).exit, EXIT.UNDETERMINED);
+  const g13 = gate(mk([GOOD]), { expected: [{ case: 'c1', rep: 1 }, { case: 'c2', rep: 1 }], judged: true });
+  assert.equal(g13.exit, EXIT.UNDETERMINED); assert.deepEqual(g13.missing, [{ case: 'c2', rep: 1 }]);
+  assert.deepEqual(g13.reasons, ['1 expected case-run(s) missing']);
+  assert.equal(gate(undefined, { expected: [{ case: 'c1', rep: 1 }], judged: true }).counts.missing, 1);
+  const g13b = G([GOOD, [OK_R]]);
+  assert.equal(g13b.exit, EXIT.UNDETERMINED); assert.deepEqual(g13b.missing, [{ case: 'c2', rep: 1 }]);
+  for (const findings of [undefined, null, 'oops', []]) assert.equal(stateOf({ findings }, { judged: true }), 'missing', JSON.stringify(findings));
+  assert.equal(G([GOOD, [OK_R]], { judged: false }).exit, EXIT.PASS, 'rules-only needs no judge findings');
+  // Unreadable input entries are missing case-runs, listed by position.
+  const u = G([GOOD], { unreadable: [2, 4] });
+  assert.equal(u.exit, EXIT.UNDETERMINED); assert.equal(u.counts.expected, 3);
+  assert.deepEqual(u.missing, [{ case: 'chat-2', rep: 1, unreadable: true }, { case: 'chat-4', rep: 1, unreadable: true }]);
+  // Errored outranks missing in the reason.
+  assert.deepEqual(gate(mk([[OK_R, judgeError()]]), { expected: [{ case: 'c1', rep: 1 }, { case: 'c9', rep: 1 }], judged: true }).reasons, ['1 case-run(s) errored: a requested judge or agent call failed']);
+});
+
+test('G13c: duplicates, extras and junk results never count, and are listed', () => {
+  const runs = [{ case: 'c1', rep: 1, findings: [OK_J, HAPPY_FAIL] }, { case: 'c1', rep: 1, findings: GOOD }, { case: 'zz', rep: 1, findings: GOOD }, null, { case: 'c1', rep: 2, findings: GOOD }];
+  const g = gate(runs, { expected: [{ case: 'c1', rep: 1 }], judged: true });
+  assert.equal(g.exit, EXIT.FAIL); assert.equal(g.counts.expected, 1); assert.equal(g.counts.failed, 1);
+  assert.deepEqual(g.ignored, [{ case: 'c1', rep: 1 }, { case: 'zz', rep: 1 }, { case: null, rep: null }, { case: 'c1', rep: 2 }]);
+});
+
+test('G14: gate.json has a frozen shape with version, policy, scope, raw counts and rates', () => {
+  const g = G([GOOD, [OK_J, HAPPY_FAIL], [OK_R, UNSURE_J]], { policy: { min: 50, maxUndetermined: 40 } });
+  assert.deepEqual(gateJson(g, { engineVersion: '9.9.9', gating: true, suiteId: 'abc', judgeModel: 'jev' }), {
+    schema: 'agenttuneup/gate@0.1', engine_version: '9.9.9', gating: true, verdict: 'FAIL', exit: 1,
+    reasons: ['strict pass rate 33.3% is below --min 50'], failed_codes: ['repeated_ask'],
+    policy: { min: 50, max_undetermined: 40, allow_rules_fail: false }, loosened: ['--min 50', '--max-undetermined 40'], evidence: 'judged',
+    suite_id: 'abc', judge_model: 'jev', counts: { expected: 3, ok: 1, failed: 1, undetermined: 1, missing: 0, errored: 0 },
+    strict_pass_rate: 33.3333, undetermined_rate: 33.3333, missing: [], errored: [], ignored: [],
+  });
+  const off = gateJson(g, { engineVersion: '1', gating: false, judgeModel: null });
+  assert.equal(off.exit, EXIT.PASS, 'gate off: exit 0 whatever the verdict'); assert.equal(off.verdict, 'FAIL'); assert.equal(off.suite_id, null);
+  assert.equal(G([GOOD, GOOD, [OK_J, HAPPY_FAIL]], { policy: { min: 0 } }).strict_pass_rate, 66.6667);
+  assert.equal(gate([], { expected: [], judged: true }).strict_pass_rate, 0);
+});
+
+test('G15: loosened --min and --max-undetermined are named in the verdict line and recorded in gate.json', () => {
+  const g = G([...times(9, GOOD), [OK_R, UNSURE_J]], { policy: { min: 80, maxUndetermined: 10 } });
+  assert.equal(g.exit, EXIT.PASS);
+  assert.equal(line(g), 'agenttuneup: PASS (judged) [loosened: --min 80, --max-undetermined 10]');
+  assert.deepEqual(gateJson(g, { engineVersion: '0', gating: true, judgeModel: 'j' }).policy, { min: 80, max_undetermined: 10, allow_rules_fail: false });
+  assert.equal(line(G([[OK_J, HAPPY_FAIL]])), 'agenttuneup: FAIL - strict pass rate 0.0% is below --min 100 (failed: repeated_ask)');
+});
+
+test('R1: malformed findings are never a pass', () => {
+  for (const bad of [null, { code: 'x' }, { code: 'x', ok: 'true' }, { code: 'x', ok: 1 }]) assert.equal(stateOf({ findings: [...GOOD, bad] }, { judged: true }), 'failed', JSON.stringify(bad));
+  assert.deepEqual(G([[...GOOD, null, { ok: false }]]).failed_codes, ['malformed finding']);
+  assert.equal(stateOf({ findings: [...GOOD, UNSURE_J] }, { judged: true }), 'undetermined', 'unsure that leans pass is not ok');
+  assert.equal(stateOf({ findings: [OK_R, heldFinding()] }, { judged: true }), 'undetermined');
+});
+
+test('R3: judge timeout, rate limit, server error, bad key, malformed or empty reply all make the run errored', async () => {
   const sanitized = () => scrubber().sanitize('User: hi\nBot: hello');
   const replies = [
     () => { throw Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); },
@@ -147,66 +281,113 @@ test('R3: judge timeout, rate limit, server error, bad key, malformed or empty r
   for (const [i, reply] of replies.entries()) {
     const or = client('sk-or-test', { fetchImpl: async () => reply(), retries: 0 });
     for (const f of [await judgeConversation(or, sanitized(), { hasInstructions: true }), await judgeCase(or, sanitized())]) {
-      assert.equal(verdict([{ findings: [{ code: 'no_friction', ok: true }, ...f] }]), EXIT.UNDETERMINED, `reply ${i}: ${JSON.stringify(f)}`);
+      assert.equal(stateOf({ findings: [OK_R, ...f] }, { judged: true }), 'errored', `reply ${i}: ${JSON.stringify(f)}`);
     }
   }
 });
 
-test('R5: a key never appears in findings, stdout, stderr or report files', async () => {
+test('R5/P5: a key never appears in findings, stdout, stderr, report files or gate.json', async () => {
   const KEY = 'sk-or-v1-GATETEST' + 'q7'.repeat(20);
   const or = client(KEY, { fetchImpl: async () => new Response(JSON.stringify({ error: { message: 'bad key ' + KEY } }), { status: 401 }), retries: 0 });
   const f = await judgeConversation(or, scrubber().sanitize('User: hi\nBot: hello'), { hasInstructions: true });
   assert.ok(!JSON.stringify(f).includes(KEY));
   const d = tmp(), chat = join(d, 'chat.txt'), out = join(d, 'o');
   writeFileSync(chat, 'User: hi\nBot: hello there\n');
-  const r = cli(['check', chat, '--out', out], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: KEY });
+  const r = cli(['check', chat, '--out', out, '--gate', '--json'], { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: KEY });
+  assert.ok(existsSync(join(out, 'gate.json')));
   for (const text of [r.stdout, r.stderr, ...readdirSync(out).map(x => readFileSync(join(out, x), 'utf8'))]) assert.ok(!text.includes(KEY));
 });
 
-test('T4: unknown, repeated, empty or skip-style options and settings are usage errors (exit 2), never ignored', () => {
+test('G10/G11/G11b/G11c/T4: options are strict; loosening is explicit; without --gate the exit code is 0', () => {
   const d = tmp(), chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: hello there\n'); writeFileSync(join(d, 'empty.txt'), 'no labels here\n');
+  const bad = join(d, 'bad.txt'); writeFileSync(bad, "User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed, two people.\n");
   const o = join(d, 'o');
-  const bad = [
+  const usageErrors = [
     ['check', chat, '--skip-rules'], ['check', chat, '--allow-fail'], ['check', chat, '--warn-only'], ['check', chat, '--ignore', 'refuse'],
     ['check', chat, '--no-judge'], ['check', chat, '--out', o, '--out', o], ['check', chat, '--out'], ['check', chat, '--out', ''],
     ['check', chat, '--consent=true'], ['check', chat, 'extra'], ['check', chat, '-x'], ['check'], ['check', '--out'], ['lint', chat],
     ['run', chat, '--instructions', 'x'], [], ['check', chat, '--constructor', 'x'], ['constructor', chat], ['check', join(d, 'empty.txt')],
+    ['check', chat, '--gte'], ['check', chat, '--consnet'], ['run', chat, '--consnet'], ['tune', chat, '--consnet'],
+    ['tune', chat, '--gate'], ['tune', chat, '--consent', '--json'], ['tune', chat, '--min', '50'],
+    ['check', chat, '--min', '50'], ['check', chat, '--allow-rules-fail'], ['check', chat, '--max-undetermined', '5'],
+    ['check', chat, '--gate', '--gate'], ['check', chat, '--gate', '--min', '80', '--min', '90'],
   ];
-  for (const args of bad) assert.equal(cli(args).status, EXIT.USAGE, JSON.stringify(args));
-  for (const env of [{ TUNEUP_SKIP: '1' }, { TUNEUP_ALLOW_FAIL: '1' }, { tuneup_strict: '0' }, { TUNEUP_CONSENT: 'yes' }]) {
-    const r = cli(['check', chat, '--out', o], { ...cleanEnv(), ...env });
+  for (const flag of ['--min', '--max-undetermined']) for (const v of ['-1', '101', 'abc', '', '1e2', '50%', '0x10', ' 5', '100.5']) usageErrors.push(['check', chat, '--gate', flag, v]);
+  for (const flag of ['--min', '--max-undetermined']) usageErrors.push(['check', chat, '--gate', flag]);
+  for (const args of usageErrors) {
+    const r = cli([...args, ...(args.includes('--out') ? [] : ['--out', o])]);
+    assert.equal(r.status, EXIT.USAGE, JSON.stringify(args) + r.stderr);
+    assert.doesNotMatch(r.stderr, /agenttuneup: (?:PASS|FAIL|UNDETERMINED)/, `${JSON.stringify(args)}: something was evaluated`);
+  }
+  for (const env of [{ TUNEUP_SKIP: '1' }, { TUNEUP_ALLOW_FAIL: '1' }, { tuneup_strict: '0' }, { TUNEUP_CONSENT: 'yes' }, { TUNEUP_MIN: '0' }, { TUNEUP_GATE: '0' }]) {
+    const r = cli(['check', chat, '--out', o, '--gate'], { ...cleanEnv(), ...env });
     assert.equal(r.status, EXIT.USAGE, JSON.stringify(env) + r.stderr);
   }
+  // G10: no --gate, exit 0 whatever the result; the verdict is still printed, marked as not gating.
+  const off = cli(['check', bad, '--out', o]);
+  assert.equal(off.status, EXIT.PASS, off.stderr); assert.match(off.stderr, /agenttuneup: FAIL .*gate off: exit 0/);
+  assert.equal(cli(['check', bad, '--out', o, '--gate']).status, EXIT.FAIL);
+  assert.equal(cli(['check', chat, '--out', o, '--gate', '--min', '0', '--max-undetermined', '100', '--allow-rules-fail']).status, EXIT.PASS);
+  assert.equal(cli(['check', chat, '--out', o, '--gate', '--min', '99.5']).status, EXIT.PASS);
   const help = cli(['--help']);
-  assert.equal(help.status, 0); assert.match(help.stdout, /Exit codes: 0 pass, 1 a check failed, 3 undetermined/);
-  for (const w of ['skip', 'ignore', 'allow', 'warn', 'lenient', 'soft']) assert.ok(!help.stdout.toLowerCase().includes(w), `--help offers "${w}"`);
+  assert.equal(help.status, 0); assert.match(help.stdout, /Exit codes with --gate: 0 PASS \(judged\) or PASS: local rules only, 1 FAIL, 3 UNDETERMINED/);
+  // The only loosening options are the three documented ones; nothing offers to skip, ignore or warn.
+  const words = help.stdout.toLowerCase().replace(/--allow-rules-fail|--max-undetermined/g, '');
+  for (const w of ['skip', 'ignore', 'allow', 'warn', 'lenient', 'soft']) assert.ok(!words.includes(w), `--help offers "${w}"`);
   const v = cli(['--version']);
   assert.equal(v.status, 0); assert.equal(v.stdout.trim(), JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8')).version);
 });
 
 test('R3: --consent with no key is a config error (exit 2) that names the CI secret', () => {
   const d = tmp(), chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: hello there\n');
-  const r = cli(['check', chat, '--consent', '--out', join(d, 'o')]);
+  const r = cli(['check', chat, '--consent', '--gate', '--out', join(d, 'o')]);
   assert.equal(r.status, EXIT.USAGE); assert.match(r.stderr, /TUNEUP_OPENROUTER_KEY/);
 });
 
-test('T5: the exit code comes from this run, never from an existing or edited report.json', () => {
+test('T5: the exit code comes from this run, never from an existing or edited report.json or gate.json', () => {
   const d = tmp(), out = join(d, 'o'); mkdirSync(out);
   const fake = JSON.stringify({ schema: 'tune-up/report@0.1', pass_rate: 100, failures: [], buckets: [], runs: [{ passed: true }] });
-  const clean = join(d, 'clean.txt'), bad = join(d, 'bad.txt');
-  writeFileSync(clean, 'User: Hi, what time do you open?\nBot: We open at 9am.\n');
+  const fakeGate = JSON.stringify({ schema: 'agenttuneup/gate@0.1', verdict: 'PASS (judged)', exit: 0 });
+  const bad = join(d, 'bad.txt');
   writeFileSync(bad, "User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed, two people.\n");
-  writeFileSync(join(out, 'report.json'), fake);
-  assert.equal(cli(['check', bad, '--out', out]).status, EXIT.FAIL, 'a fake passing report did not hide the failure');
-  writeFileSync(join(out, 'report.json'), fake);
-  assert.equal(cli(['check', clean, '--out', out]).status, EXIT.UNDETERMINED, 'rule checks only must stay undetermined');
-  // And the check path never reads report.json at all.
+  writeFileSync(join(out, 'report.json'), fake); writeFileSync(join(out, 'gate.json'), fakeGate);
+  assert.equal(cli(['check', bad, '--out', out, '--gate']).status, EXIT.FAIL, 'a fake passing report did not hide the failure');
   const src = readFileSync(CLI, 'utf8');
   const checkBranch = src.slice(src.indexOf("if (cmd === 'check')"), src.indexOf("if (!consent)"));
-  assert.ok(!/read\(|readFileSync\([^)]*report\.json/.test(checkBranch));
+  assert.ok(!/read\(|readFileSync\([^)]*(?:report|gate)\.json/.test(checkBranch));
 });
 
-test('T6: every test file runs, and no test is skipped, focused or left as todo', () => {
+test('G12/G12b/G12d/G12e/G12f: check counts every candidate chat with the parser\'s own split', () => {
+  const d = tmp(), o = join(d, 'o'), f = join(d, 'in.txt');
+  const two = 'User: Hi, what time do you open?\nBot: We open at 9am.';
+  const run = (body, ...extra) => { writeFileSync(f, body); return cli(['check', f, '--out', o, '--gate', '--json', ...extra]); };
+  const gj = () => JSON.parse(readFileSync(join(o, 'gate.json'), 'utf8'));
+  // G12: zero conversations.
+  for (const body of ['', '\n\n', '{"conversations": []}']) { assert.equal(run(body).status, EXIT.UNDETERMINED, JSON.stringify(body)); assert.equal(gj().counts.expected, 0); }
+  assert.equal(run('[]').status, EXIT.UNDETERMINED, 'an empty message list is one unreadable chat');
+  // G12f: leading, trailing and doubled separators are not chats.
+  assert.equal(run(`---\n${two}\n---\n---\n${two}\n---\n`).status, EXIT.PASS); assert.equal(gj().counts.expected, 2); assert.equal(gj().verdict, 'PASS: local rules only');
+  // G12e: === separators; a {messages} object.
+  assert.equal(run(`${two}\n===\n${two}`).status, EXIT.PASS); assert.equal(gj().counts.expected, 2);
+  const pair = [{ role: 'user', content: 'Hi, what time do you open?' }, { role: 'assistant', content: 'We open at 9am.' }];
+  assert.equal(run(JSON.stringify({ messages: pair })).status, EXIT.PASS); assert.equal(gj().counts.expected, 1);
+  // G12d: a flat array of two messages is one chat.
+  assert.equal(run(JSON.stringify(pair)).status, EXIT.PASS); assert.equal(gj().counts.expected, 1);
+  // G12b: one valid chat and two rejected entries: exit 3, rejected entries listed by position.
+  const r = run(JSON.stringify([pair, [{ role: 'user', content: 'nobody answered' }], { bad: 1 }]));
+  assert.equal(r.status, EXIT.UNDETERMINED, r.stderr); assert.match(r.stderr, /entries 2, 3 in .* could not be read as a chat/);
+  assert.deepEqual(gj().missing, [{ case: 'chat-2', rep: 1, unreadable: true }, { case: 'chat-3', rep: 1, unreadable: true }]);
+  assert.deepEqual(JSON.parse(readFileSync(join(o, 'report.json'), 'utf8')).unreadable_entries, [2, 3]);
+  assert.match(readFileSync(join(o, 'report.md'), 'utf8'), /entries 2, 3 of the file could not be read as a chat/);
+  // A failure elsewhere does not hide the missing entries: missing evidence decides (exit 3).
+  assert.equal(run("User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed.\n---\nUser: nobody answered this\n").status, EXIT.UNDETERMINED);
+  // Parser and gate agree on the split.
+  const c = parseTranscripts(`---\n${two}\n---\n\n---\nUser: alone\n===\n${two}\n---`);
+  assert.equal(c.length, 2); assert.deepEqual(c.positions, [1, 3]); assert.deepEqual(c.rejected, [2]);
+  assert.deepEqual(parseTranscripts(JSON.stringify([[null], pair])).rejected, [1], 'a non-object message is dropped, not a crash');
+});
+
+test('T6: every test file runs; none is skipped, focused or todo; the test count matches test/BASELINE', () => {
   const pkg = JSON.parse(readFileSync(join(ENGINE, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.test, 'node scripts/test.mjs', 'npm test must discover every test file, not a hand-made list');
   const runner = readFileSync(join(ENGINE, 'scripts', 'test.mjs'), 'utf8');
@@ -220,8 +401,11 @@ test('T6: every test file runs, and no test is skipped, focused or left as todo'
     assert.ok(!/\b(?:test|it|describe|suite)\.(?:skip|only|todo)\s*\(|[{,]\s*(?:skip|only|todo)\s*:/.test(s), `${f} skips, focuses or todos a test`);
     count += (s.match(/^test\(/gm) || []).length;
   }
-  // Pinned floor: deleting tests to make CI green fails here. Raise it when you add tests; never lower it.
-  assert.ok(count >= 344, `only ${count} test() calls found; the floor is 344`);
+  // The ratchet (docs/CLI-PLAN.md §7): deleting a test changes the count, so the diff must touch BASELINE too, where a
+  // reviewer sees it. Raise BASELINE when you add tests; never lower it.
+  const baseline = Number(readFileSync(join(ENGINE, 'test', 'BASELINE'), 'utf8').trim());
+  assert.ok(Number.isInteger(baseline) && baseline > 0, 'test/BASELINE must hold a whole number');
+  assert.equal(count, baseline, `${count} test() calls found; test/BASELINE says ${baseline}. Added tests? Raise BASELINE. Removed tests? Put them back.`);
 });
 
 test('T8: the published package holds only cli.js, src/, README.md, LICENSE and package.json', () => {
@@ -236,32 +420,38 @@ test('T8: the published package holds only cli.js, src/, README.md, LICENSE and 
   assert.match(readFileSync(CLI, 'utf8'), /^#!\/usr\/bin\/env node\n/);
 });
 
-test('PR #32 review: unreadable chat entries are reported and never pass; a failure elsewhere still exits 1', () => {
-  const c = parseTranscripts(JSON.stringify([[{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'yo' }], { bad: 1 }, [{ role: 'user', content: 'x' }], { messages: 'oops' }]));
-  assert.equal(c.length, 1); assert.equal(c.skipped, 3);
-  assert.equal(parseTranscripts('User: hi\nBot: hello\n---\n\n').skipped, 0, 'an empty trailing block is not a chat');
-  const d = tmp(), f = join(d, 'mixed.txt'), out = join(d, 'o');
-  writeFileSync(f, "User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed.\n---\nUser: nobody answered this\n");
-  const r = cli(['check', f, '--out', out]);
-  assert.equal(r.status, EXIT.FAIL, r.stderr); assert.match(r.stderr, /1 entry in .* could not be read as a chat/);
-  assert.match(readFileSync(join(out, 'report.json'), 'utf8'), /could not be read as a chat/);
-  const run = { findings: [{ code: 'no_friction', ok: true }, { code: 'judge:completed', ok: true }] };
-  assert.equal(verdict([run, { findings: [skippedFinding(1)] }]), EXIT.UNDETERMINED, 'a skipped entry turns a clean run into undetermined');
-});
-
-test('PR #32 review: unreadable or malformed input files are usage errors (exit 2) that name the file', () => {
+test('P5c: unreadable or malformed input files are usage errors (exit 2) that name the file and quote nothing from it', () => {
   const d = tmp(), o = join(d, 'o');
-  const broken = join(d, 'broken.json'); writeFileSync(broken, '{"messages": [');
-  const r1 = cli(['check', broken, '--out', o]);
-  assert.equal(r1.status, EXIT.USAGE); assert.match(r1.stderr, /chat file .*broken\.json.* is not valid/); assert.doesNotMatch(r1.stderr, /crashed/);
+  const SECRET = 'sk-or-v1-' + 'LEAK'.repeat(12);
+  for (const body of ['{"messages": [', `{"messages": [{"role": "user", "content": "my key is ${SECRET}"`, `[${SECRET}]`, `{"a": ${SECRET}}`]) {
+    const broken = join(d, 'broken.json'); writeFileSync(broken, body);
+    const r = cli(['check', broken, '--out', o, '--gate']);
+    assert.equal(r.status, EXIT.USAGE, body); assert.match(r.stderr, /chat file .*broken\.json.* is not valid: it is not valid JSON/);
+    assert.doesNotMatch(r.stderr, /crashed|at JSON\.parse|LEAK/, 'no stack trace and nothing from the file');
+  }
   assert.equal(cli(['check', join(d, 'missing.txt'), '--out', o]).status, EXIT.USAGE);
   const chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: hello\n');
   assert.equal(cli(['check', chat, '--instructions', join(d, 'nope.txt'), '--out', o]).status, EXIT.USAGE);
   assert.equal(cli(['check', chat, '--private', join(d, 'nope.txt'), '--out', o]).status, EXIT.USAGE);
-  for (const body of ['{"cases": [', 'null', '[]', '{"cases":[{"id":"a","turns":["hi"]}]}']) {
+  for (const [body, why] of [['{"cases": [', /not valid JSON/], ['null', /expected a JSON object/], ['[]', /expected a JSON object/], ['{"cases":[{"id":"a","turns":["hi"]}]}', /agent_config/]]) {
     const suite = join(d, 'suite.json'); writeFileSync(suite, body);
     const r = cli(['run', suite, '--consent', '--out', o]);
-    assert.equal(r.status, EXIT.USAGE, body + r.stderr); assert.match(r.stderr, /suite file .* is not valid/); assert.doesNotMatch(r.stderr, /crashed/);
+    assert.equal(r.status, EXIT.USAGE, body + r.stderr); assert.match(r.stderr, /suite file .* is not valid/); assert.match(r.stderr, why); assert.doesNotMatch(r.stderr, /crashed/);
+  }
+});
+
+test('G12c/G12g: a suite with no cases or with a duplicate id is a config error before anything runs', async () => {
+  const { validateSuite } = await import('../src/rules.js');
+  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['x'] }, { id: 'a', turns: ['y'] }] }).join(), /"a" is used by another case/);
+  for (const expect of [{ must_not_call: 'delete_all' }, { must_not_call: [] }, { must_not_call: [''] }, { must_call: ['book'] }, { must_call: '' }]) {
+    assert.ok(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect }] }).length, JSON.stringify(expect));
+  }
+  assert.deepEqual(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect: { must_call: 'book', must_not_call: ['delete_all'] } }] }), []);
+  const d = tmp(), suite = join(d, 'suite.json');
+  for (const [cases, why] of [[[{ id: 'a', turns: ['x'] }, { id: 'a', turns: ['y'] }], /used by another case/], [[], /case/]]) {
+    writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url: 'http://127.0.0.1:9/' }, cases }));
+    const r = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--gate', '--out', join(d, 'o')], { env: { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+    assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, why);
   }
 });
 
@@ -273,23 +463,25 @@ test('PR #32 review: a tool check the agent cannot show is refused before anythi
   try {
     for (const expect of [{ must_call: 'book' }, { must_not_call: ['delete_all'] }]) {
       writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url: `http://127.0.0.1:${srv.address().port}/` }, cases: [{ id: 'c1', intent: 'x', turns: ['hi'], expect }] }));
-      const r = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--out', join(d, 'o')], { env: { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
+      const r = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--gate', '--out', join(d, 'o')], { env: { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
       assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /c1 check tool calls .* not visible/);
     }
   } finally { srv.close(); }
   assert.equal(hits, 0, 'the agent was called');
 });
 
-test('PR #32 review: an agent outage is an unsure agent_error (exit 3) with a report, not a crash; other cases still count', async () => {
+test('PR #32 review: an agent outage is an errored case-run (exit 3), not a crash; other cases are still judged', async () => {
   const fails = [new Error('agent endpoint 503'), Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }), new TypeError('fetch failed'), new Error('OpenRouter /v1/chat/completions 502: down')];
+  const suite = { cases: [{ id: 'ok', intent: 'x', turns: ['hi'] }, { id: 'down', intent: 'x', turns: ['boom'] }] };
   for (const err of fails) {
     const adapter = { name: 't', observesTools: false, turn: async ({ message }) => { if (message === 'boom') throw err; return { reply: 'Here you go.', tools: null, tokens: null, ms: 1 }; } };
-    const rep = await evaluate({ suite: { cases: [{ id: 'ok', intent: 'x', turns: ['hi'] }, { id: 'down', intent: 'x', turns: ['boom'] }] }, instructions: 'x', adapter, or: fakeOr(goodCase), scrub: scrubber() });
+    const rep = await evaluate({ suite, instructions: 'x', adapter, or: fakeOr(goodCase), scrub: scrubber() });
     const down = rep.gateRuns.find(r => r.case === 'down').findings;
     assert.deepEqual(down.map(f => f.code), ['agent_error'], err.message);
     assert.match(down[0].detail, /\((?:HTTP \d{3}|timed out|could not connect)\)/);
     assert.doesNotMatch(down[0].detail, /fetch failed|aborted|: down/, 'the error text is not copied into the report');
-    assert.equal(verdict(rep.gateRuns), EXIT.UNDETERMINED);
+    const g = gate(rep.gateRuns, { expected: [{ case: 'ok', rep: 1 }, { case: 'down', rep: 1 }], judged: true });
+    assert.equal(g.exit, EXIT.UNDETERMINED); assert.deepEqual(g.errored, [{ case: 'down', rep: 1 }]);
     assert.ok(rep.gateRuns.find(r => r.case === 'ok').findings.some(f => f.code === 'judge:completed'), 'the other case was still judged');
   }
   // A refusal to send (not an outage) still stops loudly.
@@ -306,19 +498,6 @@ test('PR #32 review: the published README only points at files the package has, 
   }
 });
 
-test('PR #32 review: duplicate case ids and wrongly shaped tool expectations are config errors before anything runs', async () => {
-  const { validateSuite } = await import('../src/rules.js');
-  assert.match(validateSuite({ cases: [{ id: 'a', turns: ['x'] }, { id: 'a', turns: ['y'] }] }).join(), /"a" is used by another case/);
-  for (const expect of [{ must_not_call: 'delete_all' }, { must_not_call: [] }, { must_not_call: [''] }, { must_call: ['book'] }, { must_call: '' }]) {
-    assert.ok(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect }] }).length, JSON.stringify(expect));
-  }
-  assert.deepEqual(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect: { must_call: 'book', must_not_call: ['delete_all'] } }] }), []);
-  const d = tmp(), suite = join(d, 'suite.json');
-  writeFileSync(suite, JSON.stringify({ agent: 'A', instructions: 'x', agent_config: { type: 'http', url: 'http://127.0.0.1:9/' }, cases: [{ id: 'a', turns: ['x'] }, { id: 'a', turns: ['y'] }] }));
-  const r = spawnSync(process.execPath, [CLI, 'run', suite, '--consent', '--out', join(d, 'o')], { env: { ...cleanEnv(), TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8' });
-  assert.equal(r.status, EXIT.USAGE, r.stderr); assert.match(r.stderr, /used by another case/);
-});
-
 test('PR #32 review: a blank TUNEUP_OPENROUTER_KEY is a config error (exit 2), never an empty bearer token', async () => {
   const d = tmp(), chat = join(d, 'chat.txt'); writeFileSync(chat, 'User: hi\nBot: hello there\n');
   for (const key of ['', '   ', '\n\t']) {
@@ -327,21 +506,21 @@ test('PR #32 review: a blank TUNEUP_OPENROUTER_KEY is a config error (exit 2), n
   }
 });
 
-
 test('PR #32 review: a non-object "expect" is a config error, not a crash', async () => {
   const { validateSuite } = await import('../src/rules.js');
   for (const expect of ['oops', 1, null, [], true]) assert.match(validateSuite({ cases: [{ id: 'a', turns: ['x'], expect }] }).join(), /"expect" must be an object/, JSON.stringify(expect));
 });
 
-test('PR #32 review: case ids like __proto__ or constructor are plain keys in the report', async () => {
+test('PR #32 review: case ids like __proto__ or constructor are plain keys in the report and the gate', async () => {
   const { buildReport, regressions } = await import('../src/report.js');
   const runs = ['__proto__', 'constructor', 'toString'].map(id => ({ case: id, rep: 1, passed: true, findings: [{ bucket: 'done', code: 'judge:completed', ok: true }], turns: [], ms: 1, tokens: 1, toolCalls: 0 }));
   const rep = buildReport({ suite: { agent: 'A', repeats: 1 }, instructions: 'x', adapter: { name: 't', observesTools: false }, runs, judgeModel: 'j', evidenceLevel: 2 });
   assert.equal(rep.cases, 3);
   assert.deepEqual(regressions(rep, rep), []);
+  assert.equal(gate(runs, { expected: ids(runs), judged: true }).counts.ok, 3);
 });
 
-test('PR #32 review: an unusable replay-model reply is an unsure agent_error (exit 3), not a crash', async () => {
+test('PR #32 review: an unusable replay-model reply is an errored agent_error (exit 3), not a crash', async () => {
   const { modelAdapter } = await import('../src/adapters.js');
   for (const body of [{}, { choices: [] }, { choices: [{}] }, { choices: [{ message: null }] }]) {
     const or = { chat: async () => body };
@@ -349,6 +528,6 @@ test('PR #32 review: an unusable replay-model reply is an unsure agent_error (ex
     const f = rep.gateRuns[0].findings;
     assert.deepEqual(f.map(x => x.code), ['agent_error'], JSON.stringify(body));
     assert.match(f[0].detail, /\(unusable reply\)/);
-    assert.equal(verdict(rep.gateRuns), EXIT.UNDETERMINED);
+    assert.equal(gate(rep.gateRuns, { expected: [{ case: 'c', rep: 1 }], judged: true }).exit, EXIT.UNDETERMINED);
   }
 });

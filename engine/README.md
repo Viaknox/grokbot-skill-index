@@ -20,20 +20,23 @@ Sample files to start from (sample chats, instructions and a full suite) are in 
 
 ## Use it in CI (strict gate)
 
+Add `--gate` to `check` or `run`. Without it the exit code is always `0`, whatever the result (the verdict is still printed).
+
 ```bash
-npx agenttuneup check chats.txt --instructions instructions.txt --consent --out tune-up-report
+npx agenttuneup check chats.txt --instructions instructions.txt --consent --gate --json --out tune-up-report
 ```
 
-| Exit code | Meaning | CI result |
+| Exit code | Verdict line | When |
 | --- | --- | --- |
-| `0` | Every check passed, and the judge answered for every chat or case | Pass |
-| `1` | At least one check failed | Fail |
-| `3` | Undetermined: an unsure answer, a held-back chat, the judge was unreachable, or the judge did not run | **Fail** |
-| `2` | Usage or config error (unknown option, `--consent` with no key) | Fail |
+| `0` | `PASS (judged)` | Every chat or case passed with the judge (`--consent`) |
+| `0` | `PASS: local rules only` | No `--consent`: only the local rule checks ran, and they all passed. Weaker evidence; never use it for a badge |
+| `1` | `FAIL` | The pass rate is below `--min`, too many results were unsure, or a "Follows your rules" check failed |
+| `3` | `UNDETERMINED` | Nothing to check, expected chats or cases missing (an entry that is not a readable chat counts as missing), a requested judge or agent call failed, or every chat was held back |
+| `2` | `ERROR: usage/config` | Unknown option, bad suite, `--consent` with no key |
 
-When results are mixed, `1` beats `3` beats `0`. The exit code comes from the run itself, never from an old or edited `report.json`.
+The defaults are strict: every chat or case must pass (`--min 100`), none may be unsure (`--max-undetermined 0`), and one "Follows your rules" failure fails the gate. You can loosen them with `--min <0-100>`, `--max-undetermined <0-100>` and `--allow-rules-fail`; each one you use is printed in the verdict line and recorded in `gate.json` (written with `--json`), so a weaker gate is visible in the CI log. These options need `--gate`. There is no option or setting that skips a check, and unknown options and unknown `TUNEUP_*` settings stop the run with `2`.
 
-**Strict CI needs `--consent` and a key.** Without them only the local rule checks run: a rule that fails still exits `1`, but if every rule passes the result is `3`, because the judge's checks did not run. Store the key as a CI secret, never in the repo. There is no option or setting that skips a check or turns a failure into a pass; unknown options and unknown `TUNEUP_*` settings stop the run with `2`.
+The exit code comes from the run itself, never from an old or edited `report.json` or `gate.json`. A judge that was asked for and could not answer never falls back to `PASS: local rules only`: it is `UNDETERMINED`. Store the key as a CI secret, never in the repo.
 
 ```yaml
 # .github/workflows/agent-check.yml
@@ -45,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
-      - run: npx agenttuneup@0.1.0 check chats.txt --instructions instructions.txt --consent --out tune-up-report
+      - run: npx agenttuneup@0.1.0 check chats.txt --instructions instructions.txt --consent --gate --json --out tune-up-report
         env:
           TUNEUP_OPENROUTER_KEY: ${{ secrets.TUNEUP_OPENROUTER_KEY }}
 ```

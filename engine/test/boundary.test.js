@@ -206,11 +206,11 @@ test('[promised] judgeHeld turns a ScrubError into the judge:held finding for th
   assert.ok(/\bjudgeHeld\(/.test(cli) && direct.every(l => /const shown = /.test(l)), 'cli.js check mode must sanitize through judgeHeld');
 });
 
-test('[promised] cli check --consent on a conversation over the size cap exits 3 (undetermined) with a judge:held finding', () => {
+test('[promised] cli check --consent on a conversation over the size cap exits 0 with a judge:held finding', () => {
   const d = mkdtempSync(join(tmpdir(), 'tu-')); const f = join(d, 'chats.txt');
   writeFileSync(f, 'User: ' + 'hello there '.repeat(340_000) + '\nBot: ok\n');   // over the 4,000,000-character cap
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--consent', '--out', join(d, 'o')], { env: { ...process.env, TUNEUP_OPENROUTER_KEY: 'sk-or-test' }, encoding: 'utf8', maxBuffer: 256e6 });
-  assert.equal(r.status, 3, r.stderr.slice(-500));   // held = undetermined: the strict gate never passes it (CLI plan R1)
+  assert.equal(r.status, 0, r.stderr.slice(-500));   // without --gate the exit code is 0 (docs/CLI-PLAN.md G10); the gate case is in gate.test.js
   const rep = readFileSync(join(d, 'o', 'report.json'), 'utf8');
   assert.ok(rep.includes('too long or complex to scrub safely'), 'no cap-held finding in the report');   // the report card carries the finding text, not its code
   assert.ok(!rep.includes('ScrubError') && !r.stderr.includes('ScrubError'));
@@ -252,7 +252,9 @@ test('round 42: cli.js check finishes with a report when a pasted chat exceeds t
   const d = mkdtempSync(join(tmpdir(), 'tu-')), f = join(d, 'chat.txt');
   writeFileSync(f, 'User: ' + Array.from({ length: 2000 }, () => 'credentials {').join('\n') + '\nBot: ok\n');
   const r = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--out', join(d, 'o')], { encoding: 'utf8', maxBuffer: 256e6 });
-  assert.equal(r.status, 3, r.stderr);   // finished with a report, not a crash; held and not judged = undetermined (CLI plan R1)
+  assert.equal(r.status, 0, r.stderr);   // finished with a report, not a crash
+  const g = spawnSync(process.execPath, [fileURLToPath(new URL('../cli.js', import.meta.url)), 'check', f, '--gate', '--out', join(d, 'o2')], { encoding: 'utf8', maxBuffer: 256e6 });
+  assert.equal(g.status, 3, g.stderr);   // with --gate: every case-run held, nothing checked = UNDETERMINED (docs/CLI-PLAN.md §4)
   assert.ok(existsSync(join(d, 'o', 'report.json')));
 });
 

@@ -8,8 +8,9 @@ const AGENT = /^(assistant|bot|ai|agent|grok|chatgpt|claude|gemini|copilot|suppo
 
 // Only user and agent turns count; system, developer and tool messages are not part of the conversation.
 const roleOf = (r) => /^(user|human|customer)$/i.test(r) ? 'user' : /^(assistant|bot|ai|agent|model)$/i.test(r) ? 'assistant' : null;
-const norm = (m) => ({ role: roleOf(String(m.role || m.author || m.sender || '')),
-  content: String(m.content ?? m.text ?? m.message ?? '').trim() });
+// A message that is not an object (null, a number, a string) has no role, so it is dropped like a system message.
+const norm = (m) => (m && typeof m === 'object' ? { role: roleOf(String(m.role || m.author || m.sender || '')),
+  content: String(m.content ?? m.text ?? m.message ?? '').trim() } : { role: null, content: '' });
 
 const twoSided = (c) => c.some(m => m.role === 'user') && c.some(m => m.role === 'assistant');
 
@@ -19,7 +20,7 @@ export function parseTranscripts(raw, { agentName } = {}) {
   if (txt.startsWith('[') || txt.startsWith('{')) {
     const j = JSON.parse(txt);
     const list = Array.isArray(j) ? (Array.isArray(j[0]) || (j[0] && j[0].messages) ? j : [j]) : (j.conversations || [j]);
-    return counted(list.map(c => (Array.isArray(c) ? c : c && Array.isArray(c.messages) ? c.messages : []).map(norm).filter(m => m.role && m.content)), list.length);
+    return counted(list.map(c => (Array.isArray(c) ? c : c && Array.isArray(c.messages) ? c.messages : []).map(norm).filter(m => m.role && m.content)));
   }
   const named = agentName ? new RegExp(`^${agentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*:\\s*`, 'i') : null;
   // Linear split on separator lines (a regex with \s* around ^/$ was quadratic on long runs of blank lines).
@@ -36,17 +37,18 @@ export function parseTranscripts(raw, { agentName } = {}) {
       else if (msgs.length && line.trim()) msgs[msgs.length - 1].content += '\n' + line;
     }
     return msgs.map(m => ({ ...m, content: m.content.trim() })).filter(m => m.content);
-  }), meant.length);
+  }));
 }
 
-// The finding for entries that could not be read as a chat: unsure, so the gate never passes a file it did not fully check.
-export const skippedFinding = (n) => ({ bucket: 'rules', code: 'chat_skipped', ok: false, unsure: true, detail: `unsure: ${n} entr${n === 1 ? 'y' : 'ies'} in the file could not be read as a chat and ${n === 1 ? 'was' : 'were'} not checked` });
-
-// Keeps the two-sided chats and records how many entries could not be read as a chat (one-sided, malformed, empty), so a
-// caller can report them instead of silently checking only the rest (agenttuneup CLI: a skipped chat is never a pass).
-const counted = (convos, candidates) => {
-  const ok = convos.filter(twoSided);
-  return Object.defineProperty(ok, 'skipped', { value: Math.max(0, candidates - ok.length), enumerable: false });
+// Keeps the two-sided chats. Every candidate entry has a 1-based position in the input: `positions` holds the kept chats'
+// positions and `rejected` the entries that could not be read as a chat (one-sided, malformed, empty), so the gate counts
+// each rejected entry as a missing case-run and the report lists it (docs/CLI-PLAN.md §4: incomplete input never helps).
+// Both lists come from this one split, so the expected count and the parsed chats can never disagree.
+const counted = (convos) => {
+  const ok = [], positions = [], rejected = [];
+  convos.forEach((c, i) => { if (twoSided(c)) { ok.push(c); positions.push(i + 1); } else rejected.push(i + 1); });
+  Object.defineProperty(ok, 'positions', { value: positions, enumerable: false });
+  return Object.defineProperty(ok, 'rejected', { value: rejected, enumerable: false });
 };
 
 // Rule checks that only make sense on real conversations: friction the user felt.

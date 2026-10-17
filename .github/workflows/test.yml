@@ -39,11 +39,15 @@ jobs:
           SMOKE: ${{ needs.pack-smoke.result }}
         run: '[ "$TESTS" = "success" ] && [ "$SMOKE" = "success" ] || { echo "engine-matrix: $TESTS, pack-smoke: $SMOKE"; exit 1; }'
 
-  # Installs the packed package in a clean folder and checks the exit codes outside teams will see (CLI plan T8).
+  # Installs the packed package in a clean folder and runs it through npx on every OS and supported Node outside teams
+  # use (docs/CLI-PLAN.md P6): exit codes, consent, no network without it, key hygiene, golden fixtures.
   pack-smoke:
-    runs-on: ubuntu-latest
+    name: pack-smoke (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node: ['20.12', '22']
     steps:
       - uses: actions/checkout@v4
@@ -52,19 +56,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Pack, install in a clean folder, check exit codes
-        run: |
-          set -u
-          cd engine && TGZ="$PWD/$(npm pack --silent)" && cd ..
-          APP="$(mktemp -d)" && cd "$APP" && npm init -y >/dev/null && npm install --no-audit --no-fund "$TGZ" >/dev/null
-          printf "User: Book a table for two\nBot: Booked for four.\nUser: No, that's wrong. Two people.\nBot: Fixed, two people.\n" > bad.txt
-          printf 'User: Hi, what time do you open?\nBot: We open at 9am.\n' > clean.txt
-          printf '{"messages": [' > broken.json
-          expect() { want=$1; shift; set +e; npx --no-install agenttuneup "$@" >/dev/null 2>&1; got=$?; set -e; echo "agenttuneup $* -> $got (want $want)"; [ "$got" = "$want" ]; }
-          set -e
-          expect 0 --version
-          expect 1 check bad.txt --out o1
-          expect 3 check clean.txt --out o2
-          expect 2 check clean.txt --skip-rules
-          expect 2 check clean.txt --consent --out o3
-          expect 2 check broken.json --out o4
+      - working-directory: engine
+        run: node --test test/cli-package.test.js

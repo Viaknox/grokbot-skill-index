@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // Agent Tune-Up engine (v0.1).
-//   node engine/cli.js run  <suite.json> [--keyfile path] [--out dir] [--repeats N]
+//   agenttuneup run  <suite.json> --consent [--keyfile path] [--out dir] [--repeats N] [gate options]
 //       Evaluate the agent: writes <out>/report.json and report.md.
-//   node engine/cli.js check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir]
+//   agenttuneup check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir] [gate options]
 //       Report card from real chats you paste or export (Level 1). Personal data is scrubbed locally first.
 //       Without --consent only the local rule checks run and nothing leaves this machine.
-//   node engine/cli.js tune <suite.json> [--keyfile path] [--out dir] [--repeats N]
+//   agenttuneup tune <suite.json> --consent [--keyfile path] [--out dir] [--repeats N]
 //       One verified tune-up attempt: draft the smallest fix for the failures in <out>/report.json,
 //       re-run the same tests on it, save <out>/attempt-N.json, and rewrite tune-up.md with the best attempt.
 //       Run it again to try once more; earlier attempts that did not help are fed back to the writer.
 // A fix is a proposal. This tool never applies it to a real agent.
+// Gate options (check and run; docs/CLI-PLAN.md §4): --gate turns the CI gate on (without it the exit code is 0 whatever
+// the result); --min, --max-undetermined and --allow-rules-fail loosen it and are printed in the verdict; --json writes
+// <out>/gate.json.
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -20,26 +23,29 @@ import { validateSuite } from './src/rules.js';
 import { proposeFix, WRITER_MODEL } from './src/writer.js';
 import { toMarkdown, buildReport, runPassed, regressions } from './src/report.js';
 import { scrubber, ScrubError } from './src/redact.js';
-import { parseTranscripts, checkConversation, skippedFinding } from './src/transcripts.js';
+import { parseTranscripts, checkConversation } from './src/transcripts.js';
 import { judgeConversation, judgeHeld, chatState, JUDGE_MODEL } from './src/judge.js';
-import { EXIT, verdict, summary } from './src/gate.js';
+import { EXIT, gate, line, gateJson } from './src/gate.js';
 
-// Exit codes (src/gate.js): 0 pass, 1 a check failed, 3 undetermined, 2 usage or config error. A crash is never 0.
+// Exit codes (src/gate.js), with --gate: 0 pass, 1 fail, 3 undetermined, 2 usage or config error. A crash is never 0.
 process.on('uncaughtException', (e) => { console.error('agenttuneup: crashed: ' + (e && e.message ? e.message : String(e)).slice(0, 300)); process.exit(EXIT.FAIL); });
 process.on('unhandledRejection', (e) => { console.error('agenttuneup: crashed: ' + (e && e.message ? e.message : String(e)).slice(0, 300)); process.exit(EXIT.FAIL); });
-const USAGE = 'usage: agenttuneup check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir]\n       agenttuneup run|tune <suite.json> [--consent] [--keyfile path] [--out dir] [--repeats N] [--private words.txt]\n       agenttuneup --version | --help\nExit codes: 0 pass, 1 a check failed, 3 undetermined (fails CI too), 2 usage or config error.';
+const USAGE = 'usage: agenttuneup check <chats.txt|chats.json> [--instructions file] [--agent name] [--private words.txt] [--consent] [--keyfile path] [--out dir] [gate options]\n       agenttuneup run <suite.json> --consent [--keyfile path] [--out dir] [--repeats N] [--private words.txt] [gate options]\n       agenttuneup tune <suite.json> --consent [--keyfile path] [--out dir] [--repeats N] [--private words.txt]\n       agenttuneup --version | --help\nGate options: --gate (CI gate on; without it the exit code is always 0)  --json (write gate.json)\n  Loosen the strict defaults (printed in the verdict and gate.json): --min <0-100> (default 100)  --max-undetermined <0-100> (default 0)  --allow-rules-fail\nExit codes with --gate: 0 PASS (judged) or PASS: local rules only, 1 FAIL, 3 UNDETERMINED (fails CI too), 2 usage or config error.';
 const usage = (msg) => { console.error((msg ? msg + '\n' : '') + USAGE); process.exit(EXIT.USAGE); };
 const argv = process.argv.slice(2);
 if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-v')) { console.log(JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version); process.exit(0); }
 if (argv.length === 1 && (argv[0] === '--help' || argv[0] === '-h')) { console.log(USAGE); process.exit(0); }
-// Strict flags: an unknown, repeated or empty flag is an error, never ignored. There is no flag or setting that skips a
-// check or turns a failure into a pass (agenttuneup CLI plan, T4).
-const FLAGS = { check: { instructions: 1, agent: 1, private: 1, keyfile: 1, out: 1, consent: 0 }, run: { keyfile: 1, out: 1, repeats: 1, private: 1, consent: 0 }, tune: { keyfile: 1, out: 1, repeats: 1, private: 1, consent: 0 } };
+// Strict flags: an unknown, repeated or empty flag is an error, never ignored. No flag or setting skips a check; the only
+// ways to loosen the gate are the three documented options, and each one is printed (docs/CLI-PLAN.md §4, G11b).
+const GATE = { gate: 0, json: 0, min: 1, 'max-undetermined': 1, 'allow-rules-fail': 0 };
+const FLAGS = { check: { instructions: 1, agent: 1, private: 1, keyfile: 1, out: 1, consent: 0, ...GATE }, run: { keyfile: 1, out: 1, repeats: 1, private: 1, consent: 0, ...GATE }, tune: { keyfile: 1, out: 1, repeats: 1, private: 1, consent: 0 } };
 const [cmd, file, ...rest] = argv;
 if (!Object.hasOwn(FLAGS, cmd) || !file || file.startsWith('-')) usage();
+// Gating a tune-up is defined only in R2 (the best eligible attempt), so it is refused rather than guessed (G11c).
+if (cmd === 'tune' && rest.some(a => Object.hasOwn(GATE, a.replace(/^--/, '')) && a.startsWith('--'))) usage('tune does not take gate options yet: gate the `run` before and after instead.');
 const flags = {};
 for (let i = 0; i < rest.length; i++) {
-  const m = /^--([a-z]+)$/.exec(rest[i]);
+  const m = /^--([a-z]+(?:-[a-z]+)*)$/.exec(rest[i]);
   if (!m || !Object.hasOwn(FLAGS[cmd], m[1])) usage(`Unknown option ${JSON.stringify(rest[i])} for ${cmd}.`);
   if (Object.hasOwn(flags, m[1])) usage(`--${m[1]} given twice.`);
   if (FLAGS[cmd][m[1]]) { const v = rest[i + 1]; if (v === undefined || v === '' || v.startsWith('--')) usage(`--${m[1]} needs a value.`); flags[m[1]] = v; i++; }
@@ -50,11 +56,35 @@ const strayEnv = Object.keys(process.env).filter(k => /^TUNEUP_/i.test(k) && !/^
 if (strayEnv.length) usage(`Unknown setting ${strayEnv.join(', ')}. agenttuneup reads only TUNEUP_CONSENT, TUNEUP_OPENROUTER_KEY and TUNEUP_AGENT_*.`);
 if (process.env.TUNEUP_CONSENT !== undefined && process.env.TUNEUP_CONSENT !== '1') usage('TUNEUP_CONSENT must be 1 when set.');
 const opt = (name, dflt) => (Object.hasOwn(flags, name) ? flags[name] : dflt);
+// Gate policy: thresholds are percentages from 0 to 100 (decimals allowed). Loosening without --gate would do nothing,
+// so it is refused rather than letting someone think the gate is on (G11).
+const gating = opt('gate', false) === true;
+const policy = {};
+for (const [name, key] of [['min', 'min'], ['max-undetermined', 'maxUndetermined']]) {
+  if (!Object.hasOwn(flags, name)) continue;
+  const v = flags[name], n = Number(v);
+  if (!/^\d+(?:\.\d+)?$/.test(v) || !(n >= 0 && n <= 100)) usage(`--${name} must be a number from 0 to 100.`);
+  policy[key] = n;
+}
+if (Object.hasOwn(flags, 'allow-rules-fail')) policy.allowRulesFail = true;
+if (!gating && Object.keys(policy).length) usage('--min, --max-undetermined and --allow-rules-fail only apply with --gate.');
+const VERSION = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+// One verdict for check and run, from the findings in memory (never from report.json, T5). Without --gate the verdict
+// is still printed, but the exit code stays 0.
+const finish = (runs, { expected, judged, unreadable = [], suiteId = null }) => {
+  const g = gate(runs, { expected, judged, policy, unreadable });
+  if (opt('json', false) === true) writeFileSync(join(out, 'gate.json'), JSON.stringify(gateJson(g, { engineVersion: VERSION, gating, suiteId, judgeModel: judged ? JUDGE_MODEL : null }), null, 2) + '\n');
+  console.error(gating ? `${line(g)} (exit ${g.exit})` : `${line(g)} (gate off: exit 0; add --gate to fail CI on this)`);
+  process.exitCode = gating ? g.exit : EXIT.PASS;
+};
 // --consent with no key is a config error (2), named here before anything runs.
 const keyOrStop = () => { try { return loadKey(opt('keyfile')); } catch (e) { console.error(`${e.message}. Strict CI needs a key: set TUNEUP_OPENROUTER_KEY as a CI secret, or pass --keyfile.`); process.exit(EXIT.USAGE); } };
 // Input files: unreadable or malformed input is a usage error (2) naming the file, never a "check failed" crash.
-const readInput = (path, what) => { try { return readFileSync(path, 'utf8'); } catch (e) { usage(`Cannot read ${what} ${JSON.stringify(path)}: ${e.code || e.message}.`); } };
-const parseInput = (path, what, parse) => { const raw = readInput(path, what); try { return parse(raw); } catch (e) { usage(`${what} ${JSON.stringify(path)} is not valid: ${(e && e.message ? e.message : String(e)).slice(0, 200)}.`); } };
+const readInput = (path, what) => { try { return readFileSync(path, 'utf8'); } catch (e) { usage(`Cannot read ${what} ${JSON.stringify(path)}: ${e.code || 'unreadable'}.`); } };
+// Only our own messages are shown. A JSON parser's message can quote part of the file, and a chat file can hold a secret
+// that has not been scrubbed yet, so a parse error says only where to look (PR #32 review).
+class InputError extends Error {}
+const parseInput = (path, what, parse) => { const raw = readInput(path, what); try { return parse(raw); } catch (e) { usage(`${what} ${JSON.stringify(path)} is not valid: ${e instanceof InputError ? e.message : e instanceof SyntaxError ? 'it is not valid JSON' : 'it does not have the expected shape'}.`); } };
 const consent = opt('consent', false) === true || process.env.TUNEUP_CONSENT === '1';
 const NOTICE = 'Remote models: the judge (Jev, via OpenRouter) and, for tune-ups, the fix writer (Nemotron on a no-training endpoint). Text is scrubbed on this machine first of emails, phone numbers, API keys and tokens, card numbers, US Social Security numbers and IPv4 addresses (other IDs, such as passport numbers, are not detected). Turn on "no training" in your OpenRouter privacy settings.';
 const out = opt('out', 'tune-up-report'); mkdirSync(out, { recursive: true });
@@ -65,8 +95,16 @@ if (cmd === 'check') {
   const scrub = scrubber({ terms });
   const instructions = opt('instructions') ? readInput(opt('instructions'), 'instructions file').trim() : '';
   const convos = parseInput(file, 'chat file', (raw) => parseTranscripts(raw, { agentName: opt('agent') }));
-  if (!convos.length) { console.error('No conversations found. Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.'); process.exit(EXIT.USAGE); }
+  const HOW = 'Label lines "User:" and "Bot:" (or your bot\'s name with --agent), and separate chats with a line of ---.';
   const or = consent ? client(keyOrStop()) : null;
+  // Entries that could not be read as a chat are listed by position and count as missing: never as passed (G12b).
+  const rejected = convos.rejected;
+  if (rejected.length) console.error(`Not checked: entr${rejected.length === 1 ? 'y' : 'ies'} ${rejected.join(', ')} in ${file} could not be read as a chat (each needs a user and a bot turn). ${HOW}`);
+  if (!convos.length) {
+    // Nothing to check: with --gate that is UNDETERMINED (G12); without it, a usage error as before.
+    if (!gating) { console.error('No conversations found. ' + HOW); process.exit(EXIT.USAGE); }
+    console.error('No conversations found. ' + HOW); finish([], { expected: [], judged: consent, unreadable: rejected });
+  } else {
   console.error(`Checking ${convos.length} conversation(s)` + (consent ? ' with the remote judge. ' + NOTICE : '. Rule checks only, nothing leaves this machine (add --consent to use the judge).'));
   // At most CONCURRENCY conversations at once (each asks the judge three times).
   const runs = await pool(convos.map((msgs, i) => [msgs, i]), CONCURRENCY, async ([msgs, i]) => {
@@ -76,25 +114,22 @@ if (cmd === 'check') {
     // (PR #16 review).
     // The report goes through the same fail-closed check as the judge: residual-only secrets are held, not written out (PR #16 review).
     const shown = (t) => { try { const z = scrub.sanitize(t); return z.held ? '[held back: secret-like content]' : z.text; } catch (e) { if (e instanceof ScrubError) return '[held back: too large to scrub safely]'; throw e; } };
-    return { case: `chat-${i + 1}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
+    return { case: `chat-${convos.positions[i]}`, rep: 1, passed: runPassed(findings), findings: findings.map(f => ({ ...f, quote: f.quote && shown(f.quote) })),
       turns: msgs.map(m => ({ role: m.role, reply: shown(m.content) })), ms: 0, tokens: 0, toolCalls: 0 };
   });
-  // Entries that could not be read as a chat were not checked: they count as undetermined, never as passed (PR #32 review).
-  if (convos.skipped) {
-    console.error(`${convos.skipped} entr${convos.skipped === 1 ? 'y' : 'ies'} in ${file} could not be read as a chat (needs both a user and a bot turn) and ${convos.skipped === 1 ? 'was' : 'were'} not checked.`);
-    runs.push({ case: 'unreadable-entries', rep: 1, passed: false, findings: [skippedFinding(convos.skipped)], turns: [], ms: 0, tokens: 0, toolCalls: 0 });
-  }
   const rep = buildReport({ suite: { agent: opt('agent', 'Your agent'), repeats: 1 }, instructions, adapter: { name: 'paste', observesTools: false }, runs, judgeModel: or ? JUDGE_MODEL : 'none (rule checks only)', evidenceLevel: 1 });
   rep.scrubbed = scrub.counts();
+  if (rejected.length) rep.unreadable_entries = rejected;
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
-  const md = toMarkdown(rep, { title: 'Report card' }) + `\nScrubbed before checking: ${Object.entries(rep.scrubbed).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'nothing found'}.` + (or ? ` Model cost: $${or.spent().toFixed(5)}` : '') + '\n';
+  const md = toMarkdown(rep, { title: 'Report card' }) + (rejected.length ? `\nNot checked: entr${rejected.length === 1 ? 'y' : 'ies'} ${rejected.join(', ')} of the file could not be read as a chat, so this report card is incomplete.\n` : '') + `\nScrubbed before checking: ${Object.entries(rep.scrubbed).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(', ') || 'nothing found'}.` + (or ? ` Model cost: $${or.spent().toFixed(5)}` : '') + '\n';
   writeFileSync(join(out, 'report.md'), md); console.log(md);
   // The exit code comes from the findings in memory, never from report.json (T5).
-  process.exitCode = verdict(runs); console.error(summary(process.exitCode, runs));
+  finish(runs, { expected: convos.positions.map(p => ({ case: `chat-${p}`, rep: 1 })), judged: !!or, unreadable: rejected });
+  }
 } else {
 if (!consent) { console.error(NOTICE + '\nAdd --consent to run with remote models.'); process.exit(2); }
 
-const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object') throw new Error('it needs an "agent_config" object'); return j; });
+const suite = parseInput(file, 'suite file', (raw) => { const j = JSON.parse(raw); if (!j || typeof j !== 'object' || Array.isArray(j)) throw new InputError('expected a JSON object'); if (!j.agent_config || typeof j.agent_config !== 'object') throw new InputError('it needs an "agent_config" object'); return j; });
 { const errs = validateSuite(suite); if (errs.length) { console.error('Fix the suite before running (nothing was sent):\n- ' + errs.join('\n- ')); process.exit(2); } }
 const repeats = Number(opt('repeats', suite.repeats ?? 1));
 if (!Number.isInteger(repeats) || repeats < 1 || repeats > 20) { console.error('--repeats (or the suite\'s "repeats") must be a whole number from 1 to 20.'); process.exit(2); }
@@ -133,7 +168,7 @@ if (cmd === 'run') {
   writeFileSync(join(out, 'report.json'), JSON.stringify(rep, null, 2));
   const md = toMarkdown(rep, { title: 'Report card' }) + `\nModel cost for this run: $${or.spent().toFixed(5)}\n`;
   writeFileSync(join(out, 'report.md'), md); console.log(md);
-  process.exitCode = verdict(rep.gateRuns); console.error(summary(process.exitCode, rep.gateRuns));
+  finish(rep.gateRuns, { expected: suite.cases.flatMap(c => Array.from({ length: repeats }, (_, k) => ({ case: c.id, rep: k + 1 }))), judged: true, suiteId });
 } else {
   if (!existsSync(join(out, 'report.json'))) { console.error(`No report in ${out}. Run \`run\` with the same suite and --out first.`); process.exit(2); }
   const before = read('report.json');
